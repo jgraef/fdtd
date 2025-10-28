@@ -29,10 +29,11 @@ pub struct Executor {
 }
 
 impl Executor {
-    pub fn new(simulation: Simulation) -> Self {
+    pub fn new(simulation: Simulation, step_interval: Duration) -> Self {
         let state = Arc::new(RwLock::new(State {
             simulation,
             running_state: None,
+            step_interval,
         }));
 
         let (command_tx, command_rx) = mpsc::channel();
@@ -69,17 +70,18 @@ impl Executor {
 
     pub fn start(
         &self,
-        step_interval: Duration,
         on_update: Option<Box<dyn FnMut(&mut Simulation) + Send + Sync + 'static>>,
     ) {
-        self.send_command(Command::Start {
-            step_interval,
-            on_update,
-        });
+        self.send_command(Command::Start { on_update });
     }
 
     pub fn stop(&self) {
         self.send_command(Command::Stop);
+    }
+
+    pub fn set_step_interval(&self, step_interval: Duration) {
+        let mut guard = self.state.write();
+        guard.step_interval = step_interval;
     }
 }
 
@@ -87,19 +89,18 @@ impl Executor {
 struct State {
     simulation: Simulation,
     running_state: Option<RunningState>,
+    step_interval: Duration,
 }
 
 #[derive(derive_more::Debug)]
 struct RunningState {
     next_step: Instant,
-    step_interval: Duration,
     #[debug(ignore)]
     on_update: Option<Box<dyn FnMut(&mut Simulation) + Send + Sync + 'static>>,
 }
 
 enum Command {
     Start {
-        step_interval: Duration,
         on_update: Option<Box<dyn FnMut(&mut Simulation) + Send + Sync + 'static>>,
     },
     Stop,
@@ -112,9 +113,9 @@ fn run_reactor(command_rx: mpsc::Receiver<Command>, state: Arc<RwLock<State>>) {
 
         if let Some(running_state) = &state_guard.running_state {
             let now = Instant::now();
-            let recv_timeout = running_state.next_step - now;
+            let mut next_step = running_state.next_step;
 
-            if running_state.next_step <= now {
+            if now >= next_step {
                 state_guard.with_upgraded(|state| {
                     let running_state = state
                         .running_state
@@ -126,25 +127,23 @@ fn run_reactor(command_rx: mpsc::Receiver<Command>, state: Arc<RwLock<State>>) {
                         on_update(&mut state.simulation);
                     }
 
-                    running_state.next_step = now + running_state.step_interval;
+                    next_step = now + state.step_interval;
+                    running_state.next_step = next_step;
                 });
             }
 
             drop(state_guard);
 
+            let recv_timeout = next_step - Instant::now();
             match command_rx.recv_timeout(recv_timeout) {
                 Ok(command) => {
                     match command {
-                        Command::Start {
-                            step_interval,
-                            on_update,
-                        } => {
+                        Command::Start { on_update } => {
                             let mut state_guard = state.write();
                             let running_state = state_guard
                                 .running_state
                                 .as_mut()
                                 .expect("runnign state is None after command received");
-                            running_state.step_interval = step_interval;
                             running_state.on_update = on_update;
                         }
                         Command::Stop => {
@@ -164,14 +163,10 @@ fn run_reactor(command_rx: mpsc::Receiver<Command>, state: Arc<RwLock<State>>) {
             match command_rx.recv() {
                 Ok(command) => {
                     match command {
-                        Command::Start {
-                            step_interval,
-                            on_update,
-                        } => {
+                        Command::Start { on_update } => {
                             let mut state_guard = state.write();
                             state_guard.running_state = Some(RunningState {
                                 next_step: Instant::now(),
-                                step_interval,
                                 on_update,
                             });
                         }

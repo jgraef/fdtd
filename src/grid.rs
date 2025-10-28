@@ -58,6 +58,20 @@ impl<T> Grid<T> {
             None
         }
     }
+
+    pub fn iter(&self) -> impl Iterator<Item = (Point3<usize>, &T)> {
+        self.data.iter().enumerate().map(|(index, data)| {
+            let point = self.encoder.from_index(index);
+            (point, data)
+        })
+    }
+
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = (Point3<usize>, &mut T)> {
+        self.data.iter_mut().enumerate().map(|(index, data)| {
+            let point = self.encoder.from_index(index);
+            (point, data)
+        })
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
