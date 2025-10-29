@@ -1,12 +1,11 @@
 pub mod executor;
-pub mod grid;
+pub mod geometry;
+pub mod lattice;
+pub mod material;
 pub mod simulation;
+pub mod source;
 
-use std::{
-    f64::consts::TAU,
-    sync::Arc,
-    time::Duration,
-};
+use std::time::Duration;
 
 use clap::Parser;
 use color_eyre::eyre::{
@@ -21,19 +20,22 @@ use egui_plot::{
     PlotPoints,
 };
 use nalgebra::{
+    Isometry3,
     Point3,
+    UnitQuaternion,
     Vector3,
 };
 
 use crate::{
     executor::Executor,
+    geometry::Block,
+    material::Material,
     simulation::{
-        ElectricPointForcingFunction,
-        NullForcing,
         PhysicalConstants,
         Resolution,
         Simulation,
     },
+    source::GaussianPulse,
 };
 
 fn main() -> Result<(), Error> {
@@ -78,33 +80,34 @@ impl FdtdApp {
         println!("{physical_constants:#?}");
         println!("{resolution:#?}");
 
-        /*let forcing = {
-            let amplitude = 1.0;
-            let frequency = physical_constants.wavelength_to_frequency(500e-9);
-            let duration = 20.0 / frequency;
-            let peak = duration;
-            println!("peak={peak:?}, duration={duration:?}");
-
-            ElectricPointForcingFunction {
-                point: Point3::new(250, 0, 0),
-                f: move |time: f64| {
-                    let time = time - peak;
-                    let gaussian = (-(time / duration).powi(2)).exp();
-                    //let sine = (TAU * time * frequency).sin();
-                    //let signal = amplitude * gaussian * sine;
-                    //println!("{gaussian} * {sine}");
-                    //signal
-                    gaussian
-                },
-            }
-        };*/
-        let forcing = NullForcing;
-
-        let simulation = Simulation::new(
-            Vector3::new(500, 1, 1),
+        let mut simulation = Simulation::new(
+            Vector3::new(500.0, 0.0, 0.0),
             physical_constants,
             resolution,
-            Arc::new(forcing),
+        );
+
+        simulation.add_material(
+            Block {
+                transform: Isometry3::from_parts(
+                    Vector3::new(200.0, 0.0, 0.0).into(),
+                    UnitQuaternion::identity(),
+                ),
+                dimensions: Vector3::new(20.0, 0.0, 0.0),
+            },
+            Material {
+                relative_permittivity: 3.9,
+                ..Default::default()
+            },
+        );
+
+        simulation.add_source(
+            Point3::new(-200.0, 0.0, 0.0),
+            GaussianPulse {
+                electric_current_density_amplitude: Vector3::y(),
+                magnetic_current_density_amplitude: Vector3::z(),
+                time: 20.0,
+                duration: 10.0,
+            },
         );
 
         let ticks_per_second = 100;

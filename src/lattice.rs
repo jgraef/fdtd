@@ -4,13 +4,13 @@ use nalgebra::{
 };
 
 #[derive(Clone, Debug)]
-pub struct Grid<T> {
+pub struct Lattice<T> {
     dimensions: Vector3<usize>,
     encoder: Strider,
     data: Box<[T]>,
 }
 
-impl<T> Grid<T> {
+impl<T> Lattice<T> {
     pub fn new(dimensions: Vector3<usize>, mut init: impl FnMut(Point3<usize>) -> T) -> Self {
         let encoder = Strider::from_dimensions(&dimensions);
         let size = dimensions.product();
@@ -33,6 +33,10 @@ impl<T> Grid<T> {
             encoder,
             data,
         }
+    }
+
+    pub fn dimensions(&self) -> Vector3<usize> {
+        self.dimensions
     }
 
     fn check_if_point_is_inside(&self, point: &Point3<usize>) -> bool {

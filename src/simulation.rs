@@ -1,62 +1,61 @@
-use std::{
-    f64::consts::TAU,
-    fmt::Debug,
-    sync::Arc,
-};
+use std::fmt::Debug;
 
 use nalgebra::{
     Point3,
     Vector3,
 };
 
-use crate::grid::Grid;
+use crate::{
+    geometry::Rasterize,
+    lattice::Lattice,
+    material::Material,
+    source::Source,
+};
 
-#[derive(Clone, derive_more::Debug)]
+#[derive(derive_more::Debug)]
 pub struct Simulation {
-    dimensions: Vector3<usize>,
     resolution: Resolution,
     physical_constants: PhysicalConstants,
 
     tick: usize,
     time: f64,
-    grid: Grid<Cell>,
+    origin: Vector3<f64>,
+    lattice: Lattice<Cell>,
     total_energy: f64,
 
     #[debug(ignore)]
-    forcing: Arc<dyn Forcing>,
+    sources: Vec<Box<dyn Source>>,
 }
 
 #[derive(Clone, Debug)]
-struct Cell {
-    /// mu_r
-    relative_permeability: f64,
-    /// sigma_m
-    magnetic_conductivity: f64,
+pub struct Cell {
+    /// Material properties
+    pub material: Material,
     /// H
-    magnetic_field: [Vector3<f64>; 2],
-
-    /// epsilon_r
-    relative_permittivity: f64,
-    /// sigma
-    eletrical_conductivity: f64,
+    pub magnetic_field: [Vector3<f64>; 2],
     /// E
-    electric_field: [Vector3<f64>; 2],
+    pub electric_field: [Vector3<f64>; 2],
+    /// index into `Simulation::source`, defining magnetic and electric current
+    /// density functions
+    source: Option<usize>,
 }
 
 impl Default for Cell {
     fn default() -> Self {
-        Self {
-            relative_permeability: 1.0,
-            magnetic_conductivity: 0.0,
-            magnetic_field: [Vector3::zeros(); 2],
-            relative_permittivity: 1.0,
-            eletrical_conductivity: 0.0,
-            electric_field: [Vector3::zeros(); 2],
-        }
+        Self::from_material(Material::default())
     }
 }
 
 impl Cell {
+    pub fn from_material(material: Material) -> Self {
+        Self {
+            material,
+            magnetic_field: [Vector3::zeros(); 2],
+            electric_field: [Vector3::zeros(); 2],
+            source: None,
+        }
+    }
+
     pub fn reset(&mut self) {
         self.magnetic_field = [Vector3::zeros(); 2];
         self.electric_field = [Vector3::zeros(); 2];
@@ -65,36 +64,37 @@ impl Cell {
 
 impl Simulation {
     pub fn new(
-        dimensions: Vector3<usize>,
+        size: Vector3<f64>,
         physical_constants: PhysicalConstants,
         resolution: Resolution,
-        forcing: Arc<dyn Forcing>,
     ) -> Self {
-        let mut grid = Grid::new(dimensions, |_| Cell::default());
-        grid.get_mut(&Point3::new(400, 0, 0))
-            .unwrap()
-            .relative_permittivity = 3.9;
-        grid.get_mut(&Point3::new(401, 0, 0))
-            .unwrap()
-            .relative_permittivity = 1.4;
+        let lattice_size = size
+            .component_div(&resolution.spatial)
+            .map(|x| (x.ceil() as usize).max(1));
+        let origin = 0.5 * size;
+
+        let lattice = Lattice::new(lattice_size, |_| Cell::default());
 
         Self {
-            dimensions,
             physical_constants,
             resolution,
             tick: 0,
             time: 0.0,
-            grid,
-
+            origin,
+            lattice,
             total_energy: 0.0,
-            forcing,
+            sources: vec![],
         }
     }
 
     pub fn reset(&mut self) {
         self.tick = 0;
         self.time = 0.0;
-        self.grid.iter_mut().for_each(|(_, cell)| cell.reset());
+        self.lattice.iter_mut().for_each(|(_, cell)| cell.reset());
+
+        for source in &mut self.sources {
+            source.reset();
+        }
     }
 
     pub fn step(&mut self) {
@@ -103,46 +103,65 @@ impl Simulation {
 
         let mut energy = 0.0;
 
+        // prepare sources
+        // todo: we might need to pass some info to prepare so it knows what time is for
+        // the magnetic and electric field
+        for source in &mut self.sources {
+            source.prepare(self.time);
+        }
+
         // update magnetic field
-        for point in iter_coords(&self.dimensions) {
+        for point in iter_coords(&self.lattice.dimensions()) {
             let e_curl = curl(
                 point,
                 Vector3::repeat(1),
                 Vector3::zeros(),
-                &self.grid,
+                &self.lattice,
                 |cell| cell.electric_field[previous],
                 &self.resolution.spatial,
             );
 
             let h_approx = Vector3::zeros();
 
-            //let h_source = self.forcing.magnetic(self.time, &point);
-            let m_source = Vector3::zeros();
-
-            let cell = self.grid.get_mut(&point).unwrap();
+            let cell = self.lattice.get_mut(&point).unwrap();
 
             let permeability =
-                cell.relative_permeability * self.physical_constants.vacuum_permeability;
+                cell.material.relative_permeability * self.physical_constants.vacuum_permeability;
+
+            let m_source = if let Some(index) = cell.source {
+                let j_source = &mut self.sources[index];
+                let point_dx = Point3::from(
+                    point
+                        .map(|x| x as f64)
+                        .coords
+                        .component_mul(&self.resolution.spatial),
+                );
+                j_source.magnetic_current_density(self.time, &point_dx)
+            }
+            else {
+                Vector3::zeros()
+            };
 
             cell.magnetic_field[current] = cell.magnetic_field[previous]
                 - self.resolution.temporal / permeability
-                    * (e_curl + m_source + cell.magnetic_conductivity * h_approx);
+                    * (e_curl + m_source + cell.material.magnetic_conductivity * h_approx);
 
-            if point.x == 10 && point.y == 0 && point.z == 0 {
+            /*if point.x == 10 && point.y == 0 && point.z == 0 {
                 cell.magnetic_field[current] =
                     Vector3::y() * (-((self.time - 20.0) * 0.1).powi(2)).exp();
-            }
+            }*/
 
             energy += cell.magnetic_field[current].norm_squared() / permeability;
         }
 
         // update electric field
-        for point in iter_coords(&self.dimensions) {
+        let time = self.time + 0.5 * self.resolution.temporal;
+        for point in iter_coords(&self.lattice.dimensions()) {
             let h_curl = curl(
                 point,
                 Vector3::zeros(),
                 Vector3::repeat(1),
-                &self.grid,
+                &self.lattice,
                 |cell| {
                     // NOTE: this is `current` not `previous`, because we have already updated the H
                     // field with the new values in `current`.
@@ -155,38 +174,29 @@ impl Simulation {
             // cell.electric_field_prev);
             let e_approx = Vector3::zeros();
 
-            //let e_source = self.forcing.electric(self.time, &point);
-            let j_source = Vector3::zeros();
-            //let j_source = self.forcing.electric(self.time, &point);
-            /*let j_source = if point.x == 250 && point.y == 0 && point.z == 0 {
-                let f = 600.0e12;
-                Vector3::y() * 0.1 * (TAU * f * self.time).sin()
+            let cell = self.lattice.get_mut(&point).unwrap();
+
+            let permittivity =
+                cell.material.relative_permittivity * self.physical_constants.vacuum_permittivity;
+
+            let j_source = if let Some(index) = cell.source {
+                // todo: use time instead of self.time and add 0.5*dx offset to coordinates
+                let j_source = &mut self.sources[index];
+                let point_dx = Point3::from(
+                    point
+                        .map(|x| x as f64 + 0.5)
+                        .coords
+                        .component_mul(&self.resolution.spatial),
+                );
+                j_source.electric_current_density(time, &point_dx)
             }
             else {
                 Vector3::zeros()
-            };*/
-
-            let cell = self.grid.get_mut(&point).unwrap();
-
-            let permittivity =
-                cell.relative_permittivity * self.physical_constants.vacuum_permittivity;
+            };
 
             cell.electric_field[current] = cell.electric_field[previous]
                 + self.resolution.temporal / permittivity
-                    * (h_curl - j_source - cell.eletrical_conductivity * e_approx);
-
-            if point.x == 10 && point.y == 0 && point.z == 0 {
-                cell.electric_field[current] =
-                    Vector3::y() * (-((self.time - 20.0) * 0.1).powi(2)).exp();
-            }
-
-            /*if point.x == 250 && point.y == 0 && point.z == 0 {
-                cell.electric_field[current] = (-(self.time - 10.0).powi(2)).exp() * Vector3::y() * 0.01;
-            }*/
-
-            /*if self.tick == 0 && point.x == 250 && point.y == 0 && point.z == 0 {
-                cell.electric_field[current] = 0.1 * Vector3::y()
-            }*/
+                    * (h_curl - j_source - cell.material.eletrical_conductivity * e_approx);
 
             energy += permittivity * cell.electric_field[current].norm_squared();
         }
@@ -204,17 +214,40 @@ impl Simulation {
         self.time
     }
 
+    pub fn physical_constants(&self) -> &PhysicalConstants {
+        &self.physical_constants
+    }
+
+    pub fn resolution(&self) -> &Resolution {
+        &self.resolution
+    }
+
+    pub(crate) fn origin(&self) -> &Vector3<f64> {
+        &self.origin
+    }
+
     pub fn total_energy(&self) -> f64 {
         self.total_energy
     }
 
+    pub fn lattice(&self) -> &Lattice<Cell> {
+        &self.lattice
+    }
+
+    pub fn lattice_mut(&mut self) -> &mut Lattice<Cell> {
+        &mut self.lattice
+    }
+
     pub fn e_field(&self) -> Vec<[f64; 2]> {
         let current = self.tick % 2;
-        let mut data = Vec::with_capacity(self.dimensions.x);
+        let mut data = Vec::with_capacity(self.lattice.dimensions().x);
 
-        for x in 0..self.dimensions.x {
-            let e_cell = self.grid.get(&Point3::new(x, 0, 0)).unwrap();
-            data.push([x as f64 + 0.5, e_cell.electric_field[current].y]);
+        for x in 0..self.lattice.dimensions().x {
+            let e_cell = self.lattice.get(&Point3::new(x, 0, 0)).unwrap();
+            data.push([
+                (x as f64 + 0.5) / self.resolution.spatial.x - self.origin.x,
+                e_cell.electric_field[current].y,
+            ]);
         }
 
         data
@@ -222,25 +255,50 @@ impl Simulation {
 
     pub fn h_field(&self) -> Vec<[f64; 2]> {
         let current = self.tick % 2;
-        let mut data = Vec::with_capacity(self.dimensions.x);
+        let mut data = Vec::with_capacity(self.lattice.dimensions().x);
 
-        for x in 0..self.dimensions.x {
-            let h_cell = self.grid.get(&Point3::new(x, 0, 0)).unwrap();
-            data.push([x as f64, h_cell.magnetic_field[current].z]);
+        for x in 0..self.lattice.dimensions().x {
+            let h_cell = self.lattice.get(&Point3::new(x, 0, 0)).unwrap();
+            data.push([
+                (x as f64) / self.resolution.spatial.x - self.origin.x,
+                h_cell.magnetic_field[current].z,
+            ]);
         }
 
         data
     }
 
     pub fn epsilon(&self) -> Vec<[f64; 2]> {
-        let mut data = Vec::with_capacity(self.dimensions.x);
+        let mut data = Vec::with_capacity(self.lattice.dimensions().x);
 
-        for x in 0..self.dimensions.x {
-            let e_cell = self.grid.get(&Point3::new(x, 0, 0)).unwrap();
-            data.push([x as f64 + 0.5, e_cell.relative_permittivity]);
+        for x in 0..self.lattice.dimensions().x {
+            let e_cell = self.lattice.get(&Point3::new(x, 0, 0)).unwrap();
+            data.push([
+                (x as f64 + 0.5) / self.resolution.spatial.x - self.origin.x,
+                e_cell.material.relative_permittivity,
+            ]);
         }
 
         data
+    }
+
+    pub fn add_material(&mut self, geometry: impl Rasterize, material: Material) {
+        for point in geometry.rasterize(self) {
+            if let Some(cell) = self.lattice.get_mut(&point) {
+                cell.material = material;
+            }
+        }
+    }
+
+    pub fn add_source(&mut self, geometry: impl Rasterize, source: impl Source) {
+        let index = self.sources.len();
+        self.sources.push(Box::new(source));
+
+        for point in geometry.rasterize(self) {
+            if let Some(cell) = self.lattice.get_mut(&point) {
+                cell.source = Some(index);
+            }
+        }
     }
 }
 
@@ -254,7 +312,7 @@ fn curl<T>(
     x: Point3<usize>,
     dx0: Vector3<usize>,
     dx1: Vector3<usize>,
-    grid: &Grid<T>,
+    grid: &Lattice<T>,
     field: impl Fn(&T) -> Vector3<f64>,
     spatial_resolution: &Vector3<f64>,
 ) -> Vector3<f64> {
@@ -285,7 +343,7 @@ fn curl<T>(
 
 fn interpolate<T>(
     x: Point3<usize>,
-    grid: &Grid<T>,
+    grid: &Lattice<T>,
     field: impl Fn(&T) -> Vector3<f64>,
 ) -> Vector3<f64> {
     let mut n = 0;
@@ -395,43 +453,4 @@ impl PhysicalConstants {
 pub struct Resolution {
     pub spatial: Vector3<f64>,
     pub temporal: f64,
-}
-
-pub trait Forcing: Send + Sync + 'static {
-    fn electric(&self, time: f64, point: &Point3<usize>) -> Vector3<f64>;
-    fn magnetic(&self, time: f64, point: &Point3<usize>) -> Vector3<f64>;
-}
-
-#[derive(Clone, Copy, Debug, Default)]
-pub struct NullForcing;
-
-impl Forcing for NullForcing {
-    fn electric(&self, _time: f64, _point: &Point3<usize>) -> Vector3<f64> {
-        Vector3::zeros()
-    }
-
-    fn magnetic(&self, _time: f64, _point: &Point3<usize>) -> Vector3<f64> {
-        Vector3::zeros()
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct ElectricPointForcingFunction<F> {
-    pub point: Point3<usize>,
-    pub f: F,
-}
-
-impl<F: Fn(f64) -> f64 + Send + Sync + 'static> Forcing for ElectricPointForcingFunction<F> {
-    fn electric(&self, time: f64, point: &Point3<usize>) -> Vector3<f64> {
-        if point == &self.point {
-            Vector3::y() * (self.f)(time)
-        }
-        else {
-            Vector3::zeros()
-        }
-    }
-
-    fn magnetic(&self, _time: f64, _point: &Point3<usize>) -> Vector3<f64> {
-        Vector3::zeros()
-    }
 }
