@@ -12,32 +12,22 @@ use crate::{
     source::Source,
 };
 
-#[derive(derive_more::Debug)]
-pub struct Simulation {
-    resolution: Resolution,
-    physical_constants: PhysicalConstants,
-
-    tick: usize,
-    time: f64,
-    origin: Vector3<f64>,
-    lattice: Lattice<Cell>,
-    total_energy: f64,
-
-    #[debug(ignore)]
-    sources: Vec<Box<dyn Source>>,
-}
-
 #[derive(Clone, Debug)]
 pub struct Cell {
     /// Material properties
-    pub material: Material,
+    material: Material,
+
     /// H
-    pub magnetic_field: [Vector3<f64>; 2],
+    magnetic_field: [Vector3<f64>; 2],
     /// E
-    pub electric_field: [Vector3<f64>; 2],
+    electric_field: [Vector3<f64>; 2],
+
     /// index into `Simulation::source`, defining magnetic and electric current
     /// density functions
     source: Option<usize>,
+
+    magnetic_coefficients: Option<UpdateCoefficients>,
+    electric_coefficients: Option<UpdateCoefficients>,
 }
 
 impl Default for Cell {
@@ -53,6 +43,8 @@ impl Cell {
             magnetic_field: [Vector3::zeros(); 2],
             electric_field: [Vector3::zeros(); 2],
             source: None,
+            magnetic_coefficients: None,
+            electric_coefficients: None,
         }
     }
 
@@ -60,6 +52,117 @@ impl Cell {
         self.magnetic_field = [Vector3::zeros(); 2];
         self.electric_field = [Vector3::zeros(); 2];
     }
+
+    pub fn material(&self) -> &Material {
+        &self.material
+    }
+
+    pub fn set_material(&mut self, material: Material) {
+        self.material = material;
+        self.magnetic_coefficients = None;
+        self.electric_coefficients = None;
+    }
+
+    pub fn electric_field(&self, tick: usize) -> &Vector3<f64> {
+        let current = tick % 2;
+        &self.electric_field[current]
+    }
+
+    pub fn electric_field_mut(&mut self, tick: usize) -> &Vector3<f64> {
+        let current = tick % 2;
+        &mut self.electric_field[current]
+    }
+
+    pub fn magnetic_field(&self, tick: usize) -> &Vector3<f64> {
+        let current = tick % 2;
+        &self.magnetic_field[current]
+    }
+
+    pub fn magnetic_field_mut(&mut self, tick: usize) -> &Vector3<f64> {
+        let current = tick % 2;
+        &mut self.magnetic_field[current]
+    }
+
+    fn magnetic_coefficients<'a>(
+        &'a mut self,
+        resolution: &Resolution,
+        physical_constants: &PhysicalConstants,
+    ) -> &'a UpdateCoefficients {
+        self.magnetic_coefficients.get_or_insert_with(|| {
+            UpdateCoefficients::new_magnetic(resolution, physical_constants, &self.material)
+        })
+    }
+
+    fn electric_coefficients<'a>(
+        &'a mut self,
+        resolution: &Resolution,
+        physical_constants: &PhysicalConstants,
+    ) -> &'a UpdateCoefficients {
+        self.electric_coefficients.get_or_insert_with(|| {
+            UpdateCoefficients::new_electric(resolution, physical_constants, &self.material)
+        })
+    }
+}
+
+/// See CE page 67
+#[derive(Clone, Copy, Debug, Default)]
+struct UpdateCoefficients {
+    a: f64,
+    b_i: Vector3<f64>,
+}
+
+impl UpdateCoefficients {
+    /// - `sigma`: Either electrical or magnetic conductivity
+    /// - `perm`: Either permittivity or permability
+    pub fn new(resolution: &Resolution, sigma: f64, perm: f64) -> Self {
+        let sigma_delta_t = sigma * resolution.temporal;
+        Self {
+            a: (1.0 - 0.5 * sigma_delta_t / perm) / (1.0 + sigma_delta_t / perm),
+            b_i: resolution
+                .spatial
+                .map(|dx| resolution.temporal / (perm * dx * (1.0 + 0.5 * sigma_delta_t / perm))),
+        }
+    }
+
+    pub fn new_electric(
+        resolution: &Resolution,
+        physical_constants: &PhysicalConstants,
+        material: &Material,
+    ) -> Self {
+        Self::new(
+            resolution,
+            material.eletrical_conductivity,
+            material.relative_permittivity * physical_constants.vacuum_permittivity,
+        )
+    }
+
+    pub fn new_magnetic(
+        resolution: &Resolution,
+        physical_constants: &PhysicalConstants,
+        material: &Material,
+    ) -> Self {
+        Self::new(
+            resolution,
+            material.magnetic_conductivity,
+            material.relative_permeability * physical_constants.vacuum_permeability,
+        )
+    }
+}
+
+#[derive(derive_more::Debug)]
+pub struct Simulation {
+    resolution: Resolution,
+    physical_constants: PhysicalConstants,
+
+    tick: usize,
+    time: f64,
+    origin: Vector3<f64>,
+    total_energy: f64,
+
+    lattice: Lattice<Cell>,
+
+    #[debug(ignore)]
+    sources: Vec<Box<dyn Source>>,
 }
 
 impl Simulation {
@@ -81,8 +184,8 @@ impl Simulation {
             tick: 0,
             time: 0.0,
             origin,
-            lattice,
             total_energy: 0.0,
+            lattice,
             sources: vec![],
         }
     }
@@ -104,8 +207,8 @@ impl Simulation {
         let mut energy = 0.0;
 
         // prepare sources
-        // todo: we might need to pass some info to prepare so it knows what time is for
-        // the magnetic and electric field
+        // todo: we might need to pass some info to `prepare` so it knows what time is
+        // for the magnetic and electric field
         for source in &mut self.sources {
             source.prepare(self.time);
         }
@@ -121,12 +224,7 @@ impl Simulation {
                 &self.resolution.spatial,
             );
 
-            let h_approx = Vector3::zeros();
-
             let cell = self.lattice.get_mut(&point).unwrap();
-
-            let permeability =
-                cell.material.relative_permeability * self.physical_constants.vacuum_permeability;
 
             let m_source = if let Some(index) = cell.source {
                 let j_source = &mut self.sources[index];
@@ -142,16 +240,20 @@ impl Simulation {
                 Vector3::zeros()
             };
 
-            cell.magnetic_field[current] = cell.magnetic_field[previous]
-                - self.resolution.temporal / permeability
-                    * (e_curl + m_source + cell.material.magnetic_conductivity * h_approx);
+            let coefficients =
+                *cell.magnetic_coefficients(&self.resolution, &self.physical_constants);
 
-            /*if point.x == 10 && point.y == 0 && point.z == 0 {
-                cell.magnetic_field[current] =
-                    Vector3::y() * (-((self.time - 20.0) * 0.1).powi(2)).exp();
-            }*/
+            // note: the E and H field equations are almost identical, but here the curl is
+            // negative.
+            cell.magnetic_field[current] = coefficients.a * cell.magnetic_field[previous]
+                + coefficients
+                    .b_i
+                    .component_mul(&(-e_curl - m_source.component_mul(&self.resolution.spatial)));
 
-            energy += cell.magnetic_field[current].norm_squared() / permeability;
+            // note: this is just for debugging
+            energy += cell.magnetic_field[current].norm_squared()
+                / (cell.material.relative_permeability
+                    * self.physical_constants.vacuum_permeability);
         }
 
         // update electric field
@@ -170,14 +272,7 @@ impl Simulation {
                 &self.resolution.spatial,
             );
 
-            //let e_approx = interpolate(point, &self.electric_grid, |cell|
-            // cell.electric_field_prev);
-            let e_approx = Vector3::zeros();
-
             let cell = self.lattice.get_mut(&point).unwrap();
-
-            let permittivity =
-                cell.material.relative_permittivity * self.physical_constants.vacuum_permittivity;
 
             let j_source = if let Some(index) = cell.source {
                 // todo: use time instead of self.time and add 0.5*dx offset to coordinates
@@ -194,11 +289,17 @@ impl Simulation {
                 Vector3::zeros()
             };
 
-            cell.electric_field[current] = cell.electric_field[previous]
-                + self.resolution.temporal / permittivity
-                    * (h_curl - j_source - cell.material.eletrical_conductivity * e_approx);
+            let coefficients =
+                *cell.electric_coefficients(&self.resolution, &self.physical_constants);
+            cell.electric_field[current] = coefficients.a * cell.electric_field[previous]
+                + coefficients
+                    .b_i
+                    .component_mul(&(h_curl - j_source.component_mul(&self.resolution.spatial)));
 
-            energy += permittivity * cell.electric_field[current].norm_squared();
+            // note: this is just for debugging
+            energy += cell.electric_field[current].norm_squared()
+                * cell.material.relative_permittivity
+                * self.physical_constants.vacuum_permittivity;
         }
 
         self.tick += 1;
@@ -339,31 +440,6 @@ fn curl<T>(
     let dfdz = df(Vector3::z(), dx0.z, dx1.z, spatial_resolution.z);
 
     Vector3::new(dfdy.z - dfdz.y, dfdz.x - dfdx.z, dfdx.y - dfdy.x)
-}
-
-fn interpolate<T>(
-    x: Point3<usize>,
-    grid: &Lattice<T>,
-    field: impl Fn(&T) -> Vector3<f64>,
-) -> Vector3<f64> {
-    let mut n = 0;
-    let mut s = Vector3::default();
-    let mut fold = |p| {
-        if let Some(cell) = grid.get(&p) {
-            s += field(cell);
-            n += 1;
-        }
-    };
-    let mut fold_pair = |x, dx| {
-        fold(x);
-        fold(x + dx);
-    };
-
-    fold_pair(x, Vector3::x());
-    fold_pair(x, Vector3::y());
-    fold_pair(x, Vector3::z());
-
-    s / (n as f64)
 }
 
 #[derive(Clone, Copy)]

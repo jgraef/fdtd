@@ -107,6 +107,7 @@ impl Strider {
     }
 }
 
+/*
 #[derive(Clone, Copy, Debug, Default)]
 pub struct MortonEncoder;
 
@@ -127,3 +128,4 @@ impl MortonEncoder {
         index as usize
     }
 }
+*/
