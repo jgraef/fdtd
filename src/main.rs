@@ -4,6 +4,7 @@ pub mod lattice;
 pub mod material;
 pub mod simulation;
 pub mod source;
+mod util;
 
 use std::time::Duration;
 
@@ -17,6 +18,7 @@ use egui_plot::{
     Legend,
     Line,
     Plot,
+    PlotPoint,
     PlotPoints,
 };
 use nalgebra::{
@@ -31,6 +33,7 @@ use crate::{
     geometry::Block,
     material::Material,
     simulation::{
+        Axis,
         PhysicalConstants,
         Resolution,
         Simulation,
@@ -162,9 +165,45 @@ impl eframe::App for FdtdApp {
             let field_plot = Plot::new("E field").legend(Legend::default());
             field_plot.show(ui, |plot_ui| {
                 plot_ui.set_plot_bounds_y(-2.0..=2.0);
-                plot_ui.line(Line::new("E", PlotPoints::from(simulation.e_field())));
-                plot_ui.line(Line::new("H", PlotPoints::from(simulation.h_field())));
-                plot_ui.line(Line::new("ε_r", PlotPoints::from(simulation.epsilon())))
+                plot_ui.line(Line::new(
+                    "E",
+                    PlotPoints::Owned(
+                        simulation
+                            .field_values(
+                                Point3::origin(),
+                                Axis::X,
+                                0.5,
+                                |cell, swap_buffer_index| cell.electric_field(swap_buffer_index).y,
+                            )
+                            .map(|(x, y)| PlotPoint::new(x, y))
+                            .collect::<Vec<_>>(),
+                    ),
+                ));
+                plot_ui.line(Line::new(
+                    "H",
+                    PlotPoints::Owned(
+                        simulation
+                            .field_values(
+                                Point3::origin(),
+                                Axis::X,
+                                0.0,
+                                |cell, swap_buffer_index| cell.magnetic_field(swap_buffer_index).z,
+                            )
+                            .map(|(x, y)| PlotPoint::new(x, y))
+                            .collect::<Vec<_>>(),
+                    ),
+                ));
+                plot_ui.line(Line::new(
+                    "ε_r",
+                    PlotPoints::Owned(
+                        simulation
+                            .field_values(Point3::origin(), Axis::X, 0.5, |cell, _| {
+                                cell.material().relative_permittivity
+                            })
+                            .map(|(x, y)| PlotPoint::new(x, y))
+                            .collect::<Vec<_>>(),
+                    ),
+                ))
             });
         });
     }

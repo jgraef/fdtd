@@ -1,8 +1,20 @@
-use std::fmt::Debug;
+use std::{
+    fmt::Debug,
+    ops::{
+        Index,
+        IndexMut,
+    },
+};
 
 use nalgebra::{
     Point3,
+    Scalar,
+    UnitVector3,
     Vector3,
+};
+use num::{
+    One,
+    Zero,
 };
 
 use crate::{
@@ -18,9 +30,9 @@ pub struct Cell {
     material: Material,
 
     /// H
-    magnetic_field: [Vector3<f64>; 2],
+    magnetic_field: SwapBuffer<Vector3<f64>>,
     /// E
-    electric_field: [Vector3<f64>; 2],
+    electric_field: SwapBuffer<Vector3<f64>>,
 
     /// index into `Simulation::source`, defining magnetic and electric current
     /// density functions
@@ -40,8 +52,8 @@ impl Cell {
     pub fn from_material(material: Material) -> Self {
         Self {
             material,
-            magnetic_field: [Vector3::zeros(); 2],
-            electric_field: [Vector3::zeros(); 2],
+            magnetic_field: Default::default(),
+            electric_field: Default::default(),
             source: None,
             magnetic_coefficients: None,
             electric_coefficients: None,
@@ -49,8 +61,8 @@ impl Cell {
     }
 
     pub fn reset(&mut self) {
-        self.magnetic_field = [Vector3::zeros(); 2];
-        self.electric_field = [Vector3::zeros(); 2];
+        self.magnetic_field = Default::default();
+        self.electric_field = Default::default();
     }
 
     pub fn material(&self) -> &Material {
@@ -63,24 +75,20 @@ impl Cell {
         self.electric_coefficients = None;
     }
 
-    pub fn electric_field(&self, tick: usize) -> &Vector3<f64> {
-        let current = tick % 2;
-        &self.electric_field[current]
+    pub fn electric_field(&self, swap_buffer_index: SwapBufferIndex) -> &Vector3<f64> {
+        &self.electric_field[swap_buffer_index]
     }
 
-    pub fn electric_field_mut(&mut self, tick: usize) -> &Vector3<f64> {
-        let current = tick % 2;
-        &mut self.electric_field[current]
+    pub fn electric_field_mut(&mut self, swap_buffer_index: SwapBufferIndex) -> &Vector3<f64> {
+        &mut self.electric_field[swap_buffer_index]
     }
 
-    pub fn magnetic_field(&self, tick: usize) -> &Vector3<f64> {
-        let current = tick % 2;
-        &self.magnetic_field[current]
+    pub fn magnetic_field(&self, swap_buffer_index: SwapBufferIndex) -> &Vector3<f64> {
+        &self.magnetic_field[swap_buffer_index]
     }
 
-    pub fn magnetic_field_mut(&mut self, tick: usize) -> &Vector3<f64> {
-        let current = tick % 2;
-        &mut self.magnetic_field[current]
+    pub fn magnetic_field_mut(&mut self, swap_buffer_index: SwapBufferIndex) -> &Vector3<f64> {
+        &mut self.magnetic_field[swap_buffer_index]
     }
 
     fn magnetic_coefficients<'a>(
@@ -149,6 +157,49 @@ impl UpdateCoefficients {
     }
 }
 
+/// Buffer holding 2 values.
+///
+/// One value is the current value, the other one is the value from the previous
+/// step. Which one is which depends on the [`SwapBufferIndex`].
+#[derive(Clone, Copy, Debug, Default)]
+pub struct SwapBuffer<T> {
+    buffer: [T; 2],
+}
+
+impl<T> Index<SwapBufferIndex> for SwapBuffer<T> {
+    type Output = T;
+
+    fn index(&self, index: SwapBufferIndex) -> &Self::Output {
+        &self.buffer[index.index]
+    }
+}
+
+impl<T> IndexMut<SwapBufferIndex> for SwapBuffer<T> {
+    fn index_mut(&mut self, index: SwapBufferIndex) -> &mut Self::Output {
+        &mut self.buffer[index.index]
+    }
+}
+
+/// Index into a [`SwapBuffer`].
+///
+/// This can be derived from the simulation tick.
+#[derive(Clone, Copy, Debug)]
+pub struct SwapBufferIndex {
+    index: usize,
+}
+
+impl SwapBufferIndex {
+    pub fn from_tick(tick: usize) -> Self {
+        Self { index: tick % 2 }
+    }
+
+    pub fn other(&self) -> Self {
+        Self {
+            index: (self.index + 1) % 2,
+        }
+    }
+}
+
 #[derive(derive_more::Debug)]
 pub struct Simulation {
     resolution: Resolution,
@@ -201,8 +252,8 @@ impl Simulation {
     }
 
     pub fn step(&mut self) {
-        let current = (self.tick + 1) % 2;
-        let previous = self.tick % 2;
+        let current = SwapBufferIndex::from_tick(self.tick + 1);
+        let previous = SwapBufferIndex::from_tick(self.tick);
 
         let mut energy = 0.0;
 
@@ -214,7 +265,7 @@ impl Simulation {
         }
 
         // update magnetic field
-        for point in iter_coords(&self.lattice.dimensions()) {
+        for point in self.lattice.iter_points() {
             let e_curl = curl(
                 point,
                 Vector3::repeat(1),
@@ -258,7 +309,7 @@ impl Simulation {
 
         // update electric field
         let time = self.time + 0.5 * self.resolution.temporal;
-        for point in iter_coords(&self.lattice.dimensions()) {
+        for point in self.lattice.iter_points() {
             let h_curl = curl(
                 point,
                 Vector3::zeros(),
@@ -315,6 +366,14 @@ impl Simulation {
         self.time
     }
 
+    /// Returns the [`SwapBufferIndex`] for the last computed tick.
+    ///
+    /// To get the [`SwapBufferIndex`] for the tick before that you can use
+    /// [`SwapBufferIndex::other`].
+    pub fn swap_buffer_index(&self) -> SwapBufferIndex {
+        SwapBufferIndex::from_tick(self.tick)
+    }
+
     pub fn physical_constants(&self) -> &PhysicalConstants {
         &self.physical_constants
     }
@@ -327,6 +386,12 @@ impl Simulation {
         &self.origin
     }
 
+    pub fn size(&self) -> Vector3<f64> {
+        self.lattice
+            .dimensions()
+            .zip_map(&self.resolution.spatial, |x, dx| x as f64 * dx)
+    }
+
     pub fn total_energy(&self) -> f64 {
         self.total_energy
     }
@@ -337,50 +402,6 @@ impl Simulation {
 
     pub fn lattice_mut(&mut self) -> &mut Lattice<Cell> {
         &mut self.lattice
-    }
-
-    pub fn e_field(&self) -> Vec<[f64; 2]> {
-        let current = self.tick % 2;
-        let mut data = Vec::with_capacity(self.lattice.dimensions().x);
-
-        for x in 0..self.lattice.dimensions().x {
-            let e_cell = self.lattice.get(&Point3::new(x, 0, 0)).unwrap();
-            data.push([
-                (x as f64 + 0.5) / self.resolution.spatial.x - self.origin.x,
-                e_cell.electric_field[current].y,
-            ]);
-        }
-
-        data
-    }
-
-    pub fn h_field(&self) -> Vec<[f64; 2]> {
-        let current = self.tick % 2;
-        let mut data = Vec::with_capacity(self.lattice.dimensions().x);
-
-        for x in 0..self.lattice.dimensions().x {
-            let h_cell = self.lattice.get(&Point3::new(x, 0, 0)).unwrap();
-            data.push([
-                (x as f64) / self.resolution.spatial.x - self.origin.x,
-                h_cell.magnetic_field[current].z,
-            ]);
-        }
-
-        data
-    }
-
-    pub fn epsilon(&self) -> Vec<[f64; 2]> {
-        let mut data = Vec::with_capacity(self.lattice.dimensions().x);
-
-        for x in 0..self.lattice.dimensions().x {
-            let e_cell = self.lattice.get(&Point3::new(x, 0, 0)).unwrap();
-            data.push([
-                (x as f64 + 0.5) / self.resolution.spatial.x - self.origin.x,
-                e_cell.material.relative_permittivity,
-            ]);
-        }
-
-        data
     }
 
     pub fn add_material(&mut self, geometry: impl Rasterize, material: Material) {
@@ -401,14 +422,61 @@ impl Simulation {
             }
         }
     }
+
+    /// Returns field values along an axis-aligned line.
+    pub fn field_values<'a, T, F>(
+        &'a self,
+        mut x0: Point3<usize>,
+        axis: Axis,
+        x_correction: f64,
+        f: F,
+    ) -> impl Iterator<Item = (f64, T)> + 'a
+    where
+        F: Fn(&Cell, SwapBufferIndex) -> T + 'a,
+    {
+        *axis.vector_component_mut(&mut x0.coords) = 0;
+
+        let n = *axis.vector_component(&self.lattice.dimensions());
+        let e = axis.basis().into_inner();
+        let resolution = *axis.vector_component(&self.resolution.spatial);
+        let origin = *axis.vector_component(&self.origin);
+        let swap_buffer_index = self.swap_buffer_index();
+
+        (0..n).map(move |i| {
+            let x = x0 + i * e;
+            let cell = self.lattice.get(&x).unwrap();
+            let value = f(&cell, swap_buffer_index);
+            (i as f64 * resolution - origin + x_correction, value)
+        })
+    }
 }
 
-fn iter_coords(dimensions: &Vector3<usize>) -> impl Iterator<Item = Point3<usize>> {
-    (0..dimensions.x).flat_map(move |x| {
-        (0..dimensions.y).flat_map(move |y| (0..dimensions.z).map(move |z| Point3::new(x, y, z)))
-    })
-}
-
+/// Calculates curl at `x`.
+///
+/// `dx0` and `dx1` specify which points around `x` to use for the central
+/// difference derivatives. `dx0` will be subtracted from `x`` to get `x1` and
+/// `dx1` will be added to `x` to get `x2`. The central difference is then
+/// between `x1` and `x2`. This is useful when we want to e.g. calculate the
+/// curl of the E-field at point x for the H-field. For the H-field the left
+/// point in the E-field for the central difference will be `x-(1, 1, 1)`, and
+/// the right point will be `x`, because in our convention the E-field is
+/// staggered by `(+0.5, +0.5, +0.5)`. To calculate the curl of the H-field for
+/// the E-field you'd pass `(0, 0, 0)` and `(1, 1, 1)` for `dx0` and `dx1`.
+///
+/// `grid`: The grid in which the E-field and H-field are virtually colocated -
+/// meaning they share the same grid cell in the [`Vec`]. For calculations we
+/// use the Yee grid with the cell `(0, 0, 0)` having the E-field for
+/// `(0.5, 0.5, 0.5)`.
+///
+/// `field`: Closure to access the field vector from a cell of which to
+/// calculate the curl.
+///
+/// `spatial_resolution`: Because we use the central difference to approximate
+/// derivates, we need to divide the difference between adjacent field values by
+/// `delta_x`.
+///
+/// Note: This is technically generic over the type of cells in the lattice,
+/// although in practive it will be a [`Cell`] struct.
 fn curl<T>(
     x: Point3<usize>,
     dx0: Vector3<usize>,
@@ -529,4 +597,53 @@ impl PhysicalConstants {
 pub struct Resolution {
     pub spatial: Vector3<f64>,
     pub temporal: f64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Axis {
+    X,
+    Y,
+    Z,
+}
+
+impl Axis {
+    pub fn vector_index(&self) -> usize {
+        match self {
+            Axis::X => 0,
+            Axis::Y => 1,
+            Axis::Z => 2,
+        }
+    }
+
+    pub fn vector_component<'a, T>(&self, vector: &'a Vector3<T>) -> &'a T {
+        &vector[self.vector_index()]
+    }
+
+    pub fn vector_component_mut<'a, T>(&self, vector: &'a mut Vector3<T>) -> &'a mut T {
+        &mut vector[self.vector_index()]
+    }
+
+    pub fn basis<T>(&self) -> UnitVector3<T>
+    where
+        T: Scalar + Zero + One,
+    {
+        let mut e = Vector3::<T>::zeros();
+        *self.vector_component_mut(&mut e) = T::one();
+        // note: one component is 1, all others are 0, therefore this vector is
+        // normalized
+        UnitVector3::new_unchecked(e)
+    }
+
+    pub fn from_vector<T>(vector: &Vector3<T>) -> Option<Self>
+    where
+        T: Scalar + Zero,
+    {
+        let z = vector.map(|x| !x.is_zero());
+        match (z.x, z.y, z.z) {
+            (true, false, false) => Some(Self::X),
+            (false, true, false) => Some(Self::Y),
+            (false, false, true) => Some(Self::Z),
+            _ => None,
+        }
+    }
 }

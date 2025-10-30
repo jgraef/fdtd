@@ -3,6 +3,11 @@ use nalgebra::{
     Vector3,
 };
 
+use crate::util::{
+    PointIter,
+    iter_points,
+};
+
 #[derive(Clone, Debug)]
 pub struct Lattice<T> {
     dimensions: Vector3<usize>,
@@ -75,6 +80,10 @@ impl<T> Lattice<T> {
             let point = self.encoder.from_index(index);
             (point, data)
         })
+    }
+
+    pub fn iter_points(&self) -> PointIter {
+        iter_points(.., self.dimensions)
     }
 }
 
