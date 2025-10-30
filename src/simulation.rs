@@ -287,14 +287,14 @@ impl Simulation {
             let cell = self.lattice.get_mut(&point).unwrap();
 
             let m_source = if let Some(index) = cell.source {
-                let j_source = &mut self.sources[index];
+                let m_source = &mut self.sources[index];
                 let point_dx = Point3::from(
                     point
                         .map(|x| x as f64)
                         .coords
                         .component_mul(&self.resolution.spatial),
                 );
-                j_source.magnetic_current_density(self.time, &point_dx)
+                m_source.magnetic_current_density(self.time, &point_dx)
             }
             else {
                 Vector3::zeros()
@@ -336,7 +336,6 @@ impl Simulation {
             let cell = self.lattice.get_mut(&point).unwrap();
 
             let j_source = if let Some(index) = cell.source {
-                // todo: use time instead of self.time and add 0.5*dx offset to coordinates
                 let j_source = &mut self.sources[index];
                 let point_dx = Point3::from(
                     point
