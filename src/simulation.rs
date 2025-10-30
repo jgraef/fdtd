@@ -18,6 +18,11 @@ use num::{
 };
 
 use crate::{
+    boundary_condition::{
+        AnyBoundaryCondition,
+        BoundaryCondition,
+        default_boundary_conditions,
+    },
     geometry::Rasterize,
     lattice::Lattice,
     material::Material,
@@ -211,6 +216,7 @@ pub struct Simulation {
     total_energy: f64,
 
     lattice: Lattice<Cell>,
+    boundary_conditions: [AnyBoundaryCondition; 3],
 
     #[debug(ignore)]
     sources: Vec<Box<dyn Source>>,
@@ -228,6 +234,7 @@ impl Simulation {
         let origin = 0.5 * size;
 
         let lattice = Lattice::new(lattice_size, |_| Cell::default());
+        let boundary_conditions = default_boundary_conditions(&lattice_size);
 
         Self {
             physical_constants,
@@ -237,6 +244,7 @@ impl Simulation {
             origin,
             total_energy: 0.0,
             lattice,
+            boundary_conditions,
             sources: vec![],
         }
     }
@@ -273,6 +281,7 @@ impl Simulation {
                 &self.lattice,
                 |cell| cell.electric_field[previous],
                 &self.resolution.spatial,
+                &self.boundary_conditions,
             );
 
             let cell = self.lattice.get_mut(&point).unwrap();
@@ -321,6 +330,7 @@ impl Simulation {
                     cell.magnetic_field[current]
                 },
                 &self.resolution.spatial,
+                &self.boundary_conditions,
             );
 
             let cell = self.lattice.get_mut(&point).unwrap();
@@ -477,6 +487,12 @@ impl Simulation {
 ///
 /// Note: This is technically generic over the type of cells in the lattice,
 /// although in practive it will be a [`Cell`] struct.
+///
+/// # Boundary condition
+///
+/// To compute the spatial partial derivatives adjacent field values are needed.
+/// Since these are not available outside of the lattice, all derivatives along
+/// a boundary default to 0. This is effectively a Neumann boundary condition.
 fn curl<T>(
     x: Point3<usize>,
     dx0: Vector3<usize>,
@@ -484,28 +500,29 @@ fn curl<T>(
     grid: &Lattice<T>,
     field: impl Fn(&T) -> Vector3<f64>,
     spatial_resolution: &Vector3<f64>,
+    boundary_conditions: &[AnyBoundaryCondition; 3],
 ) -> Vector3<f64> {
-    let df = |e, d0, d1, dx| {
-        if x.coords.dot(&e) >= d0 {
-            let cell0 = grid.get(&(x - e * d0));
-            let cell1 = grid.get(&(x + e * d1));
-            if let (Some(cell0), Some(cell1)) = (cell0, cell1) {
-                let f0 = field(cell0);
-                let f1 = field(cell1);
-                (f1 - f0) / dx
-            }
-            else {
-                Default::default()
-            }
+    let df = |axis: Axis| {
+        let i = axis.vector_index();
+        let dx0 = dx0[i];
+        let dx1 = dx1[i];
+        let e = axis.basis().into_inner();
+        let dx = spatial_resolution[i];
+
+        let f0 = if x.coords[i] >= dx0 {
+            grid.get(&(x - e * dx0)).map(&field)
         }
         else {
-            Default::default()
-        }
+            None
+        };
+        let f1 = grid.get(&(x + e * dx1)).map(&field);
+
+        boundary_conditions[i].apply_df(f0, f1) / dx
     };
 
-    let dfdx = df(Vector3::x(), dx0.x, dx1.x, spatial_resolution.x);
-    let dfdy = df(Vector3::y(), dx0.y, dx1.y, spatial_resolution.y);
-    let dfdz = df(Vector3::z(), dx0.z, dx1.z, spatial_resolution.z);
+    let dfdx = df(Axis::X);
+    let dfdy = df(Axis::Y);
+    let dfdz = df(Axis::Z);
 
     Vector3::new(dfdy.z - dfdz.y, dfdz.x - dfdx.z, dfdx.y - dfdy.x)
 }
