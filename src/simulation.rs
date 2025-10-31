@@ -20,13 +20,13 @@ use num::{
 use crate::{
     boundary_condition::{
         AnyBoundaryCondition,
-        BoundaryCondition,
         default_boundary_conditions,
     },
     geometry::Rasterize,
     lattice::Lattice,
     material::Material,
     source::Source,
+    util::jacobian,
 };
 
 #[derive(Clone, Debug)]
@@ -118,10 +118,14 @@ impl Cell {
 }
 
 /// See CE page 67
+/// These correspond to either `C_a` and `C_b` for the electric field update, or
+/// `D_a` and `D_b` for the magnetic field update.
+/// We don't calculate a `C_b_i` for each axis (`i`) though and instead do the
+/// scaling by the spatial resolution later.
 #[derive(Clone, Copy, Debug, Default)]
 struct UpdateCoefficients {
     a: f64,
-    b_i: Vector3<f64>,
+    b: f64,
 }
 
 impl UpdateCoefficients {
@@ -130,10 +134,8 @@ impl UpdateCoefficients {
     pub fn new(resolution: &Resolution, sigma: f64, perm: f64) -> Self {
         let sigma_delta_t = sigma * resolution.temporal;
         Self {
-            a: (1.0 - 0.5 * sigma_delta_t / perm) / (1.0 + sigma_delta_t / perm),
-            b_i: resolution
-                .spatial
-                .map(|dx| resolution.temporal / (perm * dx * (1.0 + 0.5 * sigma_delta_t / perm))),
+            a: (1.0 - 0.5 * sigma_delta_t / perm) / (1.0 + 0.5 * sigma_delta_t / perm),
+            b: resolution.temporal / (perm * (1.0 + 0.5 * sigma_delta_t / perm)),
         }
     }
 
@@ -260,8 +262,8 @@ impl Simulation {
     }
 
     pub fn step(&mut self) {
-        let current = SwapBufferIndex::from_tick(self.tick + 1);
         let previous = SwapBufferIndex::from_tick(self.tick);
+        let current = previous.other();
 
         let mut energy = 0.0;
 
@@ -274,15 +276,16 @@ impl Simulation {
 
         // update magnetic field
         for point in self.lattice.iter_points() {
-            let e_curl = curl(
-                point,
-                Vector3::repeat(1),
-                Vector3::zeros(),
+            let e_jacobian = jacobian(
+                &point,
+                &Vector3::repeat(1),
+                &Vector3::zeros(),
                 &self.lattice,
                 |cell| cell.electric_field[previous],
                 &self.resolution.spatial,
                 &self.boundary_conditions,
             );
+            let e_curl = e_jacobian.curl();
 
             let cell = self.lattice.get_mut(&point).unwrap();
 
@@ -303,12 +306,12 @@ impl Simulation {
             let coefficients =
                 *cell.magnetic_coefficients(&self.resolution, &self.physical_constants);
 
+            let psi = Vector3::zeros();
+
             // note: the E and H field equations are almost identical, but here the curl is
             // negative.
             cell.magnetic_field[current] = coefficients.a * cell.magnetic_field[previous]
-                + coefficients
-                    .b_i
-                    .component_mul(&(-e_curl - m_source.component_mul(&self.resolution.spatial)));
+                + coefficients.b * (-e_curl - m_source + psi);
 
             // note: this is just for debugging
             energy += cell.magnetic_field[current].norm_squared()
@@ -319,10 +322,10 @@ impl Simulation {
         // update electric field
         let time = self.time + 0.5 * self.resolution.temporal;
         for point in self.lattice.iter_points() {
-            let h_curl = curl(
-                point,
-                Vector3::zeros(),
-                Vector3::repeat(1),
+            let h_jacobian = jacobian(
+                &point,
+                &Vector3::zeros(),
+                &Vector3::repeat(1),
                 &self.lattice,
                 |cell| {
                     // NOTE: this is `current` not `previous`, because we have already updated the H
@@ -332,6 +335,7 @@ impl Simulation {
                 &self.resolution.spatial,
                 &self.boundary_conditions,
             );
+            let h_curl = h_jacobian.curl();
 
             let cell = self.lattice.get_mut(&point).unwrap();
 
@@ -349,12 +353,12 @@ impl Simulation {
                 Vector3::zeros()
             };
 
+            let psi = Vector3::zeros();
+
             let coefficients =
                 *cell.electric_coefficients(&self.resolution, &self.physical_constants);
             cell.electric_field[current] = coefficients.a * cell.electric_field[previous]
-                + coefficients
-                    .b_i
-                    .component_mul(&(h_curl - j_source.component_mul(&self.resolution.spatial)));
+                + coefficients.b * (h_curl - j_source + psi);
 
             // note: this is just for debugging
             energy += cell.electric_field[current].norm_squared()
@@ -458,72 +462,6 @@ impl Simulation {
             (i as f64 * resolution - origin + x_correction, value)
         })
     }
-}
-
-/// Calculates curl at `x`.
-///
-/// `dx0` and `dx1` specify which points around `x` to use for the central
-/// difference derivatives. `dx0` will be subtracted from `x`` to get `x1` and
-/// `dx1` will be added to `x` to get `x2`. The central difference is then
-/// between `x1` and `x2`. This is useful when we want to e.g. calculate the
-/// curl of the E-field at point x for the H-field. For the H-field the left
-/// point in the E-field for the central difference will be `x-(1, 1, 1)`, and
-/// the right point will be `x`, because in our convention the E-field is
-/// staggered by `(+0.5, +0.5, +0.5)`. To calculate the curl of the H-field for
-/// the E-field you'd pass `(0, 0, 0)` and `(1, 1, 1)` for `dx0` and `dx1`.
-///
-/// `grid`: The grid in which the E-field and H-field are virtually colocated -
-/// meaning they share the same grid cell in the [`Vec`]. For calculations we
-/// use the Yee grid with the cell `(0, 0, 0)` having the E-field for
-/// `(0.5, 0.5, 0.5)`.
-///
-/// `field`: Closure to access the field vector from a cell of which to
-/// calculate the curl.
-///
-/// `spatial_resolution`: Because we use the central difference to approximate
-/// derivates, we need to divide the difference between adjacent field values by
-/// `delta_x`.
-///
-/// Note: This is technically generic over the type of cells in the lattice,
-/// although in practive it will be a [`Cell`] struct.
-///
-/// # Boundary condition
-///
-/// To compute the spatial partial derivatives adjacent field values are needed.
-/// Since these are not available outside of the lattice, all derivatives along
-/// a boundary default to 0. This is effectively a Neumann boundary condition.
-fn curl<T>(
-    x: Point3<usize>,
-    dx0: Vector3<usize>,
-    dx1: Vector3<usize>,
-    grid: &Lattice<T>,
-    field: impl Fn(&T) -> Vector3<f64>,
-    spatial_resolution: &Vector3<f64>,
-    boundary_conditions: &[AnyBoundaryCondition; 3],
-) -> Vector3<f64> {
-    let df = |axis: Axis| {
-        let i = axis.vector_index();
-        let dx0 = dx0[i];
-        let dx1 = dx1[i];
-        let e = axis.basis().into_inner();
-        let dx = spatial_resolution[i];
-
-        let f0 = if x.coords[i] >= dx0 {
-            grid.get(&(x - e * dx0)).map(&field)
-        }
-        else {
-            None
-        };
-        let f1 = grid.get(&(x + e * dx1)).map(&field);
-
-        boundary_conditions[i].apply_df(f0, f1) / dx
-    };
-
-    let dfdx = df(Axis::X);
-    let dfdy = df(Axis::Y);
-    let dfdz = df(Axis::Z);
-
-    Vector3::new(dfdy.z - dfdz.y, dfdz.x - dfdx.z, dfdx.y - dfdy.x)
 }
 
 #[derive(Clone, Copy)]

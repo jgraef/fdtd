@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 pub mod boundary_condition;
 pub mod executor;
 pub mod geometry;
