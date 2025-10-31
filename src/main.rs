@@ -7,14 +7,24 @@ pub mod simulation;
 pub mod source;
 mod util;
 
-use std::time::Duration;
+use std::{
+    path::PathBuf,
+    time::Duration,
+};
 
+use chrono::Local;
 use clap::Parser;
 use color_eyre::eyre::{
     Error,
     eyre,
 };
 use dotenvy::dotenv;
+use egui::{
+    ColorImage,
+    Event,
+    UserData,
+    ViewportCommand,
+};
 use egui_plot::{
     Legend,
     Line,
@@ -22,6 +32,7 @@ use egui_plot::{
     PlotPoint,
     PlotPoints,
 };
+use image::RgbaImage;
 use nalgebra::{
     Isometry3,
     Point3,
@@ -66,6 +77,7 @@ struct Args {}
 struct FdtdApp {
     ticks_per_second: u64,
     executor: Executor,
+    screenshots_path: PathBuf,
 }
 
 impl FdtdApp {
@@ -120,12 +132,45 @@ impl FdtdApp {
         Self {
             ticks_per_second,
             executor,
+            screenshots_path: PathBuf::from("screenshots"),
         }
+    }
+
+    fn save_screenshot(&self, image: &ColorImage) -> Result<(), Error> {
+        if !self.screenshots_path.exists() {
+            std::fs::create_dir_all(&self.screenshots_path)?;
+        }
+        let screenshot_path = self
+            .screenshots_path
+            .join(format!("{}.png", Local::now().format("%Y-%m-%d_%H:%M:%S")));
+        let image = RgbaImage::from_raw(
+            image.width() as u32,
+            image.height() as u32,
+            image.as_raw().to_owned(),
+        )
+        .expect("Invalid image data provided by egui");
+        image.save(&screenshot_path)?;
+        Ok(())
     }
 }
 
 impl eframe::App for FdtdApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        ctx.input(|input| {
+            for event in &input.events {
+                match event {
+                    Event::Screenshot {
+                        viewport_id: _,
+                        user_data: _,
+                        image,
+                    } => {
+                        self.save_screenshot(&image).unwrap();
+                    }
+                    _ => {}
+                }
+            }
+        });
+
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.horizontal(|ui| {
                 if ui.button(".").clicked() {
@@ -150,6 +195,9 @@ impl eframe::App for FdtdApp {
                 {
                     self.executor
                         .set_step_interval(Duration::from_millis(1000 / self.ticks_per_second));
+                }
+                if ui.button("📷").clicked() {
+                    ctx.send_viewport_cmd(ViewportCommand::Screenshot(UserData::default()));
                 }
             });
 
