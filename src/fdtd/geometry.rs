@@ -5,7 +5,7 @@ use nalgebra::{
     Vector3,
 };
 
-use crate::{
+use crate::fdtd::{
     simulation::Simulation,
     util::{
         iter_points,

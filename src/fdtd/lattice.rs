@@ -3,7 +3,7 @@ use nalgebra::{
     Vector3,
 };
 
-use crate::util::{
+use crate::fdtd::util::{
     PointIter,
     iter_points,
 };
@@ -42,6 +42,10 @@ impl<T> Lattice<T> {
 
     pub fn dimensions(&self) -> Vector3<usize> {
         self.dimensions
+    }
+
+    pub fn num_cells(&self) -> usize {
+        self.data.len()
     }
 
     fn check_if_point_is_inside(&self, point: &Point3<usize>) -> bool {

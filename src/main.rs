@@ -1,13 +1,6 @@
 #![allow(dead_code)]
 
-pub mod boundary_condition;
-pub mod executor;
-pub mod geometry;
-pub mod lattice;
-pub mod material;
-pub mod simulation;
-pub mod source;
-mod util;
+pub mod fdtd;
 
 use std::{
     path::PathBuf,
@@ -15,7 +8,10 @@ use std::{
 };
 
 use chrono::Local;
-use clap::Parser;
+use clap::{
+    Parser,
+    Subcommand,
+};
 use color_eyre::eyre::{
     Error,
     eyre,
@@ -42,7 +38,7 @@ use nalgebra::{
     Vector3,
 };
 
-use crate::{
+use crate::fdtd::{
     executor::Executor,
     geometry::Block,
     material::Material,
@@ -60,20 +56,31 @@ fn main() -> Result<(), Error> {
     tracing_subscriber::fmt::init();
     color_eyre::install()?;
 
-    let _args = Args::parse();
-
-    eframe::run_native(
-        "FDTD",
-        Default::default(),
-        Box::new(|_cc| Ok(Box::new(FdtdApp::new()))),
-    )
-    .map_err(|e| eyre!("{e}"))?;
+    let args = Args::parse();
+    match args.command {
+        Command::Fdtd => {
+            eframe::run_native(
+                "FDTD",
+                Default::default(),
+                Box::new(|_cc| Ok(Box::new(FdtdApp::new()))),
+            )
+            .map_err(|e| eyre!("{e}"))?;
+        }
+    }
 
     Ok(())
 }
 
 #[derive(Debug, Parser)]
-struct Args {}
+struct Args {
+    #[clap(subcommand)]
+    command: Command,
+}
+
+#[derive(Debug, Subcommand)]
+enum Command {
+    Fdtd,
+}
 
 #[derive(Debug)]
 struct FdtdApp {
@@ -103,6 +110,8 @@ impl FdtdApp {
             physical_constants,
             resolution,
         );
+
+        println!("Memory usage: {}", simulation.memory_usage_estimate());
 
         simulation.add_material(
             Block {

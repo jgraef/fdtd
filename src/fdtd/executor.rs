@@ -20,7 +20,7 @@ use parking_lot::{
     RwLockWriteGuard,
 };
 
-use crate::simulation::Simulation;
+use crate::fdtd::simulation::Simulation;
 
 #[derive(Clone, Debug)]
 pub struct Executor {

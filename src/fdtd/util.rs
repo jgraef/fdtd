@@ -9,7 +9,7 @@ use nalgebra::{
     Vector3,
 };
 
-use crate::{
+use crate::fdtd::{
     boundary_condition::{
         AnyBoundaryCondition,
         BoundaryCondition,
@@ -94,7 +94,7 @@ impl ExactSizeIterator for PointIter {}
 mod tests {
     use nalgebra::Point3;
 
-    use crate::util::iter_points;
+    use crate::fdtd::util::iter_points;
 
     #[test]
     fn it_iters_inclusive() {

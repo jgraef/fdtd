@@ -17,7 +17,7 @@ use num::{
     Zero,
 };
 
-use crate::{
+use crate::fdtd::{
     boundary_condition::{
         AnyBoundaryCondition,
         default_boundary_conditions,
@@ -25,6 +25,7 @@ use crate::{
     geometry::Rasterize,
     lattice::Lattice,
     material::Material,
+    pml::PmlCell,
     source::Source,
     util::jacobian,
 };
@@ -39,12 +40,19 @@ pub struct Cell {
     /// E
     electric_field: SwapBuffer<Vector3<f64>>,
 
+    /// precomputed coefficients for update equations
+    ///
+    /// These depend on [`Self::material`] and must be recomputed if the
+    /// material changes.
+    magnetic_coefficients: Option<UpdateCoefficients>,
+    electric_coefficients: Option<UpdateCoefficients>,
+
     /// index into `Simulation::source`, defining magnetic and electric current
     /// density functions
     source: Option<usize>,
 
-    magnetic_coefficients: Option<UpdateCoefficients>,
-    electric_coefficients: Option<UpdateCoefficients>,
+    /// data relevant for cells that are PML.
+    pml: Option<PmlCell>,
 }
 
 impl Default for Cell {
@@ -59,9 +67,10 @@ impl Cell {
             material,
             magnetic_field: Default::default(),
             electric_field: Default::default(),
-            source: None,
             magnetic_coefficients: None,
             electric_coefficients: None,
+            source: None,
+            pml: None,
         }
     }
 
@@ -262,6 +271,8 @@ impl Simulation {
     }
 
     pub fn step(&mut self) {
+        // todo: integrate psi auxiliary fields
+
         let previous = SwapBufferIndex::from_tick(self.tick);
         let current = previous.other();
 
@@ -403,6 +414,10 @@ impl Simulation {
         self.lattice
             .dimensions()
             .zip_map(&self.resolution.spatial, |x, dx| x as f64 * dx)
+    }
+
+    pub fn memory_usage_estimate(&self) -> usize {
+        size_of::<Cell>() * self.lattice.num_cells()
     }
 
     pub fn total_energy(&self) -> f64 {
