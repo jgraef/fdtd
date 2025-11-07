@@ -26,7 +26,7 @@ fn vs_main(vertex: VertexInput) -> VertexOutput {
     output.position = vec4f(
         f32((vertex.index & 1) << 2) - 1.0,
         f32((vertex.index & 2) << 1) - 1.0,
-        0.0,
+        1.0, // that's what egui_wgpu clears the depth buffer to
         1.0,
     );
     

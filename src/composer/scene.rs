@@ -1,5 +1,6 @@
 use std::{
     fmt::Debug,
+    marker::PhantomData,
     sync::Arc,
 };
 
@@ -8,6 +9,7 @@ use nalgebra::{
     Isometry3,
     Point3,
     Translation3,
+    UnitQuaternion,
     Vector3,
 };
 use palette::{
@@ -26,19 +28,20 @@ use parry3d::shape::{
 };
 use type_map::concurrent::TypeMap;
 
-use crate::ui::{
-    Camera,
+use crate::composer::renderer::{
+    ClearColor,
     Render,
+    camera::CameraProjection,
 };
 
 #[derive(derive_more::Debug, Default)]
-pub struct World {
+pub struct Scene {
     #[debug("hecs::World {{ ... }}")]
     pub entities: hecs::World,
     pub resources: TypeMap,
 }
 
-impl World {
+impl Scene {
     pub fn add_object(
         &mut self,
         transform: impl Into<Transform>,
@@ -50,25 +53,29 @@ impl World {
     }
 
     pub fn add_camera(&mut self, transform: impl Into<Transform>) -> Entity {
-        self.entities.spawn((transform.into(), Camera::default()))
+        self.entities.spawn((
+            transform.into(),
+            CameraProjection::default(),
+            ClearColor::default(),
+        ))
     }
 }
 
 #[derive(Clone, Debug)]
-pub struct SharedWorld(pub Arc<RwLock<World>>);
+pub struct SharedWorld(pub Arc<RwLock<Scene>>);
 
 impl SharedWorld {
-    pub fn world(&self) -> RwLockReadGuard<'_, World> {
+    pub fn world(&self) -> RwLockReadGuard<'_, Scene> {
         self.0.read()
     }
 
-    pub fn world_mut(&self) -> RwLockWriteGuard<'_, World> {
+    pub fn world_mut(&self) -> RwLockWriteGuard<'_, Scene> {
         self.0.write()
     }
 }
 
-impl From<World> for SharedWorld {
-    fn from(value: World) -> Self {
+impl From<Scene> for SharedWorld {
+    fn from(value: Scene) -> Self {
         Self(Arc::new(RwLock::new(value)))
     }
 }
@@ -110,6 +117,36 @@ pub struct Transform {
     pub transform: Isometry3<f32>,
 }
 
+impl Transform {
+    pub fn translate_local(&mut self, translation: &Translation3<f32>) {
+        self.transform.append_translation_mut(translation);
+    }
+
+    pub fn translate_global(&mut self, translation: &Translation3<f32>) {
+        self.transform.translation.vector +=
+            self.transform.inverse_transform_vector(&translation.vector);
+    }
+
+    pub fn rotate_local(&mut self, rotation: &UnitQuaternion<f32>) {
+        self.transform.append_rotation_mut(rotation);
+    }
+
+    pub fn rotate_global(&mut self, rotation: &UnitQuaternion<f32>) {
+        self.transform.rotation *= rotation;
+    }
+
+    pub fn rotate_around(&mut self, anchor: &Point3<f32>, rotation: &UnitQuaternion<f32>) {
+        self.transform
+            .append_rotation_wrt_point_mut(rotation, anchor);
+    }
+
+    pub fn look_at(eye: &Point3<f32>, target: &Point3<f32>, up: &Vector3<f32>) -> Self {
+        Self {
+            transform: Isometry3::face_towards(eye, target, up),
+        }
+    }
+}
+
 impl From<Isometry3<f32>> for Transform {
     fn from(value: Isometry3<f32>) -> Self {
         Self { transform: value }
@@ -131,6 +168,12 @@ impl From<Vector3<f32>> for Transform {
 impl From<Point3<f32>> for Transform {
     fn from(value: Point3<f32>) -> Self {
         Self::from(value.coords)
+    }
+}
+
+impl From<UnitQuaternion<f32>> for Transform {
+    fn from(value: UnitQuaternion<f32>) -> Self {
+        Self::from(Isometry3::from_parts(Default::default(), value))
     }
 }
 
@@ -160,3 +203,23 @@ impl From<Srgb<u8>> for VisualColor {
         Self::from(value.into_format::<f32>())
     }
 }
+
+pub struct Changed<T> {
+    _phantom: PhantomData<T>,
+}
+
+impl<T> Default for Changed<T> {
+    fn default() -> Self {
+        Self {
+            _phantom: PhantomData,
+        }
+    }
+}
+
+impl<T> Clone for Changed<T> {
+    fn clone(&self) -> Self {
+        Self::default()
+    }
+}
+
+impl<T> Copy for Changed<T> {}

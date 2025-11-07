@@ -31,26 +31,26 @@ struct FragmentOutput {
 
 @vertex
 fn vs_main_solid(vertex: VertexInput, instance: InstanceInput) -> VertexOutput {
-    return vs_main(vertex, instance, instance.solid_color);
+    return vs_main(vertex, instance, instance.solid_color, 0.0);
 }
 
 @vertex
 fn vs_main_wireframe(vertex: VertexInput, instance: InstanceInput) -> VertexOutput {
-    return vs_main(vertex, instance, instance.wireframe_color);
+    return vs_main(vertex, instance, instance.wireframe_color, -0.001);
 }
 
-fn vs_main(vertex: VertexInput, instance: InstanceInput, color: vec4f) -> VertexOutput {
+fn vs_main(vertex: VertexInput, instance: InstanceInput, color: vec4f, depth_bias: f32) -> VertexOutput {
     var output: VertexOutput;
 
-    // create the transform matrix from the row-vectors passed in from the instance buffer. they're row vectors, because nalgebra stores matrices in row-major order.
-    let model_matrix = transpose(mat4x4f(
+    let model_matrix = mat4x4f(
         instance.transform_0,
         instance.transform_1,
         instance.transform_2,
         instance.transform_3
-    ));
+    );
 
     output.position = camera_uniform.view_matrix * model_matrix * vec4f(vertex.position, 1.0);
+    output.position.z += depth_bias;
     output.color = color;
     
     return output;

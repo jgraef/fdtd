@@ -1,9 +1,9 @@
 #![allow(dead_code)]
 
+pub mod composer;
 pub mod fdtd;
 pub mod feec;
 pub mod geometry;
-pub mod ui;
 pub mod util;
 
 use std::sync::Arc;
@@ -34,6 +34,7 @@ use wgpu::{
 };
 
 use crate::{
+    composer::renderer::SurfaceTextureFormat,
     fdtd::FdtdApp,
     feec::FeecApp,
 };
@@ -70,7 +71,7 @@ enum Command {
 
 fn run_app<A: eframe::App>(create_app: impl FnOnce(AppContext) -> A) -> Result<(), Error> {
     eframe::run_native(
-        "FDTD",
+        "cem",
         NativeOptions {
             viewport: ViewportBuilder::default()
                 .with_title("cem")
@@ -161,6 +162,3 @@ pub struct WgpuContext {
     pub queue: Queue,
     pub target_format: TextureFormat,
 }
-
-#[derive(Clone, Copy, Debug)]
-pub struct SurfaceTextureFormat(pub TextureFormat);

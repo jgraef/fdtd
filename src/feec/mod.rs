@@ -17,21 +17,20 @@ use parry3d::shape::Cuboid;
 
 use crate::{
     AppContext,
-    feec::half_edge::{
+    composer::{
+        scene::{
+            Scene,
+            SharedWorld,
+            Transform,
+        },
+        view::SceneView,
+    },
+    geometry::simplex::half_edge::{
         Boundary,
         Coboundary,
         HalfEdgeMesh,
     },
-    geometry::scene::{
-        SharedWorld,
-        World,
-    },
-    ui::SceneView,
 };
-
-pub mod half_edge;
-pub mod platonic_solids;
-pub mod volume_mesh;
 
 #[derive(Debug)]
 pub struct FeecApp {
@@ -42,20 +41,37 @@ pub struct FeecApp {
 
 impl FeecApp {
     pub fn new(context: AppContext) -> Self {
-        let mut world = World::default();
+        let mut world = Scene::default();
 
-        let camera = world.add_camera(Point3::new(0.0, -0.5, 0.0));
+        let camera = world.add_camera(Transform::look_at(
+            &Point3::new(0.1, 0.1, -0.5),
+            &Point3::origin(),
+            &Vector3::y(),
+        ));
 
-        //world.add_object(Isometry3::identity(), Ball::new(0.1), palette::named::RED);
+        let shape = |size| Cuboid::new(Vector3::repeat(size));
+
+        world.add_object(Point3::new(-0.2, 0.0, 0.0), shape(0.1), palette::named::RED);
+        world.add_object(Point3::new(0.2, 0.0, 0.0), shape(0.1), palette::named::BLUE);
         world.add_object(
-            Point3::new(-0.2, 0.0, 0.5),
-            Cuboid::new(Vector3::repeat(0.1)),
-            palette::named::RED,
+            Point3::new(0.0, -0.2, 0.0),
+            shape(0.1),
+            palette::named::LIME,
         );
         world.add_object(
-            Point3::new(0.2, 0.0, 0.5),
-            Cuboid::new(Vector3::repeat(0.1)),
-            palette::named::BLUE,
+            Point3::new(0.0, 0.2, 0.0),
+            shape(0.1),
+            palette::named::YELLOW,
+        );
+        world.add_object(
+            Point3::new(-0.02, -0.02, 0.2),
+            shape(0.05),
+            palette::named::MAGENTA,
+        );
+        world.add_object(
+            Point3::new(0.02, 0.02, -0.2),
+            shape(0.05),
+            palette::named::CYAN,
         );
 
         Self {

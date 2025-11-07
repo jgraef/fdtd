@@ -1,1 +1,2 @@
-pub mod scene;
+pub mod platonic_solids;
+pub mod simplex;

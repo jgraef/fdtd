@@ -5,10 +5,12 @@ use std::{
     ops::{
         Index,
         IndexMut,
+        Neg,
     },
 };
 
 use arrayvec::ArrayVec;
+use num::One;
 
 #[derive(Clone, Debug)]
 pub struct HalfEdgeMesh<V, E, F> {
@@ -237,6 +239,9 @@ impl<V, E, F> Coboundary<EdgeHandle<E>> for HalfEdgeMesh<V, E, F> {
                 faces.push(twin.face);
             }
         }
+        else {
+            todo!("coboundary of a edge that does only have one half-edge?");
+        }
 
         faces.into_iter().map(FaceHandle::new)
     }
@@ -258,5 +263,60 @@ impl<V, E, F> Boundary<FaceHandle<F>> for HalfEdgeMesh<V, E, F> {
         ]
         .into_iter()
         .map(EdgeHandle::new)
+    }
+}
+
+impl<V, E, F> Oriented<EdgeHandle<E>> for HalfEdgeMesh<V, E, F> {
+    fn orientation(&self, simplex: EdgeHandle<E>) -> Orientation {
+        let half_edge_index = self.faces[simplex.index as usize].half_edge;
+        // can this index be u32::MAX?
+
+        let half_edge = &self.half_edges[half_edge_index as usize];
+
+        let twin_index = half_edge.twin;
+        if twin_index != u32::MAX {
+            Orientation::from_bool_canonical(half_edge_index < twin_index)
+        }
+        else {
+            todo!("orientation of a edge that only has one half-edge")
+        }
+    }
+}
+
+pub trait Oriented<S> {
+    fn orientation(&self, simplex: S) -> Orientation;
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum Orientation {
+    Positive,
+    Negative,
+}
+
+impl Orientation {
+    pub fn from_bool_canonical(value: bool) -> Self {
+        if value {
+            Self::Positive
+        }
+        else {
+            Self::Negative
+        }
+    }
+
+    pub fn sign<T>(&self) -> T
+    where
+        T: One + Neg<Output = T>,
+    {
+        match self {
+            Self::Positive => T::one(),
+            Self::Negative => T::neg(T::one()),
+        }
+    }
+
+    pub fn reversed(&self) -> Self {
+        match self {
+            Self::Positive => Self::Negative,
+            Self::Negative => Self::Positive,
+        }
     }
 }
