@@ -79,10 +79,15 @@ impl Default for ClearColor {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct SurfaceTextureFormat(pub wgpu::TextureFormat);
+pub struct RendererConfig {
+    pub target_texture_format: wgpu::TextureFormat,
+    pub depth_texture_format: wgpu::TextureFormat,
+    pub multisample_count: u32,
+}
 
 #[derive(Debug)]
 pub struct Renderer {
+    config: RendererConfig,
     camera_bind_group_layout: wgpu::BindGroupLayout,
     clear_pipeline: Pipeline,
     solid_pipeline: Pipeline,
@@ -96,7 +101,7 @@ pub struct Renderer {
 }
 
 impl Renderer {
-    pub fn new(device: &wgpu::Device, target_texture_format: wgpu::TextureFormat) -> Self {
+    pub fn new(device: &wgpu::Device, config: RendererConfig) -> Self {
         let camera_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("camera_bind_group_layout"),
@@ -114,30 +119,35 @@ impl Renderer {
 
         let clear_pipeline = Pipeline::new(
             device,
+            &config,
             "render/clear",
             wgpu::include_wgsl!("shaders/clear.wgsl"),
             &[&camera_bind_group_layout],
             &[],
+            // we don't need to write depth for the clear pipeline. egui_wgpu clears the depth
+            // buffer when it creates the render pass (to a value of 1.0)
             false,
-            target_texture_format,
+            wgpu::CompareFunction::Always,
             wgpu::PolygonMode::Fill,
             None,
         );
 
         let solid_pipeline = Pipeline::new_objects(
             device,
+            &config,
             "render/object/solid",
             &camera_bind_group_layout,
-            target_texture_format,
+            wgpu::CompareFunction::Less,
             wgpu::PolygonMode::Fill,
             Some("vs_main_solid"),
         );
 
         let wiremesh_pipeline = Pipeline::new_objects(
             device,
+            &config,
             "render/object/wireframe",
             &camera_bind_group_layout,
-            target_texture_format,
+            wgpu::CompareFunction::LessEqual,
             wgpu::PolygonMode::Line,
             Some("vs_main_wireframe"),
         );
@@ -145,6 +155,7 @@ impl Renderer {
         let instance_buffer = InstanceBuffer::new(256, device);
 
         Self {
+            config,
             camera_bind_group_layout,
             clear_pipeline,
             solid_pipeline,
@@ -175,11 +186,10 @@ impl Renderer {
             // this is a but ugly because we can't just use entry().or_insert_with, because
             // we need to access the callback resources during creation.
             // this will only be run once anyway, so it doesn't matter.
-            let target_texture_format = callback_resources
-                .get::<SurfaceTextureFormat>()
-                .expect("surface texture format not set")
-                .0;
-            let renderer = Renderer::new(device, target_texture_format);
+            let renderer_config = *callback_resources
+                .get::<RendererConfig>()
+                .expect("surface texture format not set");
+            let renderer = Renderer::new(device, renderer_config);
             callback_resources.insert(renderer);
         }
 
@@ -219,8 +229,7 @@ impl Renderer {
                 .query_mut::<(&mut CameraProjection, &Viewport)>()
                 .with::<&Changed<Viewport>>()
             {
-                // todo: disabled for debugging
-                //camera_projection.set_viewport(viewport);
+                camera_projection.set_viewport(viewport);
                 commands.remove_one::<Changed<Viewport>>(entity);
             }
 
@@ -356,6 +365,8 @@ impl Renderer {
                     .render_objects(render_pass, &self.draw_commands);
             }
         }
+
+        commands.run_on(&mut scene.entities);
     }
 }
 
@@ -369,12 +380,13 @@ struct Pipeline {
 impl Pipeline {
     pub fn new(
         device: &wgpu::Device,
+        config: &RendererConfig,
         label: &str,
         shader_module_desc: wgpu::ShaderModuleDescriptor,
         bind_group_layouts: &[&wgpu::BindGroupLayout],
         vertex_buffer_layouts: &[wgpu::VertexBufferLayout],
-        depth: bool,
-        target_texture_format: wgpu::TextureFormat,
+        depth_write_enabled: bool,
+        depth_compare: wgpu::CompareFunction,
         polygon_mode: wgpu::PolygonMode,
         vertex_shader_entry_point: Option<&str>,
     ) -> Self {
@@ -407,27 +419,22 @@ impl Pipeline {
             },
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: wgpu::TextureFormat::Depth32Float,
-                // we don't need to write depth for the clear pipeline. egui_wgpu clears the depth
-                // buffer when it creates the render pass.
-                depth_write_enabled: depth,
-                depth_compare: if depth {
-                    // egui_wgpu clears the depth buffer with 1.0. Smaller depth values are closer
-                    // to the camera (-z pointing out of screen)
-                    wgpu::CompareFunction::LessEqual
-                }
-                else {
-                    wgpu::CompareFunction::Always
-                },
+                depth_write_enabled,
+                depth_compare,
                 stencil: Default::default(),
                 bias: Default::default(),
             }),
-            multisample: Default::default(),
+            multisample: wgpu::MultisampleState {
+                count: config.multisample_count,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
             fragment: Some(wgpu::FragmentState {
                 module: &shader_module,
                 entry_point: None,
                 compilation_options: Default::default(),
                 targets: &[Some(wgpu::ColorTargetState {
-                    format: target_texture_format,
+                    format: config.target_texture_format,
                     blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
@@ -445,14 +452,16 @@ impl Pipeline {
 
     pub fn new_objects(
         device: &wgpu::Device,
+        config: &RendererConfig,
         label: &str,
         camera_bind_group_layout: &wgpu::BindGroupLayout,
-        target_texture_format: wgpu::TextureFormat,
+        depth_compare: wgpu::CompareFunction,
         polygon_mode: wgpu::PolygonMode,
         vertex_shader_entry_point: Option<&str>,
     ) -> Self {
         Self::new(
             device,
+            config,
             label,
             wgpu::include_wgsl!("shaders/solid.wgsl"),
             &[&camera_bind_group_layout],
@@ -482,7 +491,7 @@ impl Pipeline {
                 },
             ],
             true,
-            target_texture_format,
+            depth_compare,
             polygon_mode,
             vertex_shader_entry_point,
         )

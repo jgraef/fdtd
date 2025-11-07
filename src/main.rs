@@ -30,11 +30,10 @@ use wgpu::{
     Device,
     Queue,
     SurfaceError,
-    TextureFormat,
 };
 
 use crate::{
-    composer::renderer::SurfaceTextureFormat,
+    composer::renderer::RendererConfig,
     fdtd::FdtdApp,
     feec::FeecApp,
 };
@@ -70,6 +69,8 @@ enum Command {
 }
 
 fn run_app<A: eframe::App>(create_app: impl FnOnce(AppContext) -> A) -> Result<(), Error> {
+    let multisample_count = 4;
+
     eframe::run_native(
         "cem",
         NativeOptions {
@@ -78,6 +79,7 @@ fn run_app<A: eframe::App>(create_app: impl FnOnce(AppContext) -> A) -> Result<(
                 .with_app_id("cem"),
             // corresponds to `wgpu::TextureFormat::Depth32Float` (https://docs.rs/egui-wgpu/0.33.0/src/egui_wgpu/lib.rs.html#375-385)
             depth_buffer: 32,
+            multisampling: multisample_count as u16,
             wgpu_options: WgpuConfiguration {
                 on_surface_error: Arc::new(|error| {
                     if error == SurfaceError::Outdated {
@@ -126,19 +128,25 @@ fn run_app<A: eframe::App>(create_app: impl FnOnce(AppContext) -> A) -> Result<(
                 .as_ref()
                 .expect("missing wgpu render state");
 
+            // some config options our renderer needs to know
+            let renderer_config = RendererConfig {
+                target_texture_format: render_state.target_format,
+                depth_texture_format: wgpu::TextureFormat::Depth32Float,
+                multisample_count,
+            };
+
             {
-                // insert surface texture format into renderer's callback resources.
+                // insert renderer config into renderer's callback resources.
                 let mut renderer = render_state.renderer.write();
-                renderer
-                    .callback_resources
-                    .insert(SurfaceTextureFormat(render_state.target_format));
+                renderer.callback_resources.insert(renderer_config);
             }
 
+            // pass wgpu context to app (e.g. for compute shaders)
             let wgpu_context = WgpuContext {
                 adapter: render_state.adapter.clone(),
                 device: render_state.device.clone(),
                 queue: render_state.queue.clone(),
-                target_format: render_state.target_format,
+                renderer_config,
             };
 
             let app_context = AppContext { wgpu_context };
@@ -160,5 +168,5 @@ pub struct WgpuContext {
     pub adapter: Adapter,
     pub device: Device,
     pub queue: Queue,
-    pub target_format: TextureFormat,
+    pub renderer_config: RendererConfig,
 }

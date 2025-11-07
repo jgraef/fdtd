@@ -11,7 +11,7 @@ struct VertexInput {
 }
 
 struct InstanceInput {
-    // the row vectors of the transform matrix
+    // the column vectors of the transform matrix
     @location(1) transform_0: vec4f,
     @location(2) transform_1: vec4f,
     @location(3) transform_2: vec4f,
@@ -31,15 +31,15 @@ struct FragmentOutput {
 
 @vertex
 fn vs_main_solid(vertex: VertexInput, instance: InstanceInput) -> VertexOutput {
-    return vs_main(vertex, instance, instance.solid_color, 0.0);
+    return vs_main(vertex, instance, instance.solid_color);
 }
 
 @vertex
 fn vs_main_wireframe(vertex: VertexInput, instance: InstanceInput) -> VertexOutput {
-    return vs_main(vertex, instance, instance.wireframe_color, -0.001);
+    return vs_main(vertex, instance, instance.wireframe_color);
 }
 
-fn vs_main(vertex: VertexInput, instance: InstanceInput, color: vec4f, depth_bias: f32) -> VertexOutput {
+fn vs_main(vertex: VertexInput, instance: InstanceInput, color: vec4f) -> VertexOutput {
     var output: VertexOutput;
 
     let model_matrix = mat4x4f(
@@ -50,7 +50,6 @@ fn vs_main(vertex: VertexInput, instance: InstanceInput, color: vec4f, depth_bia
     );
 
     output.position = camera_uniform.view_matrix * model_matrix * vec4f(vertex.position, 1.0);
-    output.position.z += depth_bias;
     output.color = color;
     
     return output;

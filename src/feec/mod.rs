@@ -44,7 +44,7 @@ impl FeecApp {
         let mut world = Scene::default();
 
         let camera = world.add_camera(Transform::look_at(
-            &Point3::new(0.1, 0.1, -0.5),
+            &Point3::new(0.2, 0.2, -2.0),
             &Point3::origin(),
             &Vector3::y(),
         ));
@@ -86,8 +86,8 @@ impl eframe::App for FeecApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.add(SceneView {
-                world: self.world.clone(),
-                camera: Some(self.camera),
+                scene: self.world.clone(),
+                camera_entity: Some(self.camera),
             });
         });
     }

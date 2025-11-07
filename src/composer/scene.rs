@@ -10,6 +10,7 @@ use nalgebra::{
     Point3,
     Translation3,
     UnitQuaternion,
+    UnitVector3,
     Vector3,
 };
 use palette::{
@@ -114,25 +115,29 @@ pub struct SurfaceMesh {
 
 #[derive(Clone, Copy, Debug)]
 pub struct Transform {
+    /// Rotation followed by translation that transforms points from the
+    /// object's local frame to the global frame.
     pub transform: Isometry3<f32>,
 }
 
 impl Transform {
     pub fn translate_local(&mut self, translation: &Translation3<f32>) {
-        self.transform.append_translation_mut(translation);
+        self.transform.translation.vector += self
+            .transform
+            .rotation
+            .transform_vector(&translation.vector);
     }
 
     pub fn translate_global(&mut self, translation: &Translation3<f32>) {
-        self.transform.translation.vector +=
-            self.transform.inverse_transform_vector(&translation.vector);
+        self.transform.translation.vector += &translation.vector;
     }
 
     pub fn rotate_local(&mut self, rotation: &UnitQuaternion<f32>) {
-        self.transform.append_rotation_mut(rotation);
+        self.transform.rotation *= rotation;
     }
 
     pub fn rotate_global(&mut self, rotation: &UnitQuaternion<f32>) {
-        self.transform.rotation *= rotation;
+        self.transform.append_rotation_mut(rotation);
     }
 
     pub fn rotate_around(&mut self, anchor: &Point3<f32>, rotation: &UnitQuaternion<f32>) {
@@ -144,6 +149,19 @@ impl Transform {
         Self {
             transform: Isometry3::face_towards(eye, target, up),
         }
+    }
+
+    /// Pan and tilt object (e.g. a camera) with a given `up` vector.
+    ///
+    /// Pan is the horizontal turning. Tilt is the vertical turning.
+    pub fn pan_tilt(&mut self, pan: f32, tilt: f32, up: &UnitVector3<f32>) {
+        let local_up = self.transform.rotation.inverse_transform_unit_vector(&up);
+        let local_right = Vector3::x_axis();
+
+        let rotation = UnitQuaternion::from_axis_angle(&local_up, -pan)
+            * UnitQuaternion::from_axis_angle(&local_right, tilt);
+
+        self.transform.rotation *= rotation;
     }
 }
 

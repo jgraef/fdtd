@@ -21,17 +21,19 @@ use crate::composer::{
 
 #[derive(Clone, Copy, Debug)]
 pub struct CameraProjection {
-    pub projection: Perspective3<f32>,
+    // note: not public because nalgebra seems to have the z-axis inverted relative to our
+    // coordinate systems
+    projection: Perspective3<f32>,
 }
 
 impl CameraProjection {
     pub fn new(fovy: f32) -> Self {
-        let projection = Perspective3::new(1.0, fovy, 0.0, 100.0);
+        let projection = Perspective3::new(1.0, fovy, 0.1, 100.0);
         tracing::debug!(?projection);
         Self { projection }
     }
 
-    fn set_viewport(&mut self, viewport: &Viewport) {
+    pub(super) fn set_viewport(&mut self, viewport: &Viewport) {
         self.projection.set_aspect(viewport.aspect_ratio());
     }
 }
@@ -109,14 +111,11 @@ impl CameraData {
         clear_color: Option<&ClearColor>,
     ) -> Self {
         let mut projection_matrix = camera_projection.projection.to_homogeneous();
+
         // the projection matrix nalgebra produces has the z-axis inverted relative to
         // our coordinate system, so we fix this here.
         projection_matrix[(2, 2)] *= -1.0;
-        projection_matrix[(3, 2)] *= -1.0;
-        // also nalgebra doesn't set the iten 4,4 to 1 (why?)
-        projection_matrix[(3, 3)] = 1.0;
-
-        //projection_matrix = Matrix4::identity();
+        projection_matrix[(3, 2)] = 1.0;
 
         Self {
             // apply inverse transform of camera, then projection
