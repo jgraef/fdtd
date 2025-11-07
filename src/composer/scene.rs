@@ -33,6 +33,10 @@ use crate::composer::renderer::{
     ClearColor,
     Render,
     camera::CameraProjection,
+    mesh::{
+        SurfaceMesh,
+        WindingOrder,
+    },
 };
 
 #[derive(derive_more::Debug, Default)]
@@ -96,21 +100,23 @@ pub trait Shape: Debug + Send + Sync + 'static {
 impl Shape for Ball {
     fn to_surface_mesh(&self) -> Option<SurfaceMesh> {
         let (vertices, indices) = self.to_trimesh(10, 20);
-        Some(SurfaceMesh { vertices, indices })
+        Some(SurfaceMesh {
+            vertices,
+            indices,
+            winding_order: WindingOrder::Clockwise,
+        })
     }
 }
 
 impl Shape for Cuboid {
     fn to_surface_mesh(&self) -> Option<SurfaceMesh> {
         let (vertices, indices) = self.to_trimesh();
-        Some(SurfaceMesh { vertices, indices })
+        Some(SurfaceMesh {
+            vertices,
+            indices,
+            winding_order: WindingOrder::Clockwise,
+        })
     }
-}
-
-#[derive(Clone, Debug)]
-pub struct SurfaceMesh {
-    pub vertices: Vec<Point3<f32>>,
-    pub indices: Vec<[u32; 3]>,
 }
 
 #[derive(Clone, Copy, Debug)]

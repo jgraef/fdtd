@@ -1,10 +1,10 @@
-struct CameraUniform {
+struct Camera {
     view_matrix: mat4x4f,
     clear_color: vec4f,
 };
 
 @group(0) @binding(0)
-var<uniform> camera_uniform: CameraUniform;
+var<uniform> camera_uniform: Camera;
 
 struct VertexInput {
     @builtin(vertex_index) index: u32,

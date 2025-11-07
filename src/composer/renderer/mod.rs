@@ -8,6 +8,7 @@ use std::{
     },
 };
 
+use bitflags::bitflags;
 use bytemuck::{
     Pod,
     Zeroable,
@@ -18,10 +19,7 @@ use hecs::{
     Entity,
     Satisfies,
 };
-use nalgebra::{
-    Matrix4,
-    Point3,
-};
+use nalgebra::Matrix4;
 use palette::{
     LinSrgba,
     Srgb,
@@ -35,7 +33,10 @@ use crate::composer::{
             CameraResources,
             Viewport,
         },
-        mesh::Mesh,
+        mesh::{
+            Mesh,
+            WindingOrder,
+        },
     },
     scene::{
         Changed,
@@ -89,10 +90,13 @@ pub struct RendererConfig {
 pub struct Renderer {
     config: RendererConfig,
     camera_bind_group_layout: wgpu::BindGroupLayout,
+    instance_bind_group_layout: wgpu::BindGroupLayout,
+    mesh_bind_group_layout: wgpu::BindGroupLayout,
     clear_pipeline: Pipeline,
     solid_pipeline: Pipeline,
     wiremesh_pipeline: Pipeline,
     instance_buffer: InstanceBuffer<InstanceData>,
+    instance_bind_group: wgpu::BindGroup,
     draw_prepared: bool,
     instance_data: Vec<InstanceData>,
     draw_commands: Vec<DrawCommand>,
@@ -117,13 +121,56 @@ impl Renderer {
                 }],
             });
 
+        let instance_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("instance_bind_group_layout"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+            });
+
+        let mesh_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("mesh_bind_group_layout"),
+                entries: &[
+                    // index buffer
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::VERTEX,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    // vertex buffer
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::VERTEX,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                ],
+            });
+
         let clear_pipeline = Pipeline::new(
             device,
             &config,
             "render/clear",
             wgpu::include_wgsl!("shaders/clear.wgsl"),
             &[&camera_bind_group_layout],
-            &[],
             // we don't need to write depth for the clear pipeline. egui_wgpu clears the depth
             // buffer when it creates the render pass (to a value of 1.0)
             false,
@@ -132,11 +179,17 @@ impl Renderer {
             None,
         );
 
+        let render_bind_group_layouts = [
+            &camera_bind_group_layout,
+            &instance_bind_group_layout,
+            &mesh_bind_group_layout,
+        ];
+
         let solid_pipeline = Pipeline::new_objects(
             device,
             &config,
             "render/object/solid",
-            &camera_bind_group_layout,
+            &render_bind_group_layouts,
             wgpu::CompareFunction::Less,
             wgpu::PolygonMode::Fill,
             Some("vs_main_solid"),
@@ -146,21 +199,29 @@ impl Renderer {
             device,
             &config,
             "render/object/wireframe",
-            &camera_bind_group_layout,
+            &render_bind_group_layouts,
             wgpu::CompareFunction::LessEqual,
             wgpu::PolygonMode::Line,
             Some("vs_main_wireframe"),
         );
 
-        let instance_buffer = InstanceBuffer::new(256, device);
+        let instance_buffer = InstanceBuffer::new(256, wgpu::BufferUsages::STORAGE, device);
+        let instance_bind_group = create_instance_bind_group(
+            device,
+            &instance_bind_group_layout,
+            instance_buffer.buffer(),
+        );
 
         Self {
             config,
             camera_bind_group_layout,
+            instance_bind_group_layout,
+            mesh_bind_group_layout,
             clear_pipeline,
             solid_pipeline,
             wiremesh_pipeline,
             instance_buffer,
+            instance_bind_group,
             draw_prepared: false,
             instance_data: vec![],
             draw_commands: vec![],
@@ -215,7 +276,9 @@ impl Renderer {
                 .with::<&Render>()
                 .without::<&Mesh>()
             {
-                if let Some(mesh) = Mesh::from_shape(&*shape.0, device) {
+                if let Some(mesh) =
+                    Mesh::from_shape(&*shape.0, device, &self.mesh_bind_group_layout)
+                {
                     commands.insert_one(entity, mesh);
                 }
                 else {
@@ -276,7 +339,12 @@ impl Renderer {
                 .with::<&Render>()
             {
                 // write per-instance data into a buffer
-                self.instance_data.push(InstanceData::new(transform, color));
+                let mut flags = InstanceFlags::empty();
+                if mesh.winding_order != WindingOrder::CounterClockwise {
+                    flags |= InstanceFlags::REVERSE_WINDING;
+                }
+                self.instance_data
+                    .push(InstanceData::new(transform, color, flags));
 
                 // for now every draw call will only draw one instance, but we could do
                 // instancing for real later.
@@ -293,7 +361,10 @@ impl Renderer {
 
             // send instance data to gpu
             self.instance_buffer
-                .write(&self.instance_data, device, queue);
+                .write(&self.instance_data, device, queue, |buffer| {
+                    self.instance_bind_group =
+                        create_instance_bind_group(device, &self.instance_bind_group_layout, buffer)
+                });
 
             // the current render pass is fully prepared
             self.draw_prepared = true;
@@ -352,7 +423,7 @@ impl Renderer {
             }
 
             // set instance buffer (this is shared between all draw calls)
-            render_pass.set_vertex_buffer(1, self.instance_buffer.buffer().slice(..));
+            render_pass.set_bind_group(1, &self.instance_bind_group, &[]);
 
             // render all objects with the solid and/or wireframe pipeline
             if self.enable_solid {
@@ -370,6 +441,21 @@ impl Renderer {
     }
 }
 
+fn create_instance_bind_group(
+    device: &wgpu::Device,
+    instance_bind_group_layout: &wgpu::BindGroupLayout,
+    buffer: &wgpu::Buffer,
+) -> wgpu::BindGroup {
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("instance bind group"),
+        layout: &instance_bind_group_layout,
+        entries: &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: buffer.as_entire_binding(),
+        }],
+    })
+}
+
 #[derive(Debug)]
 struct Pipeline {
     shader_module: wgpu::ShaderModule,
@@ -384,7 +470,6 @@ impl Pipeline {
         label: &str,
         shader_module_desc: wgpu::ShaderModuleDescriptor,
         bind_group_layouts: &[&wgpu::BindGroupLayout],
-        vertex_buffer_layouts: &[wgpu::VertexBufferLayout],
         depth_write_enabled: bool,
         depth_compare: wgpu::CompareFunction,
         polygon_mode: wgpu::PolygonMode,
@@ -405,14 +490,13 @@ impl Pipeline {
                 module: &shader_module,
                 entry_point: vertex_shader_entry_point,
                 compilation_options: Default::default(),
-                buffers: vertex_buffer_layouts,
+                buffers: &[],
             },
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleList,
                 strip_index_format: None,
                 front_face: wgpu::FrontFace::Ccw,
-                //cull_mode: Some(wgpu::Face::Front),
-                cull_mode: None,
+                cull_mode: Some(wgpu::Face::Back),
                 unclipped_depth: false,
                 polygon_mode,
                 conservative: false,
@@ -454,7 +538,7 @@ impl Pipeline {
         device: &wgpu::Device,
         config: &RendererConfig,
         label: &str,
-        camera_bind_group_layout: &wgpu::BindGroupLayout,
+        bind_group_layouts: &[&wgpu::BindGroupLayout],
         depth_compare: wgpu::CompareFunction,
         polygon_mode: wgpu::PolygonMode,
         vertex_shader_entry_point: Option<&str>,
@@ -464,32 +548,7 @@ impl Pipeline {
             config,
             label,
             wgpu::include_wgsl!("shaders/solid.wgsl"),
-            &[&camera_bind_group_layout],
-            &[
-                wgpu::VertexBufferLayout {
-                    array_stride: std::mem::size_of::<Point3<f32>>() as u64,
-                    step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &wgpu::vertex_attr_array![
-                        // vertex position
-                        0 => Float32x3,
-                    ],
-                },
-                wgpu::VertexBufferLayout {
-                    array_stride: std::mem::size_of::<InstanceData>() as u64,
-                    step_mode: wgpu::VertexStepMode::Instance,
-                    attributes: &wgpu::vertex_attr_array![
-                        // model matrix
-                        1 => Float32x4,
-                        2 => Float32x4,
-                        3 => Float32x4,
-                        4 => Float32x4,
-                        // solid color
-                        5 => Float32x4,
-                        // wireframe color
-                        6 => Float32x4,
-                    ],
-                },
-            ],
+            bind_group_layouts,
             true,
             depth_compare,
             polygon_mode,
@@ -511,15 +570,9 @@ impl Pipeline {
 
         // issue draw commands
         for draw_command in draw_commands {
-            render_pass.set_index_buffer(
-                draw_command.mesh.index_buffer.slice(..),
-                wgpu::IndexFormat::Uint32,
-            );
-            render_pass.set_vertex_buffer(0, draw_command.mesh.vertex_buffer.slice(..));
-
-            render_pass.draw_indexed(
+            render_pass.set_bind_group(2, &draw_command.mesh.bind_group, &[]);
+            render_pass.draw(
                 draw_command.mesh.indices.clone(),
-                draw_command.mesh.base_vertex,
                 draw_command.instances.clone(),
             );
         }
@@ -532,10 +585,12 @@ struct InstanceData {
     transform: Matrix4<f32>,
     solid_color: LinSrgba,
     wireframe_color: LinSrgba,
+    flags: InstanceFlags,
+    _padding: [u32; 3],
 }
 
 impl InstanceData {
-    pub fn new(transform: &Transform, color: &VisualColor) -> Self {
+    pub fn new(transform: &Transform, color: &VisualColor, flags: InstanceFlags) -> Self {
         Self {
             // note that since we pass this through a vertex buffer, we tell wgpu that this is 4
             // vec4f's.
@@ -543,7 +598,17 @@ impl InstanceData {
             // shaders work with linear colors
             solid_color: color.solid_color.into_linear(),
             wireframe_color: color.wireframe_color.into_linear(),
+            flags,
+            _padding: [0; _],
         }
+    }
+}
+
+bitflags! {
+    #[derive(Clone, Copy, Debug, Pod, Zeroable)]
+    #[repr(C)]
+    struct InstanceFlags: u32 {
+        const REVERSE_WINDING = 1;
     }
 }
 
@@ -559,26 +624,34 @@ struct DrawCommand {
 pub struct InstanceBuffer<T> {
     buffer: wgpu::Buffer,
     capacity: usize,
+    usage: wgpu::BufferUsages,
     _phantom: PhantomData<[T]>,
 }
 
 impl<T> InstanceBuffer<T> {
-    pub fn new(initial_capacity: usize, device: &wgpu::Device) -> Self {
+    pub fn new(initial_capacity: usize, usage: wgpu::BufferUsages, device: &wgpu::Device) -> Self {
         Self {
-            buffer: allocate_instance_buffer::<T>(initial_capacity, device),
+            buffer: allocate_instance_buffer::<T>(initial_capacity, usage, device),
             capacity: initial_capacity,
+            usage,
             _phantom: PhantomData,
         }
     }
 
     pub fn resize(&mut self, new_capacity: usize, device: &wgpu::Device) {
         assert!(new_capacity != 0);
-        self.buffer = allocate_instance_buffer::<T>(new_capacity, device);
+        self.buffer = allocate_instance_buffer::<T>(new_capacity, self.usage, device);
     }
 
-    pub fn resize_if_necessary(&mut self, needed_capacity: usize, device: &wgpu::Device) {
+    pub fn resize_if_necessary(
+        &mut self,
+        needed_capacity: usize,
+        device: &wgpu::Device,
+        on_resize: impl FnOnce(&wgpu::Buffer),
+    ) {
         if needed_capacity > self.capacity {
             self.resize((2 * self.capacity).max(needed_capacity), device);
+            on_resize(&self.buffer);
         }
     }
 
@@ -601,8 +674,14 @@ impl<T> InstanceBuffer<T> {
 }
 
 impl<T: Pod> InstanceBuffer<T> {
-    pub fn write(&mut self, data: &[T], device: &wgpu::Device, queue: &wgpu::Queue) {
-        self.resize_if_necessary(data.len(), device);
+    pub fn write(
+        &mut self,
+        data: &[T],
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        on_resize: impl FnOnce(&wgpu::Buffer),
+    ) {
+        self.resize_if_necessary(data.len(), device, on_resize);
         queue.write_buffer(&self.buffer, 0, bytemuck::cast_slice(data));
     }
 }
@@ -631,12 +710,16 @@ fn buffer_size<T>(num_elements: usize) -> u64 {
     (std::mem::size_of::<T>() * num_elements) as u64
 }
 
-fn allocate_instance_buffer<T>(capacity: usize, device: &wgpu::Device) -> wgpu::Buffer {
+fn allocate_instance_buffer<T>(
+    capacity: usize,
+    usage: wgpu::BufferUsages,
+    device: &wgpu::Device,
+) -> wgpu::Buffer {
     let size = buffer_size::<T>(capacity);
     device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("instance buffer"),
         size,
-        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        usage: usage | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     })
 }
