@@ -1,4 +1,7 @@
-use std::path::Path;
+use std::{
+    path::Path,
+    sync::Arc,
+};
 
 use color_eyre::eyre::{
     Error,
@@ -20,10 +23,13 @@ use crate::{
     composer::{
         scene::{
             Scene,
-            SharedWorld,
+            SharedScene,
             Transform,
         },
-        view::SceneView,
+        view::{
+            ClickedEntity,
+            SceneView,
+        },
     },
     geometry::simplex::half_edge::{
         Boundary,
@@ -35,15 +41,16 @@ use crate::{
 #[derive(Debug)]
 pub struct FeecApp {
     context: AppContext,
-    world: SharedWorld,
+    scene: SharedScene,
     camera: Entity,
+    clicked_entity: Option<ClickedEntity>,
 }
 
 impl FeecApp {
     pub fn new(context: AppContext) -> Self {
-        let mut world = Scene::default();
+        let mut scene = Scene::default();
 
-        let camera = world.add_camera(Transform::look_at(
+        let camera = scene.add_camera(Transform::look_at(
             &Point3::new(0.2, 0.2, -2.0),
             &Point3::origin(),
             &Vector3::y(),
@@ -51,33 +58,47 @@ impl FeecApp {
 
         let shape = |size| Cuboid::new(Vector3::repeat(size));
 
-        world.add_object(Point3::new(-0.2, 0.0, 0.0), shape(0.1), palette::named::RED);
-        world.add_object(Point3::new(0.2, 0.0, 0.0), shape(0.1), palette::named::BLUE);
-        world.add_object(
+        scene.add_object(Point3::new(-0.2, 0.0, 0.0), shape(0.1), palette::named::RED);
+        scene.add_object(Point3::new(0.2, 0.0, 0.0), shape(0.1), palette::named::BLUE);
+        scene.add_object(
             Point3::new(0.0, -0.2, 0.0),
             shape(0.1),
             palette::named::LIME,
         );
-        world.add_object(
+        scene.add_object(
             Point3::new(0.0, 0.2, 0.0),
             shape(0.1),
             palette::named::YELLOW,
         );
-        world.add_object(
+        scene.add_object(
             Point3::new(-0.02, -0.02, 0.2),
             shape(0.05),
             palette::named::MAGENTA,
         );
-        world.add_object(
+        scene.add_object(
             Point3::new(0.02, 0.02, -0.2),
             shape(0.05),
             palette::named::CYAN,
         );
 
+        let scene = SharedScene::from(scene);
+
+        context.egui_context.on_begin_pass(
+            "scene octtree update",
+            Arc::new({
+                let scene = scene.clone();
+                move |_| {
+                    let mut scene = scene.write();
+                    scene.update_octtree();
+                }
+            }),
+        );
+
         Self {
             context,
-            world: world.into(),
+            scene,
             camera,
+            clicked_entity: None,
         }
     }
 }
@@ -85,10 +106,25 @@ impl FeecApp {
 impl eframe::App for FeecApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.add(SceneView {
-                scene: self.world.clone(),
-                camera_entity: Some(self.camera),
-            });
+            if let Some(clicked_entity) = &self.clicked_entity {
+                ui.label(format!(
+                    "Selected: {:?} at ({}, {}, {}) with {} distance",
+                    clicked_entity.entity,
+                    clicked_entity.point_clicked.x,
+                    clicked_entity.point_clicked.y,
+                    clicked_entity.point_clicked.z,
+                    clicked_entity.distance_from_camera
+                ));
+            }
+            else {
+                ui.label("Nothing selected");
+            }
+
+            ui.add(
+                SceneView::new(self.scene.clone())
+                    .with_camera(self.camera)
+                    .with_entity_selection(&mut self.clicked_entity),
+            );
         });
     }
 }

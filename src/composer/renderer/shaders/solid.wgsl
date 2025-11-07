@@ -12,6 +12,7 @@ var<storage, read> instance_buffer: array<Instance>;
 @group(2) @binding(0)
 var<storage, read> index_buffer: array<u32>;
 
+// note: we interpret this as an array of f32's, otherwise we'll have to pad the vertices in the buffer.
 @group(2) @binding(1)
 var<storage, read> vertex_buffer: array<f32>;
 

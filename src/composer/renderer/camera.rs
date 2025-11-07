@@ -7,11 +7,15 @@ use bytemuck::{
 use nalgebra::{
     Matrix4,
     Perspective3,
+    Point2,
+    Point3,
+    Vector2,
 };
 use palette::{
     LinSrgba,
     WithAlpha,
 };
+use parry3d::query::Ray;
 use wgpu::util::DeviceExt;
 
 use crate::composer::{
@@ -34,7 +38,36 @@ impl CameraProjection {
     }
 
     pub(super) fn set_viewport(&mut self, viewport: &Viewport) {
-        self.projection.set_aspect(viewport.aspect_ratio());
+        self.set_aspect_ratio(viewport.aspect_ratio());
+    }
+
+    /// Set aspect ratio (width / height)
+    pub fn set_aspect_ratio(&mut self, aspect_ratio: f32) {
+        self.projection.set_aspect(aspect_ratio);
+    }
+
+    pub fn unproject(&self, point: &Point3<f32>) -> Point3<f32> {
+        let mut point = self.projection.unproject_point(point);
+        // nalgebra's projection uses a reversed z-axis
+        point.z *= -1.0;
+        point
+    }
+
+    /// Returns angles (horizontal, vertical) that a point makes with the focal
+    /// point of the camera.
+    pub fn unproject_screen(&self, point: &Point2<f32>) -> Vector2<f32> {
+        let fovy = self.projection.fovy();
+        let aspect_ratio = self.projection.aspect();
+        Vector2::new(point.x * fovy / aspect_ratio, point.y * fovy)
+    }
+
+    /// Shoot ray out of camera through point on screen. pew pew!
+    pub fn shoot_screen_ray(&self, point: &Point2<f32>) -> Ray {
+        let target = self.unproject(&Point3::new(point.x, point.y, 1.0));
+        Ray {
+            origin: Point3::origin(),
+            dir: target.coords.normalize(),
+        }
     }
 }
 

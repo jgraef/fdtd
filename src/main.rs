@@ -149,7 +149,10 @@ fn run_app<A: eframe::App>(create_app: impl FnOnce(AppContext) -> A) -> Result<(
                 renderer_config,
             };
 
-            let app_context = AppContext { wgpu_context };
+            let app_context = AppContext {
+                wgpu_context,
+                egui_context: cc.egui_ctx.clone(),
+            };
 
             Ok(Box::new(create_app(app_context)))
         }),
@@ -161,6 +164,7 @@ fn run_app<A: eframe::App>(create_app: impl FnOnce(AppContext) -> A) -> Result<(
 #[derive(Clone, Debug)]
 pub struct AppContext {
     pub wgpu_context: WgpuContext,
+    pub egui_context: egui::Context,
 }
 
 #[derive(Clone, Debug)]

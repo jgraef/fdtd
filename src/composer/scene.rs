@@ -1,6 +1,7 @@
 use std::{
     fmt::Debug,
     marker::PhantomData,
+    ops::Deref,
     sync::Arc,
 };
 
@@ -23,19 +24,28 @@ use parking_lot::{
     RwLockReadGuard,
     RwLockWriteGuard,
 };
-use parry3d::shape::{
-    Ball,
-    Cuboid,
+use parry3d::{
+    query::Ray,
+    shape::{
+        Ball,
+        Cuboid,
+    },
 };
 use type_map::concurrent::TypeMap;
 
-use crate::composer::renderer::{
-    ClearColor,
-    Render,
-    camera::CameraProjection,
-    mesh::{
-        SurfaceMesh,
-        WindingOrder,
+use crate::composer::{
+    collisions::{
+        OctTree,
+        RayHit,
+    },
+    renderer::{
+        ClearColor,
+        Render,
+        camera::CameraProjection,
+        mesh::{
+            SurfaceMesh,
+            WindingOrder,
+        },
     },
 };
 
@@ -43,6 +53,10 @@ use crate::composer::renderer::{
 pub struct Scene {
     #[debug("hecs::World {{ ... }}")]
     pub entities: hecs::World,
+
+    pub octtree: OctTree,
+
+    // todo: we don't use this at all right now
     pub resources: TypeMap,
 }
 
@@ -64,27 +78,41 @@ impl Scene {
             ClearColor::default(),
         ))
     }
+
+    pub fn cast_ray(
+        &self,
+        ray: &Ray,
+        max_time_of_impact: impl Into<Option<f32>>,
+    ) -> Option<RayHit> {
+        self.octtree
+            .cast_ray(ray, max_time_of_impact, &self.entities)
+    }
+
+    pub fn update_octtree(&mut self) {
+        self.octtree.update(&mut self.entities);
+    }
 }
 
 #[derive(Clone, Debug)]
-pub struct SharedWorld(pub Arc<RwLock<Scene>>);
+pub struct SharedScene(pub Arc<RwLock<Scene>>);
 
-impl SharedWorld {
-    pub fn world(&self) -> RwLockReadGuard<'_, Scene> {
+impl SharedScene {
+    pub fn read(&self) -> RwLockReadGuard<'_, Scene> {
         self.0.read()
     }
 
-    pub fn world_mut(&self) -> RwLockWriteGuard<'_, Scene> {
+    pub fn write(&self) -> RwLockWriteGuard<'_, Scene> {
         self.0.write()
     }
 }
 
-impl From<Scene> for SharedWorld {
+impl From<Scene> for SharedScene {
     fn from(value: Scene) -> Self {
         Self(Arc::new(RwLock::new(value)))
     }
 }
 
+#[derive(Clone, Debug)]
 pub struct SharedShape(pub Arc<dyn Shape>);
 
 impl<S: Shape> From<S> for SharedShape {
@@ -93,7 +121,15 @@ impl<S: Shape> From<S> for SharedShape {
     }
 }
 
-pub trait Shape: Debug + Send + Sync + 'static {
+impl Deref for SharedShape {
+    type Target = dyn Shape;
+
+    fn deref(&self) -> &Self::Target {
+        &*self.0
+    }
+}
+
+pub trait Shape: Debug + Send + Sync + parry3d::shape::Shape + 'static {
     fn to_surface_mesh(&self) -> Option<SurfaceMesh>;
 }
 
