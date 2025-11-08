@@ -37,7 +37,7 @@ use nalgebra::{
 };
 
 use crate::{
-    AppContext,
+    CreateAppContext,
     fdtd::{
         executor::Executor,
         geometry::Block,
@@ -60,7 +60,7 @@ pub struct FdtdApp {
 }
 
 impl FdtdApp {
-    pub fn new(_context: AppContext) -> Self {
+    pub fn new(_context: CreateAppContext) -> Self {
         //let physical_constants = PhysicalConstants::SI;
         let physical_constants = PhysicalConstants::REDUCED;
 

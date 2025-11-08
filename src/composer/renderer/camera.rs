@@ -90,7 +90,6 @@ impl Viewport {
 
 #[derive(Clone, Debug)]
 pub(super) struct CameraResources {
-    pub dirty: bool,
     pub buffer: wgpu::Buffer,
     pub bind_group: wgpu::BindGroup,
 }
@@ -116,17 +115,11 @@ impl CameraResources {
             }],
         });
 
-        Self {
-            dirty: false,
-            buffer,
-            bind_group,
-        }
+        Self { buffer, bind_group }
     }
 
     pub fn update(&mut self, queue: &wgpu::Queue, camera_data: &CameraData) {
         queue.write_buffer(&self.buffer, 0, bytemuck::bytes_of(camera_data));
-
-        self.dirty = false;
     }
 }
 

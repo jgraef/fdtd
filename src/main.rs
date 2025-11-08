@@ -25,15 +25,13 @@ use egui_wgpu::{
     WgpuSetup,
     WgpuSetupCreateNew,
 };
-use wgpu::{
-    Adapter,
-    Device,
-    Queue,
-    SurfaceError,
-};
+use wgpu::SurfaceError;
 
 use crate::{
-    composer::renderer::RendererConfig,
+    composer::renderer::{
+        RendererConfig,
+        WgpuContext,
+    },
     fdtd::FdtdApp,
     feec::FeecApp,
 };
@@ -68,7 +66,7 @@ enum Command {
     Feec,
 }
 
-fn run_app<A: eframe::App>(create_app: impl FnOnce(AppContext) -> A) -> Result<(), Error> {
+fn run_app<A: eframe::App>(create_app: impl FnOnce(CreateAppContext) -> A) -> Result<(), Error> {
     let multisample_count = 4;
 
     eframe::run_native(
@@ -135,12 +133,6 @@ fn run_app<A: eframe::App>(create_app: impl FnOnce(AppContext) -> A) -> Result<(
                 multisample_count,
             };
 
-            {
-                // insert renderer config into renderer's callback resources.
-                let mut renderer = render_state.renderer.write();
-                renderer.callback_resources.insert(renderer_config);
-            }
-
             // pass wgpu context to app (e.g. for compute shaders)
             let wgpu_context = WgpuContext {
                 adapter: render_state.adapter.clone(),
@@ -149,12 +141,17 @@ fn run_app<A: eframe::App>(create_app: impl FnOnce(AppContext) -> A) -> Result<(
                 renderer_config,
             };
 
-            let app_context = AppContext {
+            // store wgpu context in egui context
+            cc.egui_ctx.data_mut(|data| {
+                data.insert_temp(egui::Id::NULL, wgpu_context.clone());
+            });
+
+            let create_app_context = CreateAppContext {
                 wgpu_context,
                 egui_context: cc.egui_ctx.clone(),
             };
 
-            Ok(Box::new(create_app(app_context)))
+            Ok(Box::new(create_app(create_app_context)))
         }),
     )
     .map_err(|e| eyre!("{e}"))?;
@@ -162,15 +159,7 @@ fn run_app<A: eframe::App>(create_app: impl FnOnce(AppContext) -> A) -> Result<(
 }
 
 #[derive(Clone, Debug)]
-pub struct AppContext {
+pub struct CreateAppContext {
     pub wgpu_context: WgpuContext,
     pub egui_context: egui::Context,
-}
-
-#[derive(Clone, Debug)]
-pub struct WgpuContext {
-    pub adapter: Adapter,
-    pub device: Device,
-    pub queue: Queue,
-    pub renderer_config: RendererConfig,
 }

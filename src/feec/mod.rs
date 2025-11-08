@@ -1,7 +1,4 @@
-use std::{
-    path::Path,
-    sync::Arc,
-};
+use std::path::Path;
 
 use color_eyre::eyre::{
     Error,
@@ -19,11 +16,11 @@ use nalgebra::{
 use parry3d::shape::Cuboid;
 
 use crate::{
-    AppContext,
+    CreateAppContext,
     composer::{
+        renderer::Renderer,
         scene::{
             Scene,
-            SharedScene,
             Transform,
         },
         view::{
@@ -40,14 +37,16 @@ use crate::{
 
 #[derive(Debug)]
 pub struct FeecApp {
-    context: AppContext,
-    scene: SharedScene,
+    context: CreateAppContext,
+    scene: Scene,
+    renderer: Renderer,
     camera: Entity,
     clicked_entity: Option<ClickedEntity>,
+    debug: bool,
 }
 
 impl FeecApp {
-    pub fn new(context: AppContext) -> Self {
+    pub fn new(context: CreateAppContext) -> Self {
         let mut scene = Scene::default();
 
         let camera = scene.add_camera(Transform::look_at(
@@ -81,30 +80,34 @@ impl FeecApp {
             palette::named::CYAN,
         );
 
-        let scene = SharedScene::from(scene);
-
-        context.egui_context.on_begin_pass(
-            "scene octtree update",
-            Arc::new({
-                let scene = scene.clone();
-                move |_| {
-                    let mut scene = scene.write();
-                    scene.update_octtree();
-                }
-            }),
-        );
+        let renderer = Renderer::new(context.wgpu_context.clone());
 
         Self {
             context,
             scene,
+            renderer,
             camera,
             clicked_entity: None,
+            debug: false,
         }
     }
 }
 
 impl eframe::App for FeecApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.scene.update_octtree();
+        self.renderer.prepare_world(&mut self.scene);
+
+        ctx.input(|input| {
+            self.debug ^= input.key_pressed(egui::Key::F5);
+        });
+
+        if self.debug {
+            egui::SidePanel::left("debug").show(ctx, |ui| {
+                ctx.inspection_ui(ui);
+            });
+        }
+
         egui::CentralPanel::default().show(ctx, |ui| {
             if let Some(clicked_entity) = &self.clicked_entity {
                 ui.label(format!(
@@ -121,7 +124,7 @@ impl eframe::App for FeecApp {
             }
 
             ui.add(
-                SceneView::new(self.scene.clone())
+                SceneView::new(&mut self.scene, &mut self.renderer)
                     .with_camera(self.camera)
                     .with_entity_selection(&mut self.clicked_entity),
             );

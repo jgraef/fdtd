@@ -19,11 +19,6 @@ use palette::{
     Srgba,
     WithAlpha,
 };
-use parking_lot::{
-    RwLock,
-    RwLockReadGuard,
-    RwLockWriteGuard,
-};
 use parry3d::{
     query::Ray,
     shape::{
@@ -90,25 +85,6 @@ impl Scene {
 
     pub fn update_octtree(&mut self) {
         self.octtree.update(&mut self.entities);
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct SharedScene(pub Arc<RwLock<Scene>>);
-
-impl SharedScene {
-    pub fn read(&self) -> RwLockReadGuard<'_, Scene> {
-        self.0.read()
-    }
-
-    pub fn write(&self) -> RwLockWriteGuard<'_, Scene> {
-        self.0.write()
-    }
-}
-
-impl From<Scene> for SharedScene {
-    fn from(value: Scene) -> Self {
-        Self(Arc::new(RwLock::new(value)))
     }
 }
 

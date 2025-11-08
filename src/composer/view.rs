@@ -8,28 +8,38 @@ use nalgebra::{
 
 use crate::composer::{
     renderer::{
+        DrawFrame,
         Renderer,
-        camera::CameraProjection,
+        camera::{
+            CameraProjection,
+            Viewport,
+        },
     },
     scene::{
-        SharedScene,
+        Changed,
+        Scene,
         Transform,
     },
 };
 
-#[derive(Debug)]
+#[derive(derive_more::Debug)]
 pub struct SceneView<'a> {
-    scene: SharedScene,
+    scene: &'a mut Scene,
+    renderer: &'a mut Renderer,
     camera_entity: Option<hecs::Entity>,
     clicked_entity: Option<&'a mut Option<ClickedEntity>>,
+    #[debug(ignore)]
+    command_buffer: hecs::CommandBuffer,
 }
 
 impl<'a> SceneView<'a> {
-    pub fn new(scene: SharedScene) -> Self {
+    pub fn new(scene: &'a mut Scene, renderer: &'a mut Renderer) -> Self {
         Self {
             scene,
+            renderer,
             camera_entity: None,
             clicked_entity: None,
+            command_buffer: hecs::CommandBuffer::new(),
         }
     }
 
@@ -53,6 +63,31 @@ impl<'a> SceneView<'a> {
             return;
         };
 
+        // update camera's viewport
+        if let Ok(viewport) = self
+            .scene
+            .entities
+            .query_one_mut::<&mut Viewport>(camera_entity)
+        {
+            if viewport.viewport != response.rect {
+                tracing::debug!(viewport = ?response.rect, "viewport changed");
+                viewport.viewport = response.rect;
+                self.command_buffer
+                    .insert_one(camera_entity, Changed::<Viewport>::default());
+            }
+        }
+        else {
+            self.command_buffer.insert_one(
+                camera_entity,
+                Viewport {
+                    viewport: response.rect,
+                },
+            );
+        }
+
+        // we could insert Changed<_> for camera movement and then only update the
+        // camera buffer when it actually changes
+
         response.ctx.input(|input| {
             for event in &input.events {
                 match event {
@@ -61,9 +96,8 @@ impl<'a> SceneView<'a> {
                         delta: egui::Vec2 { x: _, y: delta },
                         modifiers: _,
                     } => {
-                        let mut scene = self.scene.write();
-
-                        if let Ok(camera_transform) = scene
+                        if let Ok(camera_transform) = self
+                            .scene
                             .entities
                             .query_one_mut::<&mut Transform>(camera_entity)
                         {
@@ -99,10 +133,8 @@ impl<'a> SceneView<'a> {
         };
 
         if response.dragged_by(egui::PointerButton::Primary) {
-            let mut scene = self.scene.write();
-
             if let Ok((camera_transform, camera_projection)) =
-                scene
+                self.scene
                     .entities
                     .query_one_mut::<(&mut Transform, &CameraProjection)>(camera_entity)
             {
@@ -116,9 +148,8 @@ impl<'a> SceneView<'a> {
             }
         }
         else if response.dragged_by(egui::PointerButton::Secondary) {
-            let mut scene = self.scene.write();
-
-            if let Ok(camera_transform) = scene
+            if let Ok(camera_transform) = self
+                .scene
                 .entities
                 .query_one_mut::<&mut Transform>(camera_entity)
             {
@@ -132,14 +163,15 @@ impl<'a> SceneView<'a> {
             }
         }
 
+        // todo: always raycast and return the hovered entity. the consumer can then
+        // checked if it was clicked or not.
         if response.clicked_by(egui::PointerButton::Primary) {
             if let Some(clicked_entity) = &mut self.clicked_entity {
                 **clicked_entity = None;
 
                 if let Some(pointer_position) = interact_pointer_pos() {
-                    let scene = self.scene.read();
-
-                    if let Ok(mut query) = scene
+                    if let Ok(mut query) = self
+                        .scene
                         .entities
                         .query_one::<(&Transform, &CameraProjection)>(camera_entity)
                     {
@@ -148,7 +180,7 @@ impl<'a> SceneView<'a> {
                                 .shoot_screen_ray(&pointer_position)
                                 .transform_by(&camera_transform.transform);
 
-                            if let Some(ray_hit) = scene.cast_ray(&ray, None) {
+                            if let Some(ray_hit) = self.scene.cast_ray(&ray, None) {
                                 tracing::debug!(?ray_hit, ?ray, "ray hit");
                                 let point_clicked = ray.point_at(ray_hit.time_of_impact);
 
@@ -173,18 +205,22 @@ impl<'a> egui::Widget for SceneView<'a> {
     fn ui(mut self, ui: &mut egui::Ui) -> egui::Response {
         let response = ui.allocate_response(ui.available_size(), egui::Sense::click_and_drag());
 
+        // handle inputs
         if response.contains_pointer() {
             self.handle_input(&response);
         }
 
-        let painter = ui.painter();
-        painter.add(egui_wgpu::Callback::new_paint_callback(
-            response.rect,
-            RenderCallback {
-                scene: self.scene.clone(),
-                camera: self.camera_entity,
-            },
-        ));
+        // apply any buffered commands to scene
+        self.command_buffer.run_on(&mut self.scene.entities);
+
+        // draw frame
+        if let Some(draw_frame) = self.renderer.prepare_frame(&self.scene, self.camera_entity) {
+            let painter = ui.painter();
+            painter.add(egui_wgpu::Callback::new_paint_callback(
+                response.rect,
+                RenderCallback { draw_frame },
+            ));
+        }
 
         response
     }
@@ -192,57 +228,17 @@ impl<'a> egui::Widget for SceneView<'a> {
 
 #[derive(Debug)]
 struct RenderCallback {
-    scene: SharedScene,
-    camera: Option<hecs::Entity>,
+    draw_frame: DrawFrame,
 }
 
 impl egui_wgpu::CallbackTrait for RenderCallback {
-    fn prepare(
-        &self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        _screen_descriptor: &egui_wgpu::ScreenDescriptor,
-        _egui_encoder: &mut wgpu::CommandEncoder,
-        callback_resources: &mut egui_wgpu::CallbackResources,
-    ) -> Vec<wgpu::CommandBuffer> {
-        let mut scene = self.scene.write();
-
-        let renderer = Renderer::get_mut_or_init(callback_resources, device);
-        renderer.prepare(&mut scene, device, queue);
-
-        vec![]
-    }
-
-    fn finish_prepare(
-        &self,
-        _device: &wgpu::Device,
-        _queue: &wgpu::Queue,
-        _egui_encoder: &mut wgpu::CommandEncoder,
-        callback_resources: &mut egui_wgpu::CallbackResources,
-    ) -> Vec<wgpu::CommandBuffer> {
-        if let Some(renderer) = Renderer::get_mut(callback_resources) {
-            renderer.finish_prepare();
-        }
-
-        vec![]
-    }
-
     fn paint(
         &self,
-        info: egui::PaintCallbackInfo,
+        _info: egui::PaintCallbackInfo,
         render_pass: &mut wgpu::RenderPass<'static>,
-        callback_resources: &egui_wgpu::CallbackResources,
+        _callback_resources: &egui_wgpu::CallbackResources,
     ) {
-        if let Some(renderer) = Renderer::get(callback_resources) {
-            if let Some(camera_entity) = self.camera {
-                let mut scene = self.scene.write();
-
-                renderer.render(camera_entity, &mut scene, &info, render_pass);
-            }
-            else {
-                // todo: just clear with black?
-            }
-        }
+        self.draw_frame.render(render_pass);
     }
 }
 
