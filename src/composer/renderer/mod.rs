@@ -366,10 +366,11 @@ impl Renderer {
             let instances = first_instance..(first_instance + 1);
             first_instance += 1;
 
-            // prepare draw commands for actual drawing in `paint`
+            // prepare draw commands
             draw_commands.push(DrawCommand {
                 instances,
-                mesh: mesh.clone(),
+                indices: mesh.indices.clone(),
+                bind_group: mesh.bind_group.clone(),
             });
         }
 
@@ -553,9 +554,8 @@ bitflags! {
 #[derive(Debug)]
 struct DrawCommand {
     instances: Range<u32>,
-    // note: we could also just store the entity id here and lookup the mesh in the paint call. but
-    // `Mesh` is just 2 Arcs and a couple of integers.
-    mesh: Mesh,
+    indices: Range<u32>,
+    bind_group: wgpu::BindGroup,
 }
 
 #[derive(Debug)]
@@ -606,11 +606,8 @@ fn render_objects_with_pipeline(
 
     // issue draw commands
     for draw_command in draw_commands {
-        render_pass.set_bind_group(2, &draw_command.mesh.bind_group, &[]);
-        render_pass.draw(
-            draw_command.mesh.indices.clone(),
-            draw_command.instances.clone(),
-        );
+        render_pass.set_bind_group(2, &draw_command.bind_group, &[]);
+        render_pass.draw(draw_command.indices.clone(), draw_command.instances.clone());
     }
 }
 
