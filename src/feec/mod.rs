@@ -1,9 +1,16 @@
-use std::path::Path;
+use std::{
+    f32,
+    path::{
+        Path,
+        PathBuf,
+    },
+};
 
 use color_eyre::eyre::{
     Error,
     OptionExt,
 };
+use egui_file_dialog::FileDialog;
 use hecs::Entity;
 use nalgebra::{
     Matrix3,
@@ -16,17 +23,19 @@ use nalgebra::{
 use parry3d::shape::Cuboid;
 
 use crate::{
+    CreateApp,
     CreateAppContext,
     composer::{
+        debug::DebugPanel,
         renderer::Renderer,
         scene::{
             Label,
             Scene,
             Transform,
-        },
-        view::{
-            ScenePointer,
-            SceneView,
+            view::{
+                ScenePointer,
+                SceneView,
+            },
         },
     },
     geometry::simplex::half_edge::{
@@ -37,17 +46,27 @@ use crate::{
 };
 
 #[derive(Debug)]
-pub struct FeecApp {
-    context: CreateAppContext,
+pub struct App {
     scene: Scene,
     renderer: Renderer,
     camera: Entity,
     scene_pointer: ScenePointer,
-    debug: bool,
+    debug: DebugPanel,
+    file_dialog: FileDialog,
 }
 
-impl FeecApp {
-    pub fn new(context: CreateAppContext) -> Self {
+impl App {
+    pub fn new(context: CreateAppContext, _args: Args) -> Self {
+        context.egui_context.all_styles_mut(|style| {
+            style.compact_menu_style = false;
+            // this doesn't seem to work :(
+            style.spacing.menu_spacing = 0.0;
+        });
+
+        let file_dialog = FileDialog::new()
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::default())
+            .add_file_filter_extensions("NEC", vec!["nec"]);
+
         let mut scene = Scene::default();
 
         let camera = scene.add_camera(Transform::look_at(
@@ -56,58 +75,121 @@ impl FeecApp {
             &Vector3::y(),
         ));
 
-        let shape = |size| Cuboid::new(Vector3::repeat(size));
-
-        scene.add_object(Point3::new(-0.2, 0.0, 0.0), shape(0.1), palette::named::RED);
-        scene.add_object(Point3::new(0.2, 0.0, 0.0), shape(0.1), palette::named::BLUE);
-        scene.add_object(
-            Point3::new(0.0, -0.2, 0.0),
-            shape(0.1),
-            palette::named::LIME,
-        );
-        scene.add_object(
-            Point3::new(0.0, 0.2, 0.0),
-            shape(0.1),
-            palette::named::YELLOW,
-        );
-        scene.add_object(
-            Point3::new(-0.02, -0.02, 0.2),
-            shape(0.05),
-            palette::named::MAGENTA,
-        );
-        scene.add_object(
-            Point3::new(0.02, 0.02, -0.2),
-            shape(0.05),
-            palette::named::CYAN,
-        );
-
+        populate_scene(&mut scene);
         let renderer = Renderer::new(context.wgpu_context.clone());
 
         Self {
-            context,
             scene,
             renderer,
             camera,
             scene_pointer: ScenePointer::default(),
-            debug: false,
+            debug: DebugPanel::default(),
+            file_dialog,
         }
+    }
+
+    fn file_menu(&mut self, ui: &mut egui::Ui) {
+        ui.menu_button("File", |ui| {
+            ui.set_min_width(150.0);
+
+            if ui.button("New File").clicked() {
+                tracing::debug!("todo: new file");
+            }
+
+            ui.separator();
+
+            if ui.button("Open File").clicked() {
+                self.file_dialog.set_user_data(FileDialogAction::Open);
+                self.file_dialog.pick_file();
+            }
+            ui.menu_button("Open Recent", |ui| {
+                for i in 0..5 {
+                    if ui.button(format!("~/placeholder/{i}.foo")).clicked() {
+                        tracing::debug!("todo: open recent file");
+                    }
+                }
+            });
+
+            ui.separator();
+
+            if ui.button("Save").clicked() {
+                tracing::debug!("todo: save");
+            }
+            if ui.button("Save As").clicked() {
+                self.file_dialog.set_user_data(FileDialogAction::SaveAs);
+                self.file_dialog.pick_file();
+            }
+
+            ui.separator();
+
+            if ui.button("Preferences").clicked() {
+                tracing::debug!("todo: preferences");
+            }
+
+            ui.separator();
+
+            if ui.button("Close File").clicked() {
+                tracing::debug!("todo: close file");
+            }
+
+            ui.separator();
+
+            if ui.button("Exit").clicked() {
+                tracing::info!("App close requested by user");
+                ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+        });
+    }
+
+    fn edit_menu(&mut self, ui: &mut egui::Ui) {
+        ui.menu_button("Edit", |ui| {
+            ui.set_min_width(150.0);
+
+            if ui.button("Undo").clicked() {
+                tracing::debug!("todo: undo");
+            }
+            if ui.button("Redo").clicked() {
+                tracing::debug!("todo: redo");
+            }
+
+            if ui.button("Cut").clicked() {
+                tracing::debug!("todo: cut");
+            }
+            if ui.button("Copy").clicked() {
+                tracing::debug!("todo: copy");
+            }
+            if ui.button("Past").clicked() {
+                tracing::debug!("todo: paste");
+            }
+        });
     }
 }
 
-impl eframe::App for FeecApp {
+impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.scene.update_octtree();
         self.renderer.prepare_world(&mut self.scene);
 
-        ctx.input(|input| {
-            self.debug ^= input.key_pressed(egui::Key::F5);
+        egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
+            egui::MenuBar::new().ui(ui, |ui| {
+                self.file_menu(ui);
+                self.edit_menu(ui);
+                ui.menu_button("Selection", |ui| {
+                    todo_label(ui);
+                });
+                ui.menu_button("View", |ui| {
+                    todo_label(ui);
+                });
+                ui.menu_button("Run", |ui| {
+                    todo_label(ui);
+                });
+                ui.menu_button("Help", |ui| {
+                    todo_label(ui);
+                });
+            });
         });
 
-        if self.debug {
-            egui::SidePanel::left("debug").show(ctx, |ui| {
-                ctx.inspection_ui(ui);
-            });
-        }
+        self.debug.show(ctx);
 
         egui::CentralPanel::default().show(ctx, |ui| {
             if let Some(entity_under_pointer) = &self.scene_pointer.entity_under_pointer {
@@ -139,6 +221,10 @@ impl eframe::App for FeecApp {
                     .with_scene_pointer(&mut self.scene_pointer),
             );
         });
+
+        if let Some(file) = self.file_dialog.update(ctx).picked() {
+            tracing::debug!(file = %file.display(), "File picked");
+        }
     }
 }
 
@@ -267,4 +353,54 @@ fn generate_test_mesh() -> HalfEdgeMesh<Vertex, Edge, Face> {
             }
         },
     )
+}
+
+fn populate_scene(scene: &mut Scene) {
+    let shape = |size| Cuboid::new(Vector3::repeat(size));
+
+    scene.add_object(Point3::new(-0.2, 0.0, 0.0), shape(0.1), palette::named::RED);
+    scene.add_object(Point3::new(0.2, 0.0, 0.0), shape(0.1), palette::named::BLUE);
+    scene.add_object(
+        Point3::new(0.0, -0.2, 0.0),
+        shape(0.1),
+        palette::named::LIME,
+    );
+    scene.add_object(
+        Point3::new(0.0, 0.2, 0.0),
+        shape(0.1),
+        palette::named::YELLOW,
+    );
+    scene.add_object(
+        Point3::new(-0.02, -0.02, 0.2),
+        shape(0.05),
+        palette::named::MAGENTA,
+    );
+    scene.add_object(
+        Point3::new(0.02, 0.02, -0.2),
+        shape(0.05),
+        palette::named::CYAN,
+    );
+}
+
+#[derive(Debug, clap::Parser)]
+pub struct Args {
+    file: Option<PathBuf>,
+}
+
+impl CreateApp for Args {
+    type App = App;
+
+    fn create_app(self, context: CreateAppContext) -> Self::App {
+        App::new(context, self)
+    }
+}
+
+fn todo_label(ui: &mut egui::Ui) {
+    ui.label("todo");
+}
+
+#[derive(Clone, Copy, Debug)]
+enum FileDialogAction {
+    Open,
+    SaveAs,
 }

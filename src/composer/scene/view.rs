@@ -55,6 +55,10 @@ impl<'a> SceneView<'a> {
 
     /// Handle widget's inputs
     fn handle_input(&mut self, response: &egui::Response) {
+        // note
+        // we could insert Changed<_> for camera movement and then only update the
+        // camera buffer when it actually changes
+
         let camera_pan_tilt_speed = Vector2::repeat(1.0);
         let camera_translation_speed = Vector3::new(0.5, 0.5, 0.1);
 
@@ -88,33 +92,34 @@ impl<'a> SceneView<'a> {
             );
         }
 
-        // we could insert Changed<_> for camera movement and then only update the
-        // camera buffer when it actually changes
-
-        response.ctx.input(|input| {
-            for event in &input.events {
-                match event {
-                    egui::Event::MouseWheel {
-                        unit: egui::MouseWheelUnit::Line,
-                        delta: egui::Vec2 { x: _, y: delta },
-                        modifiers: _,
-                    } => {
-                        if let Ok(camera_transform) = self
-                            .scene
-                            .entities
-                            .query_one_mut::<&mut Transform>(camera_entity)
-                        {
-                            camera_transform.translate_local(&Translation3::new(
-                                0.0,
-                                0.0,
-                                camera_translation_speed.z * *delta,
-                            ));
+        // some events (i.e. mouse wheel) we have to read manually, but we only want to
+        // do this when the mouse cursor is on top of the view.
+        if response.contains_pointer() {
+            response.ctx.input(|input| {
+                for event in &input.events {
+                    match event {
+                        egui::Event::MouseWheel {
+                            unit: egui::MouseWheelUnit::Line,
+                            delta: egui::Vec2 { x: _, y: delta },
+                            modifiers: _,
+                        } => {
+                            if let Ok(camera_transform) = self
+                                .scene
+                                .entities
+                                .query_one_mut::<&mut Transform>(camera_entity)
+                            {
+                                camera_transform.translate_local(&Translation3::new(
+                                    0.0,
+                                    0.0,
+                                    camera_translation_speed.z * *delta,
+                                ));
+                            }
                         }
+                        _ => {}
                     }
-                    _ => {}
                 }
-            }
-        });
+            });
+        }
 
         let drag_delta = || {
             // drag delta in normalized screen coordinates `[-1, 1]^2`
@@ -241,23 +246,27 @@ fn shoot_ray_from_camera(
 
 impl<'a> egui::Widget for SceneView<'a> {
     fn ui(mut self, ui: &mut egui::Ui) -> egui::Response {
-        let response = ui.allocate_response(ui.available_size(), egui::Sense::click_and_drag());
+        let response = ui.allocate_response(
+            ui.available_size(),
+            egui::Sense::HOVER | egui::Sense::CLICK | egui::Sense::DRAG,
+        );
 
-        // handle inputs
-        if response.contains_pointer() {
-            self.handle_input(&response);
-        }
+        // handle inputs (and resizing)
+        self.handle_input(&response);
 
         // apply any buffered commands to scene
         self.command_buffer.run_on(&mut self.scene.entities);
 
-        // draw frame
-        if let Some(draw_command) = self.renderer.prepare_frame(&self.scene, self.camera_entity) {
-            let painter = ui.painter();
-            painter.add(egui_wgpu::Callback::new_paint_callback(
-                response.rect,
-                draw_command,
-            ));
+        if !ui.is_sizing_pass() && ui.is_rect_visible(response.rect) {
+            // draw frame
+            if let Some(draw_command) = self.renderer.prepare_frame(&self.scene, self.camera_entity)
+            {
+                let painter = ui.painter();
+                painter.add(egui_wgpu::Callback::new_paint_callback(
+                    response.rect,
+                    draw_command,
+                ));
+            }
         }
 
         response

@@ -1,3 +1,6 @@
+pub mod collisions;
+pub mod view;
+
 use std::{
     borrow::Cow,
     fmt::{
@@ -35,11 +38,6 @@ use parry3d::{
 use type_map::concurrent::TypeMap;
 
 use crate::composer::{
-    collisions::{
-        Collides,
-        OctTree,
-        RayHit,
-    },
     renderer::{
         ClearColor,
         Render,
@@ -52,6 +50,11 @@ use crate::composer::{
             SurfaceMesh,
             WindingOrder,
         },
+    },
+    scene::collisions::{
+        Collides,
+        OctTree,
+        RayHit,
     },
 };
 

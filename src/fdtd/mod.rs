@@ -37,6 +37,7 @@ use nalgebra::{
 };
 
 use crate::{
+    CreateApp,
     CreateAppContext,
     fdtd::{
         executor::Executor,
@@ -53,14 +54,14 @@ use crate::{
 };
 
 #[derive(Debug)]
-pub struct FdtdApp {
+pub struct App {
     ticks_per_second: u64,
     executor: Executor,
     screenshots_path: PathBuf,
 }
 
-impl FdtdApp {
-    pub fn new(_context: CreateAppContext) -> Self {
+impl App {
+    pub fn new(_context: CreateAppContext, _args: Args) -> Self {
         //let physical_constants = PhysicalConstants::SI;
         let physical_constants = PhysicalConstants::REDUCED;
 
@@ -135,7 +136,7 @@ impl FdtdApp {
     }
 }
 
-impl eframe::App for FdtdApp {
+impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         ctx.input(|input| {
             for event in &input.events {
@@ -236,5 +237,16 @@ impl eframe::App for FdtdApp {
                 ))
             });
         });
+    }
+}
+
+#[derive(Debug, clap::Parser)]
+pub struct Args {}
+
+impl CreateApp for Args {
+    type App = App;
+
+    fn create_app(self, context: CreateAppContext) -> Self::App {
+        App::new(context, self)
     }
 }

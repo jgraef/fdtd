@@ -27,13 +27,9 @@ use egui_wgpu::{
 };
 use wgpu::SurfaceError;
 
-use crate::{
-    composer::renderer::{
-        RendererConfig,
-        WgpuContext,
-    },
-    fdtd::FdtdApp,
-    feec::FeecApp,
+use crate::composer::renderer::{
+    RendererConfig,
+    WgpuContext,
 };
 
 fn main() -> Result<(), Error> {
@@ -43,11 +39,11 @@ fn main() -> Result<(), Error> {
 
     let args = Args::parse();
     match args.command {
-        Command::Fdtd => {
-            run_app(FdtdApp::new)?;
+        Command::Fdtd(args) => {
+            args.run()?;
         }
-        Command::Feec => {
-            run_app(FeecApp::new)?;
+        Command::Feec(args) => {
+            args.run()?;
         }
     }
 
@@ -62,8 +58,8 @@ struct Args {
 
 #[derive(Debug, Subcommand)]
 enum Command {
-    Fdtd,
-    Feec,
+    Fdtd(fdtd::Args),
+    Feec(feec::Args),
 }
 
 fn run_app<A: eframe::App>(create_app: impl FnOnce(CreateAppContext) -> A) -> Result<(), Error> {
@@ -162,4 +158,14 @@ fn run_app<A: eframe::App>(create_app: impl FnOnce(CreateAppContext) -> A) -> Re
 pub struct CreateAppContext {
     pub wgpu_context: WgpuContext,
     pub egui_context: egui::Context,
+}
+
+pub trait CreateApp: Sized {
+    type App: eframe::App;
+
+    fn create_app(self, context: CreateAppContext) -> Self::App;
+
+    fn run(self) -> Result<(), Error> {
+        run_app(|context| self.create_app(context))
+    }
 }
