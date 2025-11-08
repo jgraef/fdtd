@@ -5,6 +5,7 @@ use nalgebra::{
     Vector2,
     Vector3,
 };
+use parry3d::query::Ray;
 
 use crate::composer::{
     renderer::{
@@ -27,7 +28,7 @@ pub struct SceneView<'a> {
     scene: &'a mut Scene,
     renderer: &'a mut Renderer,
     camera_entity: Option<hecs::Entity>,
-    clicked_entity: Option<&'a mut Option<ClickedEntity>>,
+    scene_pointer: Option<&'a mut ScenePointer>,
     #[debug(ignore)]
     command_buffer: hecs::CommandBuffer,
 }
@@ -38,7 +39,7 @@ impl<'a> SceneView<'a> {
             scene,
             renderer,
             camera_entity: None,
-            clicked_entity: None,
+            scene_pointer: None,
             command_buffer: hecs::CommandBuffer::new(),
         }
     }
@@ -48,8 +49,8 @@ impl<'a> SceneView<'a> {
         self
     }
 
-    pub fn with_entity_selection(mut self, clicked_entity: &'a mut Option<ClickedEntity>) -> Self {
-        self.clicked_entity = Some(clicked_entity);
+    pub fn with_scene_pointer(mut self, scene_pointer: &'a mut ScenePointer) -> Self {
+        self.scene_pointer = Some(scene_pointer);
         self
     }
 
@@ -121,15 +122,40 @@ impl<'a> SceneView<'a> {
                 -2.0 * drag_delta.y / response.rect.height(),
             )
         };
-        let interact_pointer_pos = || {
-            // does egui not have a better way of doing this?
-            response.interact_pointer_pos().map(|pointer_position| {
-                Point2::new(
-                    2.0 * (pointer_position.x - response.rect.left()) / response.rect.width() - 1.0,
-                    -2.0 * (pointer_position.y - response.rect.top()) / response.rect.height()
-                        + 1.0,
-                )
-            })
+
+        // map from egui's coordinates to `[-1, 1]^2` normalized coordinates (also flips
+        // y so that +y is up). this then corresponds to the NDC (without z)
+        let pointer_position_to_normalized = |pointer_position: egui::Pos2| {
+            // does egui not have a builtin way of doing this?
+            Point2::new(
+                2.0 * (pointer_position.x - response.interact_rect.left()) / response.rect.width()
+                    - 1.0,
+                -2.0 * (pointer_position.y - response.interact_rect.top()) / response.rect.height()
+                    + 1.0,
+            )
+        };
+
+        let _interact_pointer_position = || {
+            response
+                .interact_pointer_pos()
+                .map(pointer_position_to_normalized)
+        };
+
+        let pointer_position = || {
+            if response.hovered() {
+                let mut hover_pos = response.ctx.input(|input| input.pointer.latest_pos())?;
+
+                // if this returns none, we can use the position as is.
+                if let Some(transform) = response.ctx.layer_transform_from_global(response.layer_id)
+                {
+                    hover_pos = transform * hover_pos;
+                }
+
+                Some(pointer_position_to_normalized(hover_pos))
+            }
+            else {
+                None
+            }
         };
 
         if response.dragged_by(egui::PointerButton::Primary) {
@@ -163,42 +189,52 @@ impl<'a> SceneView<'a> {
             }
         }
 
-        // todo: always raycast and return the hovered entity. the consumer can then
-        // checked if it was clicked or not.
-        if response.clicked_by(egui::PointerButton::Primary) {
-            if let Some(clicked_entity) = &mut self.clicked_entity {
-                **clicked_entity = None;
+        if let Some(scene_pointer) = &mut self.scene_pointer {
+            scene_pointer.entity_under_pointer = None;
 
-                if let Some(pointer_position) = interact_pointer_pos() {
-                    if let Ok(mut query) = self
-                        .scene
-                        .entities
-                        .query_one::<(&Transform, &CameraProjection)>(camera_entity)
-                    {
-                        if let Some((camera_transform, camera_projection)) = query.get() {
-                            let ray = camera_projection
-                                .shoot_screen_ray(&pointer_position)
-                                .transform_by(&camera_transform.transform);
+            if let Some(pointer_position) = pointer_position() {
+                if let Some(ray) =
+                    shoot_ray_from_camera(&self.scene, camera_entity, pointer_position)
+                {
+                    if let Some(ray_hit) = self.scene.cast_ray(&ray, None) {
+                        let point_hovered = ray.point_at(ray_hit.time_of_impact);
 
-                            if let Some(ray_hit) = self.scene.cast_ray(&ray, None) {
-                                tracing::debug!(?ray_hit, ?ray, "ray hit");
-                                let point_clicked = ray.point_at(ray_hit.time_of_impact);
-
-                                **clicked_entity = Some(ClickedEntity {
-                                    entity: ray_hit.entity,
-                                    distance_from_camera: ray_hit.time_of_impact,
-                                    point_clicked,
-                                });
-                            }
-                            else {
-                                tracing::debug!(?ray, "ray didn't hit");
-                            }
-                        }
+                        scene_pointer.entity_under_pointer = Some(EntityUnderPointer {
+                            entity: ray_hit.entity,
+                            distance_from_camera: ray_hit.time_of_impact,
+                            point_hovered,
+                        });
                     }
+
+                    scene_pointer.ray = Some(ray);
                 }
             }
         }
     }
+
+    pub fn shoot_ray_from_camera(&mut self, pointer_position: Point2<f32>) -> Option<Ray> {
+        self.camera_entity.and_then(|camera_entity| {
+            shoot_ray_from_camera(&self.scene, camera_entity, pointer_position)
+        })
+    }
+}
+
+fn shoot_ray_from_camera(
+    scene: &Scene,
+    camera_entity: hecs::Entity,
+    pointer_position: Point2<f32>,
+) -> Option<Ray> {
+    scene
+        .entities
+        .query_one::<(&Transform, &CameraProjection)>(camera_entity)
+        .ok()
+        .and_then(|mut query| {
+            query.get().map(|(camera_transform, camera_projection)| {
+                camera_projection
+                    .shoot_screen_ray(&pointer_position)
+                    .transform_by(&camera_transform.transform)
+            })
+        })
 }
 
 impl<'a> egui::Widget for SceneView<'a> {
@@ -242,9 +278,15 @@ impl egui_wgpu::CallbackTrait for RenderCallback {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ScenePointer {
+    pub ray: Option<Ray>,
+    pub entity_under_pointer: Option<EntityUnderPointer>,
+}
+
 #[derive(Clone, Copy, Debug)]
-pub struct ClickedEntity {
+pub struct EntityUnderPointer {
     pub entity: hecs::Entity,
     pub distance_from_camera: f32,
-    pub point_clicked: Point3<f32>,
+    pub point_hovered: Point3<f32>,
 }

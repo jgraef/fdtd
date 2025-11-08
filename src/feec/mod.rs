@@ -24,7 +24,7 @@ use crate::{
             Transform,
         },
         view::{
-            ClickedEntity,
+            ScenePointer,
             SceneView,
         },
     },
@@ -41,7 +41,7 @@ pub struct FeecApp {
     scene: Scene,
     renderer: Renderer,
     camera: Entity,
-    clicked_entity: Option<ClickedEntity>,
+    scene_pointer: ScenePointer,
     debug: bool,
 }
 
@@ -87,7 +87,7 @@ impl FeecApp {
             scene,
             renderer,
             camera,
-            clicked_entity: None,
+            scene_pointer: ScenePointer::default(),
             debug: false,
         }
     }
@@ -109,24 +109,24 @@ impl eframe::App for FeecApp {
         }
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            if let Some(clicked_entity) = &self.clicked_entity {
+            if let Some(entity_under_pointer) = &self.scene_pointer.entity_under_pointer {
                 ui.label(format!(
-                    "Selected: {:?} at ({}, {}, {}) with {} distance",
-                    clicked_entity.entity,
-                    clicked_entity.point_clicked.x,
-                    clicked_entity.point_clicked.y,
-                    clicked_entity.point_clicked.z,
-                    clicked_entity.distance_from_camera
+                    "Hovered: {:?} at ({}, {}, {}) with {} distance",
+                    entity_under_pointer.entity,
+                    entity_under_pointer.point_hovered.x,
+                    entity_under_pointer.point_hovered.y,
+                    entity_under_pointer.point_hovered.z,
+                    entity_under_pointer.distance_from_camera
                 ));
             }
             else {
-                ui.label("Nothing selected");
+                ui.label("Nothing hovered");
             }
 
             ui.add(
                 SceneView::new(&mut self.scene, &mut self.renderer)
                     .with_camera(self.camera)
-                    .with_entity_selection(&mut self.clicked_entity),
+                    .with_scene_pointer(&mut self.scene_pointer),
             );
         });
     }
