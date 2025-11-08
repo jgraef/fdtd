@@ -17,7 +17,6 @@ use bytemuck::{
     Pod,
     Zeroable,
 };
-use hecs::CommandBuffer;
 use nalgebra::Matrix4;
 use palette::{
     LinSrgba,
@@ -91,7 +90,7 @@ pub struct RendererConfig {
     pub multisample_count: u32,
 }
 
-#[derive(Debug)]
+#[derive(derive_more::Debug)]
 pub struct Renderer {
     wgpu_context: WgpuContext,
 
@@ -108,6 +107,9 @@ pub struct Renderer {
     instance_data: Vec<InstanceData>,
 
     draw_commands: Arc<Vec<DrawCommand>>,
+
+    #[debug(ignore)]
+    command_buffer: hecs::CommandBuffer,
 }
 
 impl Renderer {
@@ -234,12 +236,23 @@ impl Renderer {
             instance_bind_group,
             instance_data: vec![],
             draw_commands: Default::default(),
+            command_buffer: hecs::CommandBuffer::new(),
         }
     }
 
+    /// Prepares for the world to be rendered
+    ///
+    /// This must be called once a frame before any views render using it.
+    ///
+    /// This will update rendering-related information in the world (e.g. by
+    /// creating meshes from shapes), update GPU buffers when the relevant
+    /// world-state changed and prepare the draw calls for this frame.
+    ///
+    /// All draw calls are prepared here since they can be shared by multiple
+    /// views that render the same scene. Internally they're put into a
+    /// `Arc<Vec<_>>`, so they're cheap to clone (which is done in
+    /// [`Self::prepare_frame`]).
     pub fn prepare_world(&mut self, scene: &mut Scene) {
-        let mut commands = CommandBuffer::new();
-
         // generate meshes (for rendering) for objects that don't have them yet.
         // todo: we can also do this when the object is created, since we have the wgpu
         // context in the app.
@@ -254,10 +267,10 @@ impl Renderer {
                 &self.wgpu_context.device,
                 &self.mesh_bind_group_layout,
             ) {
-                commands.insert_one(entity, mesh);
+                self.command_buffer.insert_one(entity, mesh);
             }
             else {
-                commands.remove::<(Render,)>(entity);
+                self.command_buffer.remove::<(Render,)>(entity);
             }
         }
 
@@ -268,7 +281,7 @@ impl Renderer {
             .with::<&Changed<Viewport>>()
         {
             camera_projection.set_viewport(viewport);
-            commands.remove_one::<Changed<Viewport>>(entity);
+            self.command_buffer.remove_one::<Changed<Viewport>>(entity);
         }
 
         // create uniforms for cameras
@@ -290,8 +303,11 @@ impl Renderer {
                 &self.wgpu_context.device,
                 &camera_data,
             );
-            commands.insert_one(entity, camera_resources);
+            self.command_buffer.insert_one(entity, camera_resources);
         }
+
+        // apply buffered commands to world
+        self.command_buffer.run_on(&mut scene.entities);
 
         // update uniforms for cameras
         for (_, (camera_resources, camera_projection, camera_transform, clear_color)) in
@@ -305,9 +321,6 @@ impl Renderer {
             let camera_data = CameraData::new(camera_projection, camera_transform, clear_color);
             camera_resources.update(&self.wgpu_context.queue, &camera_data);
         }
-
-        // apply buffered commands to world
-        commands.run_on(&mut scene.entities);
 
         // prepare the actual draw commands
         // this is done once in prepare, so multiple view widgets can then use the draw
@@ -361,6 +374,17 @@ impl Renderer {
         );
     }
 
+    /// Prepares rendering a frame for a specific view.
+    ///
+    /// This just fetches camera information and the prepared draw commands
+    /// (from [`Self::prepare_world`]) and returns them as a [`DrawFrame`].
+    ///
+    /// The [`DrawFrame`] can be cloned and passed via [`egui::PaintCallback`]
+    /// to do the actual rendering with a [`wgpu::RenderPass`].
+    ///
+    /// Note that the actual draw commands are prepared in
+    /// [`Self::prepare_world`], since they can be shared by multiple view
+    /// widgets.
     pub fn prepare_frame(
         &mut self,
         scene: &Scene,
