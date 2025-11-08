@@ -9,6 +9,7 @@ use std::{
         DerefMut,
         Range,
     },
+    sync::Arc,
 };
 
 use bitflags::bitflags;
@@ -26,6 +27,7 @@ use palette::{
 use crate::composer::{
     renderer::{
         camera::{
+            CameraConfig,
             CameraData,
             CameraProjection,
             CameraResources,
@@ -103,14 +105,9 @@ pub struct Renderer {
 
     instance_buffer: InstanceBuffer<InstanceData>,
     instance_bind_group: wgpu::BindGroup,
-
-    camera_resources: Option<CameraResources>,
-    // todo: instance_data and draw_commands can be shared between views of the same kind (i.e.
-    // that use the same/this renderer). then we only need to prepare them once per frame.
     instance_data: Vec<InstanceData>,
 
-    enable_solid: bool,
-    enable_wireframe: bool,
+    draw_commands: Arc<Vec<DrawCommand>>,
 }
 
 impl Renderer {
@@ -235,10 +232,8 @@ impl Renderer {
             wiremesh_pipeline,
             instance_buffer,
             instance_bind_group,
-            camera_resources: None,
             instance_data: vec![],
-            enable_solid: true,
-            enable_wireframe: true,
+            draw_commands: Default::default(),
         }
     }
 
@@ -313,38 +308,14 @@ impl Renderer {
 
         // apply buffered commands to world
         commands.run_on(&mut scene.entities);
-    }
-
-    pub fn prepare_frame(
-        &mut self,
-        scene: &Scene,
-        camera_entity: Option<hecs::Entity>,
-    ) -> Option<DrawFrame> {
-        // clear buffers
-        let num_instances_last_frame = self.instance_data.len();
-        self.instance_data.clear();
-
-        // get bind group for our camera
-        let Some(camera_bind_group) = camera_entity.and_then(|camera_entity| {
-            scene
-                .entities
-                .query_one::<&CameraResources>(camera_entity)
-                .ok()
-                .and_then(|mut query| {
-                    query
-                        .get()
-                        .map(|camera_resources| camera_resources.bind_group.clone())
-                })
-        })
-        else {
-            // if we don't have a camera we can't do anything. since we can't bind a camera
-            // bind group, we can't even clear. we could have a fallback camera
-            // bind group that is only used for clearing. or separate the clear color from
-            // the camera.
-            return None;
-        };
 
         // prepare the actual draw commands
+        // this is done once in prepare, so multiple view widgets can then use the draw
+        // commands to render their scenes from different cameras.
+        // the draw commands are stored in an `Arc<Vec<_>>`, so they can be easily sent
+        // via paint callbacks.
+        let num_instances_last_frame = self.instance_data.len();
+        self.instance_data.clear();
         let mut first_instance = 0;
         let mut draw_commands = Vec::with_capacity(num_instances_last_frame);
         for (_, (transform, mesh, color)) in scene
@@ -373,6 +344,7 @@ impl Renderer {
                 bind_group: mesh.bind_group.clone(),
             });
         }
+        self.draw_commands = Arc::new(draw_commands);
 
         // send instance data to gpu
         self.instance_buffer.write(
@@ -387,14 +359,47 @@ impl Renderer {
                 )
             },
         );
+    }
+
+    pub fn prepare_frame(
+        &mut self,
+        scene: &Scene,
+        camera_entity: Option<hecs::Entity>,
+    ) -> Option<DrawFrame> {
+        // get bind group and config for our camera
+        let Some((camera_bind_group, camera_config)) = camera_entity.and_then(|camera_entity| {
+            scene
+                .entities
+                .query_one::<(&CameraResources, Option<&CameraConfig>)>(camera_entity)
+                .ok()
+                .and_then(|mut query| {
+                    query.get().map(|(camera_resources, camera_config)| {
+                        (
+                            camera_resources.bind_group.clone(),
+                            camera_config.cloned().unwrap_or_default(),
+                        )
+                    })
+                })
+        })
+        else {
+            // if we don't have a camera we can't do anything. since we can't bind a camera
+            // bind group, we can't even clear. we could have a fallback camera
+            // bind group that is only used for clearing. or separate the clear color from
+            // the camera.
+            return None;
+        };
 
         Some(DrawFrame {
             camera_bind_group,
             instance_bind_group: self.instance_bind_group.clone(),
-            draw_commands,
+            draw_commands: self.draw_commands.clone(),
             clear_pipeline: Some(self.clear_pipeline.pipeline.clone()),
-            solid_pipeline: Some(self.solid_pipeline.pipeline.clone()),
-            wireframe_pipeline: Some(self.wiremesh_pipeline.pipeline.clone()),
+            solid_pipeline: camera_config
+                .show_solid
+                .then(|| self.solid_pipeline.pipeline.clone()),
+            wireframe_pipeline: camera_config
+                .show_wireframe
+                .then(|| self.wiremesh_pipeline.pipeline.clone()),
         })
     }
 }
@@ -562,7 +567,7 @@ struct DrawCommand {
 pub struct DrawFrame {
     camera_bind_group: wgpu::BindGroup,
     instance_bind_group: wgpu::BindGroup,
-    draw_commands: Vec<DrawCommand>,
+    draw_commands: Arc<Vec<DrawCommand>>,
     clear_pipeline: Option<wgpu::RenderPipeline>,
     solid_pipeline: Option<wgpu::RenderPipeline>,
     wireframe_pipeline: Option<wgpu::RenderPipeline>,

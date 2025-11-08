@@ -36,7 +36,10 @@ use crate::composer::{
     renderer::{
         ClearColor,
         Render,
-        camera::CameraProjection,
+        camera::{
+            CameraConfig,
+            CameraProjection,
+        },
         mesh::{
             SurfaceMesh,
             WindingOrder,
@@ -71,6 +74,7 @@ impl Scene {
             transform.into(),
             CameraProjection::default(),
             ClearColor::default(),
+            CameraConfig::default(),
         ))
     }
 

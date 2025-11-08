@@ -153,3 +153,18 @@ impl CameraData {
         }
     }
 }
+
+#[derive(Clone, Copy, Debug)]
+pub struct CameraConfig {
+    pub show_solid: bool,
+    pub show_wireframe: bool,
+}
+
+impl Default for CameraConfig {
+    fn default() -> Self {
+        Self {
+            show_solid: true,
+            show_wireframe: true,
+        }
+    }
+}

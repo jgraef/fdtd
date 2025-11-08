@@ -78,11 +78,14 @@ impl<'a> SceneView<'a> {
             }
         }
         else {
-            self.command_buffer.insert_one(
+            self.command_buffer.insert(
                 camera_entity,
-                Viewport {
-                    viewport: response.rect,
-                },
+                (
+                    Viewport {
+                        viewport: response.rect,
+                    },
+                    Changed::<Viewport>::default(),
+                ),
             );
         }
 
