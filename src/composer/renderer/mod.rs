@@ -1,4 +1,5 @@
 pub mod camera;
+pub mod draw_commands;
 pub mod grid;
 pub mod mesh;
 
@@ -8,9 +9,7 @@ use std::{
     ops::{
         Deref,
         DerefMut,
-        Range,
     },
-    sync::Arc,
 };
 
 use bitflags::bitflags;
@@ -32,6 +31,11 @@ use crate::composer::{
             CameraProjection,
             CameraResources,
             Viewport,
+        },
+        draw_commands::{
+            DrawCommand,
+            DrawCommandBuffer,
+            DrawCommandOptions,
         },
         mesh::{
             Mesh,
@@ -102,13 +106,13 @@ pub struct Renderer {
 
     clear_pipeline: Pipeline,
     solid_pipeline: Pipeline,
-    wiremesh_pipeline: Pipeline,
+    wireframe_pipeline: Pipeline,
 
     instance_buffer: InstanceBuffer<InstanceData>,
     instance_bind_group: wgpu::BindGroup,
     instance_data: Vec<InstanceData>,
 
-    draw_commands: Arc<Vec<DrawCommand>>,
+    draw_command_buffer: DrawCommandBuffer,
 
     #[debug(ignore)]
     command_buffer: hecs::CommandBuffer,
@@ -218,7 +222,7 @@ impl Renderer {
             Some("vs_main_solid"),
         );
 
-        let wiremesh_pipeline = Pipeline::new_objects(
+        let wireframe_pipeline = Pipeline::new_objects(
             &wgpu_context,
             "render/object/wireframe",
             &render_bind_group_layouts,
@@ -242,11 +246,11 @@ impl Renderer {
             mesh_bind_group_layout,
             clear_pipeline,
             solid_pipeline,
-            wiremesh_pipeline,
+            wireframe_pipeline,
             instance_buffer,
             instance_bind_group,
             instance_data: vec![],
-            draw_commands: Default::default(),
+            draw_command_buffer: Default::default(),
             command_buffer: hecs::CommandBuffer::new(),
         }
     }
@@ -341,17 +345,11 @@ impl Renderer {
         // via paint callbacks.
 
         // clear instance data buffer
-        let num_instances_last_frame = self.instance_data.len();
         self.instance_data.clear();
         let mut first_instance = 0;
 
-        // try to reuse the draw_commands buffer if possible
-        if Arc::get_mut(&mut self.draw_commands).is_none() {
-            self.draw_commands = Arc::new(Vec::with_capacity(num_instances_last_frame));
-        }
-        let draw_commands = Arc::get_mut(&mut self.draw_commands).unwrap();
-
         // prepare the actual draw commands
+        let mut draw_command_builder = self.draw_command_buffer.builder();
         for (_, (transform, mesh, color)) in scene
             .entities
             .query::<(&Transform, &Mesh, &VisualColor)>()
@@ -366,7 +364,7 @@ impl Renderer {
 
             // write per-instance data into a buffer
             self.instance_data
-                .push(InstanceData::new(transform, color, flags));
+                .push(InstanceData::new(transform, color, flags, mesh.base_vertex));
 
             // for now every draw call will only draw one instance, but we could do
             // instancing for real later.
@@ -374,11 +372,7 @@ impl Renderer {
             first_instance += 1;
 
             // prepare draw commands
-            draw_commands.push(DrawCommand {
-                instances,
-                indices: mesh.indices.clone(),
-                bind_group: mesh.bind_group.clone(),
-            });
+            draw_command_builder.draw_mesh(instances, &mesh);
         }
 
         // send instance data to gpu
@@ -399,9 +393,9 @@ impl Renderer {
     /// Prepares rendering a frame for a specific view.
     ///
     /// This just fetches camera information and the prepared draw commands
-    /// (from [`Self::prepare_world`]) and returns them as a [`DrawFrame`].
+    /// (from [`Self::prepare_world`]) and returns them as a [`DrawCommand`].
     ///
-    /// The [`DrawFrame`] can be cloned and passed via [`egui::PaintCallback`]
+    /// The [`DrawCommand`] can be cloned and passed via [`egui::PaintCallback`]
     /// to do the actual rendering with a [`wgpu::RenderPass`].
     ///
     /// Note that the actual draw commands are prepared in
@@ -411,7 +405,7 @@ impl Renderer {
         &mut self,
         scene: &Scene,
         camera_entity: Option<hecs::Entity>,
-    ) -> Option<DrawFrame> {
+    ) -> Option<DrawCommand> {
         // get bind group and config for our camera
         let Some((camera_bind_group, camera_config, has_clear_color)) =
             camera_entity.and_then(|camera_entity| {
@@ -443,18 +437,15 @@ impl Renderer {
             return None;
         };
 
-        Some(DrawFrame {
+        Some(self.draw_command_buffer.finish(
+            &self,
             camera_bind_group,
-            instance_bind_group: self.instance_bind_group.clone(),
-            draw_commands: self.draw_commands.clone(),
-            clear_pipeline: has_clear_color.then(|| self.clear_pipeline.pipeline.clone()),
-            solid_pipeline: camera_config
-                .show_solid
-                .then(|| self.solid_pipeline.pipeline.clone()),
-            wireframe_pipeline: camera_config
-                .show_wireframe
-                .then(|| self.wiremesh_pipeline.pipeline.clone()),
-        })
+            DrawCommandOptions {
+                enable_clear: has_clear_color,
+                enable_solid: camera_config.show_solid,
+                enable_wireframe: camera_config.show_wireframe,
+            },
+        ))
     }
 }
 
@@ -584,17 +575,24 @@ struct InstanceData {
     solid_color: LinSrgba,
     wireframe_color: LinSrgba,
     flags: InstanceFlags,
-    _padding: [u32; 3],
+    base_vertex: u32,
+    _padding: [u32; 2],
 }
 
 impl InstanceData {
-    pub fn new(transform: &Transform, color: &VisualColor, flags: InstanceFlags) -> Self {
+    pub fn new(
+        transform: &Transform,
+        color: &VisualColor,
+        flags: InstanceFlags,
+        base_vertex: u32,
+    ) -> Self {
         Self {
             transform: transform.transform.cast().to_homogeneous(),
             // shaders work with linear colors
             solid_color: color.solid_color.into_linear(),
             wireframe_color: color.wireframe_color.into_linear(),
             flags,
+            base_vertex,
             _padding: [0; _],
         }
     }
@@ -605,73 +603,14 @@ bitflags! {
     #[repr(C)]
     struct InstanceFlags: u32 {
         const REVERSE_WINDING = 0b0001;
+
+        // todo: these are not used currently. since we only render one
+        // instance at a time currently, we could just not emit a draw call
+        // of one of these is disabled.
+        // if we were to render multiple instances at a time, we can use this
+        // flag in the vertex shader to skip anything that it shouldn't render.
         const SHOW_SOLID = 0b0010;
         const SHOW_WIREFRAME = 0b0100;
-    }
-}
-
-#[derive(Debug)]
-struct DrawCommand {
-    /// range in the instance buffer to use
-    instances: Range<u32>,
-
-    /// range in the index buffer to use (usually `0..num_indices`)
-    indices: Range<u32>,
-
-    /// the bind group containing the index and vertex buffer for the mesh.
-    bind_group: wgpu::BindGroup,
-}
-
-#[derive(Debug)]
-pub struct DrawFrame {
-    camera_bind_group: wgpu::BindGroup,
-    instance_bind_group: wgpu::BindGroup,
-    draw_commands: Arc<Vec<DrawCommand>>,
-    clear_pipeline: Option<wgpu::RenderPipeline>,
-    solid_pipeline: Option<wgpu::RenderPipeline>,
-    wireframe_pipeline: Option<wgpu::RenderPipeline>,
-}
-
-impl DrawFrame {
-    pub fn render(&self, render_pass: &mut wgpu::RenderPass<'static>) {
-        // set camera
-        render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
-
-        // clear
-        if let Some(clear_pipeline) = &self.clear_pipeline {
-            render_pass.set_pipeline(clear_pipeline);
-            render_pass.draw(0..3, 0..1);
-        }
-
-        // set instance buffer (this is shared between all draw calls)
-        render_pass.set_bind_group(1, &self.instance_bind_group, &[]);
-
-        // render all objects with the solid and/or wireframe pipeline
-        if let Some(solid_pipeline) = &self.solid_pipeline {
-            render_objects_with_pipeline(solid_pipeline, render_pass, &self.draw_commands);
-        }
-        if let Some(wireframe_pipeline) = &self.wireframe_pipeline {
-            render_objects_with_pipeline(wireframe_pipeline, render_pass, &self.draw_commands);
-        }
-    }
-}
-
-/// Helper function to render objects with a given pipeline.
-///
-/// Obviously the pipeline must be compatible. This works
-/// with solid or wireframe rendering
-fn render_objects_with_pipeline(
-    pipeline: &wgpu::RenderPipeline,
-    render_pass: &mut wgpu::RenderPass<'static>,
-    draw_commands: &[DrawCommand],
-) {
-    // set draw (solid) pipeline
-    render_pass.set_pipeline(pipeline);
-
-    // issue draw commands
-    for draw_command in draw_commands {
-        render_pass.set_bind_group(2, &draw_command.bind_group, &[]);
-        render_pass.draw(draw_command.indices.clone(), draw_command.instances.clone());
     }
 }
 

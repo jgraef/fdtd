@@ -9,7 +9,6 @@ use parry3d::query::Ray;
 
 use crate::composer::{
     renderer::{
-        DrawFrame,
         Renderer,
         camera::{
             CameraProjection,
@@ -253,31 +252,15 @@ impl<'a> egui::Widget for SceneView<'a> {
         self.command_buffer.run_on(&mut self.scene.entities);
 
         // draw frame
-        if let Some(draw_frame) = self.renderer.prepare_frame(&self.scene, self.camera_entity) {
+        if let Some(draw_command) = self.renderer.prepare_frame(&self.scene, self.camera_entity) {
             let painter = ui.painter();
             painter.add(egui_wgpu::Callback::new_paint_callback(
                 response.rect,
-                RenderCallback { draw_frame },
+                draw_command,
             ));
         }
 
         response
-    }
-}
-
-#[derive(Debug)]
-struct RenderCallback {
-    draw_frame: DrawFrame,
-}
-
-impl egui_wgpu::CallbackTrait for RenderCallback {
-    fn paint(
-        &self,
-        _info: egui::PaintCallbackInfo,
-        render_pass: &mut wgpu::RenderPass<'static>,
-        _callback_resources: &egui_wgpu::CallbackResources,
-    ) {
-        self.draw_frame.render(render_pass);
     }
 }
 

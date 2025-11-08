@@ -10,7 +10,7 @@ pub struct Mesh {
     pub index_buffer: wgpu::Buffer,
     pub vertex_buffer: wgpu::Buffer,
     pub indices: Range<u32>,
-    pub base_vertex: i32,
+    pub base_vertex: u32,
     pub bind_group: wgpu::BindGroup,
     pub winding_order: WindingOrder,
 }
