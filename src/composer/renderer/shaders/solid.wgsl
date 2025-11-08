@@ -95,7 +95,7 @@ fn calculate_normal(v1: vec3f, v2: vec3f, v3: vec3f,) -> vec3f {
 fn fix_vertex_index(index: u32, flags: u32) -> u32 {
     if (flags & FLAG_REVERSE_WINDING) != 0 {
         // fix vertex order if mesh is wound in opposite order
-        return index + 2 * (1 - index % 3);
+        return index -2 * (index % 3 - 1);
     }
     else {
         return index;

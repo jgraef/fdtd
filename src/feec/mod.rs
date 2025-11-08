@@ -20,6 +20,7 @@ use crate::{
     composer::{
         renderer::Renderer,
         scene::{
+            Label,
             Scene,
             Transform,
         },
@@ -110,8 +111,17 @@ impl eframe::App for FeecApp {
 
         egui::CentralPanel::default().show(ctx, |ui| {
             if let Some(entity_under_pointer) = &self.scene_pointer.entity_under_pointer {
+                let label = self
+                    .scene
+                    .entities
+                    .query_one_mut::<Option<&Label>>(entity_under_pointer.entity)
+                    .ok()
+                    .flatten()
+                    .map(|label| format!(" {label}"))
+                    .unwrap_or_default();
+
                 ui.label(format!(
-                    "Hovered: {:?} at ({}, {}, {}) with {} distance",
+                    "Hovered: {:?}{label} at ({}, {}, {}) with {} distance",
                     entity_under_pointer.entity,
                     entity_under_pointer.point_hovered.x,
                     entity_under_pointer.point_hovered.y,

@@ -85,3 +85,12 @@ pub enum WindingOrder {
     Clockwise,
     CounterClockwise,
 }
+
+impl WindingOrder {
+    pub fn front_face(&self) -> wgpu::FrontFace {
+        match self {
+            WindingOrder::Clockwise => wgpu::FrontFace::Cw,
+            WindingOrder::CounterClockwise => wgpu::FrontFace::Ccw,
+        }
+    }
+}

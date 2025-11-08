@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use parry3d::{
+    bounding_volume::Aabb,
     partitioning as bvh,
     query::Ray,
 };
@@ -27,43 +28,39 @@ pub struct OctTree {
 impl OctTree {
     pub fn update(&mut self, world: &mut hecs::World) {
         // update changed entities
-        for (_entity, (transform, shape, leaf_index)) in world
-            .query_mut::<(&Transform, &SharedShape, &LeafIndex)>()
+        for (_entity, (transform, shape, leaf_index, bounding_box)) in world
+            .query_mut::<(&Transform, &SharedShape, &LeafIndex, &mut BoundingBox)>()
+            .with::<&Collides>()
             .with::<&Changed<Transform>>()
         {
-            self.insert_or_update_node(transform, shape, leaf_index.0);
+            bounding_box.aabb = shape.compute_aabb(&transform.transform);
+            self.bvh
+                .insert_or_update_partially(bounding_box.aabb, leaf_index.index, 0.0);
         }
 
         // insert shapes that don't have a leaf ID yet
         for (entity, (transform, shape)) in world
             .query_mut::<(&Transform, &SharedShape)>()
+            .with::<&Collides>()
             .without::<&LeafIndex>()
         {
-            let leaf_index = self.next_leaf_index;
+            let index = self.next_leaf_index;
             self.next_leaf_index += 1;
 
-            tracing::debug!(?entity, leaf_index, "adding to octtree");
+            tracing::debug!(?entity, index, "adding to octtree");
 
-            self.insert_or_update_node(transform, shape, leaf_index);
-            self.stored_entities.insert(leaf_index, entity);
+            let aabb = shape.compute_aabb(&transform.transform);
+            self.bvh.insert_or_update_partially(aabb, index, 0.0);
+
+            self.stored_entities.insert(index, entity);
             self.command_buffer
-                .insert_one(entity, LeafIndex(leaf_index));
+                .insert(entity, (LeafIndex { index }, BoundingBox { aabb }));
         }
 
         // refit bvh
         self.bvh.refit(&mut self.bvh_workspace);
 
         self.command_buffer.run_on(world);
-    }
-
-    fn insert_or_update_node(
-        &mut self,
-        transform: &Transform,
-        shape: &SharedShape,
-        leaf_index: u32,
-    ) {
-        let aabb = shape.compute_aabb(&transform.transform);
-        self.bvh.insert_or_update_partially(aabb, leaf_index, 0.0);
     }
 
     pub fn cast_ray(
@@ -97,11 +94,22 @@ impl OctTree {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-struct LeafIndex(u32);
+#[derive(Clone, Copy, Debug)]
+struct LeafIndex {
+    index: u32,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct BoundingBox {
+    pub aabb: Aabb,
+}
 
 #[derive(Clone, Copy, Debug)]
 pub struct RayHit {
     pub time_of_impact: f32,
     pub entity: hecs::Entity,
 }
+
+/// Tag for things that have collisions
+#[derive(Clone, Copy, Debug)]
+pub struct Collides;

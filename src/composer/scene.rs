@@ -1,5 +1,9 @@
 use std::{
-    fmt::Debug,
+    borrow::Cow,
+    fmt::{
+        Debug,
+        Display,
+    },
     marker::PhantomData,
     ops::Deref,
     sync::Arc,
@@ -12,6 +16,7 @@ use nalgebra::{
     Translation3,
     UnitQuaternion,
     UnitVector3,
+    Vector2,
     Vector3,
 };
 use palette::{
@@ -24,12 +29,14 @@ use parry3d::{
     shape::{
         Ball,
         Cuboid,
+        HalfSpace,
     },
 };
 use type_map::concurrent::TypeMap;
 
 use crate::composer::{
     collisions::{
+        Collides,
         OctTree,
         RayHit,
     },
@@ -40,6 +47,7 @@ use crate::composer::{
             CameraConfig,
             CameraProjection,
         },
+        grid::GridPlane,
         mesh::{
             SurfaceMesh,
             WindingOrder,
@@ -65,8 +73,16 @@ impl Scene {
         shape: impl Into<SharedShape>,
         color: impl Into<VisualColor>,
     ) -> Entity {
-        self.entities
-            .spawn((transform.into(), shape.into(), color.into(), Render))
+        let shape = shape.into();
+        let label = Label::from(format!("object.{:?}", shape.shape_type()));
+        self.entities.spawn((
+            transform.into(),
+            shape,
+            color.into(),
+            Render,
+            label,
+            Collides,
+        ))
     }
 
     pub fn add_camera(&mut self, transform: impl Into<Transform>) -> Entity {
@@ -75,6 +91,20 @@ impl Scene {
             CameraProjection::default(),
             ClearColor::default(),
             CameraConfig::default(),
+            Label::new_static("camera"),
+        ))
+    }
+
+    pub fn add_grid_plane(
+        &mut self,
+        transform: impl Into<Transform>,
+        line_spacing: Vector2<f32>,
+    ) -> Entity {
+        self.entities.spawn((
+            transform.into(),
+            SharedShape::from(HalfSpace::new(Vector3::y_axis())),
+            GridPlane { line_spacing },
+            Label::new_static("grid-plane"),
         ))
     }
 
@@ -132,6 +162,12 @@ impl Shape for Cuboid {
             indices,
             winding_order: WindingOrder::Clockwise,
         })
+    }
+}
+
+impl Shape for HalfSpace {
+    fn to_surface_mesh(&self) -> Option<SurfaceMesh> {
+        None
     }
 }
 
@@ -263,3 +299,38 @@ impl<T> Clone for Changed<T> {
 }
 
 impl<T> Copy for Changed<T> {}
+
+#[derive(Clone, Debug)]
+pub struct Label {
+    pub label: Cow<'static, str>,
+}
+
+impl Label {
+    pub fn new_static(label: &'static str) -> Self {
+        Self {
+            label: label.into(),
+        }
+    }
+}
+
+impl Display for Label {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.label)
+    }
+}
+
+impl From<&str> for Label {
+    fn from(value: &str) -> Self {
+        Self {
+            label: value.to_owned().into(),
+        }
+    }
+}
+
+impl From<String> for Label {
+    fn from(value: String) -> Self {
+        Self {
+            label: value.into(),
+        }
+    }
+}
