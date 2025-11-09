@@ -92,7 +92,7 @@ impl Composer {
                     tracing::debug!("{nec_file:#?}");
                     PopulateWithNec {
                         nec_file: &nec_file,
-                        color: palette::named::DARKRED.into_format().with_alpha(0.0),
+                        color: palette::named::ORANGERED.into_format().with_alpha(1.0),
                     }
                     .populate_scene(&mut state.scene)?;
                 }
