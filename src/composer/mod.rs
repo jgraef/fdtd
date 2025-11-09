@@ -1,4 +1,8 @@
-use std::path::Path;
+use std::{
+    fs::File,
+    io::BufReader,
+    path::Path,
+};
 
 use color_eyre::eyre::bail;
 use egui::{
@@ -32,6 +36,7 @@ use crate::{
     file_formats::{
         FileFormat,
         guess_file_format_from_path,
+        nec::NecFile,
     },
     lipsum,
 };
@@ -69,10 +74,9 @@ impl Composer {
             #[allow(unreachable_patterns)]
             match file_format {
                 FileFormat::Nec => {
-                    //let reader = BufReader::new(File::open(path)?);
-
-                    bail!("todo: load NEC file");
-                    //todo!("load NEC file");
+                    let reader = BufReader::new(File::open(path)?);
+                    let nec = NecFile::from_reader(reader)?;
+                    tracing::debug!("{nec:#?}");
                 }
                 _ => bail!("Unsupported file format: {file_format:?}"),
             }

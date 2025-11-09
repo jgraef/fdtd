@@ -8,6 +8,8 @@ pub mod geometry;
 pub mod util;
 
 use std::{
+    fs::File,
+    io::BufReader,
     path::{
         Path,
         PathBuf,
@@ -40,9 +42,12 @@ use serde::{
 };
 use wgpu::SurfaceError;
 
-use crate::composer::renderer::{
-    RendererConfig,
-    WgpuContext,
+use crate::{
+    composer::renderer::{
+        RendererConfig,
+        WgpuContext,
+    },
+    file_formats::nec::NecFile,
 };
 
 fn main() -> Result<(), Error> {
@@ -57,6 +62,11 @@ fn main() -> Result<(), Error> {
         }
         Command::Feec(args) => {
             args.run()?;
+        }
+        Command::ReadNec { file } => {
+            let reader = BufReader::new(File::open(&file)?);
+            let nec = NecFile::from_reader(reader)?;
+            println!("{nec:#?}");
         }
     }
 
@@ -73,6 +83,7 @@ struct Args {
 enum Command {
     Fdtd(fdtd::Args),
     Feec(feec::Args),
+    ReadNec { file: PathBuf },
 }
 
 fn run_app<A: eframe::App>(create_app: impl FnOnce(CreateAppContext) -> A) -> Result<(), Error> {

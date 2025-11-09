@@ -1,3 +1,5 @@
+pub mod nec;
+
 use std::path::Path;
 
 use strum::VariantArray;
