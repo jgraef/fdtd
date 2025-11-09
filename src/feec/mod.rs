@@ -182,7 +182,7 @@ impl App {
                 .add_enabled(self.composer.has_open_file(), Button::new("Close File"))
                 .clicked()
             {
-                tracing::debug!("todo: close file");
+                self.composer.close_file();
             }
 
             ui.separator();

@@ -75,14 +75,6 @@ impl From<Srgb<u8>> for ClearColor {
     }
 }
 
-impl Default for ClearColor {
-    fn default() -> Self {
-        Self {
-            clear_color: palette::named::ALICEBLUE.into_format(),
-        }
-    }
-}
-
 #[derive(Clone, Debug)]
 pub struct WgpuContext {
     pub adapter: wgpu::Adapter,

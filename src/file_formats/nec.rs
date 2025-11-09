@@ -7,6 +7,7 @@
 
 use std::{
     collections::BTreeMap,
+    convert::Infallible,
     f32::consts::TAU,
     io::BufRead,
     ops::Bound,
@@ -25,6 +26,15 @@ use nalgebra::{
     UnitQuaternion,
     UnitVector3,
     Vector3,
+    Vector4,
+};
+use palette::Srgba;
+use parry3d::shape::Cylinder;
+
+use crate::composer::scene::{
+    PopulateScene,
+    Scene,
+    Transform,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -97,9 +107,11 @@ enum ReaderState {
 impl ReaderState {
     fn section(&self) -> Option<Section> {
         match self {
-            ReaderState::ReadComments => Some(Section::Comments),
-            ReaderState::ReadGeometry | ReaderState::ReadGcCard { .. } => Some(Section::Geometry),
-            _ => None,
+            Self::ReadComments => Some(Section::Comments),
+            Self::ReadGeometry | Self::ReadGcCard { .. } | Self::ReadScCard { .. } => {
+                Some(Section::Geometry)
+            }
+            Self::End => None,
         }
     }
 }
@@ -367,12 +379,14 @@ impl Geometry {
 
 #[derive(Clone, Copy, Debug)]
 pub enum GeometrySpecification {
+    /// GA card
     WireArc {
         num_segments: u32,
         arc_radius: f32,
         arc_angles: [f32; 2],
         wire_radius: f32,
     },
+    /// GW card
     Wire {
         length: f32,
         num_segments: u32,
@@ -406,10 +420,8 @@ impl WireSegments {
                 WireSegmentDimensionsIter::Fixed {
                     segment: 0,
                     num_segments,
-                    fixed: WireSegmentDimensions {
-                        radius: *radius,
-                        length: segment_length,
-                    },
+                    next_length: segment_length,
+                    next_radius: *radius,
                 }
             }
             WireSegments::Tapered {
@@ -431,10 +443,8 @@ impl WireSegments {
                     num_segments,
                     length_ratio: *length_ratio,
                     radius_ratio,
-                    next: WireSegmentDimensions {
-                        length: first_length,
-                        radius: *first_radius,
-                    },
+                    next_length: first_length,
+                    next_start_radius: *first_radius,
                 }
             }
         }
@@ -462,14 +472,16 @@ pub enum WireSegmentDimensionsIter {
     Fixed {
         segment: u32,
         num_segments: u32,
-        fixed: WireSegmentDimensions,
+        next_length: f32,
+        next_radius: f32,
     },
     Tapered {
         segment: u32,
         num_segments: u32,
         length_ratio: f32,
         radius_ratio: f32,
-        next: WireSegmentDimensions,
+        next_length: f32,
+        next_start_radius: f32,
     },
 }
 
@@ -481,11 +493,15 @@ impl Iterator for WireSegmentDimensionsIter {
             WireSegmentDimensionsIter::Fixed {
                 segment,
                 num_segments,
-                fixed,
+                next_length,
+                next_radius,
             } => {
                 (segment < num_segments).then(|| {
                     *segment += 1;
-                    *fixed
+                    WireSegmentDimensions::Flat {
+                        length: *next_length,
+                        radius: *next_radius,
+                    }
                 })
             }
             WireSegmentDimensionsIter::Tapered {
@@ -493,14 +509,23 @@ impl Iterator for WireSegmentDimensionsIter {
                 num_segments,
                 length_ratio,
                 radius_ratio,
-                next,
+                next_length,
+                next_start_radius,
             } => {
                 (segment < num_segments).then(|| {
                     *segment += 1;
-                    let wire_dimensions = *next;
-                    next.length *= *length_ratio;
-                    next.radius *= *radius_ratio;
-                    wire_dimensions
+
+                    let length = *next_length;
+                    let start_radius = *next_start_radius;
+
+                    *next_length *= *length_ratio;
+                    *next_start_radius *= *radius_ratio;
+
+                    WireSegmentDimensions::Tapered {
+                        length,
+                        start_radius,
+                        end_radius: *next_start_radius,
+                    }
                 })
             }
         }
@@ -526,9 +551,16 @@ impl Iterator for WireSegmentDimensionsIter {
 impl ExactSizeIterator for WireSegmentDimensionsIter {}
 
 #[derive(Clone, Copy, Debug)]
-pub struct WireSegmentDimensions {
-    pub radius: f32,
-    pub length: f32,
+pub enum WireSegmentDimensions {
+    Flat {
+        length: f32,
+        radius: f32,
+    },
+    Tapered {
+        length: f32,
+        start_radius: f32,
+        end_radius: f32,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -950,5 +982,60 @@ impl GeometryBuffer {
         for (tag, geometry) in self.deferred_insertions.drain(..) {
             self.geometry.insert(tag, geometry);
         }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct PopulateWithNec<'a> {
+    pub nec_file: &'a NecFile,
+    pub color: Srgba,
+}
+
+impl<'a> PopulateScene for PopulateWithNec<'a> {
+    type Error = Infallible;
+
+    fn populate_scene(&self, scene: &mut Scene) -> Result<(), Self::Error> {
+        for (_tag, geometry) in &self.nec_file.geometry {
+            match geometry.specification {
+                GeometrySpecification::WireArc { .. } => todo!("populate scene: wire-arc"),
+                GeometrySpecification::Wire {
+                    length,
+                    num_segments,
+                    segments,
+                } => {
+                    for (i, wire_segment) in segments.dimensions(num_segments, length).enumerate() {
+                        match wire_segment {
+                            WireSegmentDimensions::Flat { length, radius } => {
+                                let shape = Cylinder::new(0.5 * length, radius);
+
+                                let transform = Transform::new(
+                                    // get the translation by applying the origin point + length
+                                    // along the wire to the transform
+                                    Translation3::from(
+                                        (geometry.transform
+                                            * (Vector4::w() + i as f32 * length * Vector4::y()))
+                                        .xyz(),
+                                    ),
+                                    // get the rotation by applying a y-vector (parry's cone is
+                                    // aligned along the y axis)
+                                    UnitQuaternion::from_axis_angle(
+                                        &UnitVector3::new_normalize(
+                                            (geometry.transform * Vector4::y()).xyz(),
+                                        ),
+                                        0.0,
+                                    ),
+                                );
+
+                                scene.add_object(transform, shape, self.color);
+                            }
+                            WireSegmentDimensions::Tapered { .. } => todo!("truncated cone shape"),
+                        }
+                    }
+                }
+                GeometrySpecification::SurfacePatch(_) => todo!("populate scene: surface patch"),
+            }
+        }
+
+        Ok(())
     }
 }

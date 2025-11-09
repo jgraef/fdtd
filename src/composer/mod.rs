@@ -1,7 +1,11 @@
 use std::{
+    convert::Infallible,
     fs::File,
     io::BufReader,
-    path::Path,
+    path::{
+        Path,
+        PathBuf,
+    },
 };
 
 use color_eyre::eyre::bail;
@@ -14,6 +18,7 @@ use nalgebra::{
     Point3,
     Vector3,
 };
+use palette::WithAlpha;
 use parry3d::shape::Cuboid;
 
 use crate::{
@@ -25,6 +30,7 @@ use crate::{
         },
         scene::{
             Label,
+            PopulateScene,
             Scene,
             Transform,
             view::{
@@ -36,7 +42,10 @@ use crate::{
     file_formats::{
         FileFormat,
         guess_file_format_from_path,
-        nec::NecFile,
+        nec::{
+            NecFile,
+            PopulateWithNec,
+        },
     },
     lipsum,
 };
@@ -62,7 +71,9 @@ impl Composer {
 
     pub fn new_file(&mut self) {
         let mut state = State::new();
-        state.populate_scene();
+        ExampleScene
+            .populate_scene(&mut state.scene)
+            .expect("populating example scene failed");
         self.state = Some(state);
     }
 
@@ -71,15 +82,24 @@ impl Composer {
         tracing::debug!(path = %path.display(), "open file");
 
         if let Some(file_format) = guess_file_format_from_path(path) {
+            let mut state = State::new();
+
             #[allow(unreachable_patterns)]
             match file_format {
                 FileFormat::Nec => {
                     let reader = BufReader::new(File::open(path)?);
-                    let nec = NecFile::from_reader(reader)?;
-                    tracing::debug!("{nec:#?}");
+                    let nec_file = NecFile::from_reader(reader)?;
+                    tracing::debug!("{nec_file:#?}");
+                    PopulateWithNec {
+                        nec_file: &nec_file,
+                        color: palette::named::DARKRED.into_format().with_alpha(0.0),
+                    }
+                    .populate_scene(&mut state.scene)?;
                 }
                 _ => bail!("Unsupported file format: {file_format:?}"),
             }
+
+            self.state = Some(state);
         }
         else {
             tracing::debug!("todo: unknown file format");
@@ -90,6 +110,10 @@ impl Composer {
 
     pub fn has_open_file(&self) -> bool {
         self.state.is_some()
+    }
+
+    pub fn close_file(&mut self) {
+        self.state = None;
     }
 }
 
@@ -150,6 +174,8 @@ impl Widget for &mut Composer {
 
 #[derive(Debug)]
 struct State {
+    path: Option<PathBuf>,
+    modified: bool,
     scene: Scene,
     camera: hecs::Entity,
     scene_pointer: ScenePointer,
@@ -160,44 +186,53 @@ impl State {
         let mut scene = Scene::default();
 
         let camera = scene.add_camera(Transform::look_at(
-            &Point3::new(0.2, 0.2, -2.0),
+            &Point3::new(0.0, 0.0, -2.0),
             &Point3::origin(),
             &Vector3::y(),
         ));
 
         Self {
+            path: None,
+            modified: false,
             scene,
             camera,
             scene_pointer: ScenePointer::default(),
         }
     }
+}
 
-    fn populate_scene(&mut self) {
+#[derive(Clone, Copy, Debug)]
+pub struct ExampleScene;
+
+impl PopulateScene for ExampleScene {
+    type Error = Infallible;
+
+    fn populate_scene(&self, scene: &mut Scene) -> Result<(), Self::Error> {
         let shape = |size| Cuboid::new(Vector3::repeat(size));
 
-        self.scene
-            .add_object(Point3::new(-0.2, 0.0, 0.0), shape(0.1), palette::named::RED);
-        self.scene
-            .add_object(Point3::new(0.2, 0.0, 0.0), shape(0.1), palette::named::BLUE);
-        self.scene.add_object(
+        scene.add_object(Point3::new(-0.2, 0.0, 0.0), shape(0.1), palette::named::RED);
+        scene.add_object(Point3::new(0.2, 0.0, 0.0), shape(0.1), palette::named::BLUE);
+        scene.add_object(
             Point3::new(0.0, -0.2, 0.0),
             shape(0.1),
             palette::named::LIME,
         );
-        self.scene.add_object(
+        scene.add_object(
             Point3::new(0.0, 0.2, 0.0),
             shape(0.1),
             palette::named::YELLOW,
         );
-        self.scene.add_object(
+        scene.add_object(
             Point3::new(-0.02, -0.02, 0.2),
             shape(0.05),
             palette::named::MAGENTA,
         );
-        self.scene.add_object(
+        scene.add_object(
             Point3::new(0.02, 0.02, -0.2),
             shape(0.05),
             palette::named::CYAN,
         );
+
+        Ok(())
     }
 }

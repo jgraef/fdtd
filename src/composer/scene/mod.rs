@@ -32,6 +32,7 @@ use parry3d::{
     shape::{
         Ball,
         Cuboid,
+        Cylinder,
         HalfSpace,
     },
 };
@@ -39,7 +40,6 @@ use type_map::concurrent::TypeMap;
 
 use crate::composer::{
     renderer::{
-        ClearColor,
         Render,
         camera::{
             CameraConfig,
@@ -92,7 +92,6 @@ impl Scene {
         self.entities.spawn((
             transform.into(),
             CameraProjection::default(),
-            ClearColor::default(),
             CameraConfig::default(),
             Label::new_static("camera"),
         ))
@@ -142,13 +141,26 @@ impl Deref for SharedShape {
     }
 }
 
+// todo: add a method to use parry's to_outline methods. these generate outlines
+// that are probably nicer for our "wiremesh" rendering
+//
+// we also need a way to control parameters for the to_trimesh functions. i
+// think we should put a config with these parameters into the renderer, and
+// it'll pass the whole config to the trait method. the trait impls can then
+// choose what to use.
 pub trait Shape: Debug + Send + Sync + parry3d::shape::Shape + 'static {
+    /// Generate surface mesh.
+    ///
+    /// At the moment this is only used for rendering. If an entity has the
+    /// [`Render`] tag and a [`SharedShape`], the renderer will generate a mesh
+    /// for it and send it to the GPU. If this method returns `None` though, the
+    /// [`Render`] tag will be removed.
     fn to_surface_mesh(&self) -> Option<SurfaceMesh>;
 }
 
 impl Shape for Ball {
     fn to_surface_mesh(&self) -> Option<SurfaceMesh> {
-        let (vertices, indices) = self.to_trimesh(10, 20);
+        let (vertices, indices) = self.to_trimesh(20, 20);
         Some(SurfaceMesh {
             vertices,
             indices,
@@ -174,6 +186,17 @@ impl Shape for HalfSpace {
     }
 }
 
+impl Shape for Cylinder {
+    fn to_surface_mesh(&self) -> Option<SurfaceMesh> {
+        let (vertices, indices) = self.to_trimesh(20);
+        Some(SurfaceMesh {
+            vertices,
+            indices,
+            winding_order: WindingOrder::Clockwise,
+        })
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct Transform {
     /// Rotation followed by translation that transforms points from the
@@ -182,6 +205,15 @@ pub struct Transform {
 }
 
 impl Transform {
+    pub fn new(
+        translation: impl Into<Translation3<f32>>,
+        rotation: impl Into<UnitQuaternion<f32>>,
+    ) -> Self {
+        Self {
+            transform: Isometry3::from_parts(translation.into(), rotation.into()),
+        }
+    }
+
     pub fn translate_local(&mut self, translation: &Translation3<f32>) {
         self.transform.translation.vector += self
             .transform
@@ -336,4 +368,10 @@ impl From<String> for Label {
             label: value.into(),
         }
     }
+}
+
+pub trait PopulateScene {
+    type Error;
+
+    fn populate_scene(&self, scene: &mut Scene) -> Result<(), Self::Error>;
 }

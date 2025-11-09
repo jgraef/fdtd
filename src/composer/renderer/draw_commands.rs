@@ -21,9 +21,16 @@ pub struct DrawCommandBuffer {
 
 impl DrawCommandBuffer {
     pub fn builder(&mut self) -> DrawCommandBuilder<'_> {
-        DrawCommandBuilder {
-            draw_meshes: self.draw_meshes.write(Default::default),
+        let mut draw_meshes = self.draw_meshes.write(Default::default);
+
+        // very important lol
+        draw_meshes.clear();
+
+        if draw_meshes.reallocated() {
+            tracing::warn!("draw command buffer reallocated");
         }
+
+        DrawCommandBuilder { draw_meshes }
     }
 
     pub fn finish(

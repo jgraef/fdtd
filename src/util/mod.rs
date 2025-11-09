@@ -29,19 +29,28 @@ impl<T> ReusableSharedBuffer<T> {
     }
 
     pub fn write(&mut self, allocate: impl FnOnce() -> T) -> ReusableSharedBufferGuard<'_, T> {
+        let mut reallocated = false;
         if Arc::get_mut(&mut self.value).is_none() {
             self.value = Arc::new(allocate());
+            reallocated = true;
         }
 
         let value = Arc::get_mut(&mut self.value).unwrap();
 
-        ReusableSharedBufferGuard { value }
+        ReusableSharedBufferGuard { value, reallocated }
     }
 }
 
 #[derive(Debug)]
 pub struct ReusableSharedBufferGuard<'a, T> {
     value: &'a mut T,
+    reallocated: bool,
+}
+
+impl<'a, T> ReusableSharedBufferGuard<'a, T> {
+    pub fn reallocated(&self) -> bool {
+        self.reallocated
+    }
 }
 
 impl<'a, T> Deref for ReusableSharedBufferGuard<'a, T> {
