@@ -18,7 +18,6 @@ use nalgebra::{
     Point3,
     Translation3,
     UnitQuaternion,
-    UnitVector3,
     Vector2,
     Vector3,
 };
@@ -29,6 +28,7 @@ use palette::{
 };
 use parry3d::{
     bounding_volume::Aabb,
+    math::UnitVector,
     query::Ray,
     shape::{
         Ball,
@@ -289,17 +289,18 @@ impl Transform {
             .append_rotation_wrt_point_mut(rotation, anchor);
     }
 
-    pub fn look_at(eye: &Point3<f32>, target: &Point3<f32>, up: &UnitVector3<f32>) -> Self {
+    pub fn look_at(eye: &Point3<f32>, target: &Point3<f32>, up: &Vector3<f32>) -> Self {
         Self {
-            transform: Isometry3::face_towards(eye, target, &up),
+            transform: Isometry3::face_towards(eye, target, up),
         }
     }
 
     /// Pan and tilt object (e.g. a camera) with a given `up` vector.
     ///
     /// Pan is the horizontal turning. Tilt is the vertical turning.
-    pub fn pan_tilt(&mut self, pan: f32, tilt: f32, up: &UnitVector3<f32>) {
-        let local_up = self.transform.rotation.inverse_transform_unit_vector(&up);
+    pub fn pan_tilt(&mut self, pan: f32, tilt: f32, up: &Vector3<f32>) {
+        let local_up =
+            UnitVector::new_normalize(self.transform.rotation.inverse_transform_vector(&up));
         let local_right = Vector3::x_axis();
 
         let rotation = UnitQuaternion::from_axis_angle(&local_up, -pan)

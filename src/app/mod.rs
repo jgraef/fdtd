@@ -19,6 +19,7 @@ use egui::{
     Layout,
 };
 use egui_file_dialog::FileDialog;
+use nalgebra::Vector3;
 use serde::{
     Deserialize,
     Serialize,
@@ -206,24 +207,86 @@ impl App {
         ui.menu_button("View", |ui| {
             setup_menu(ui);
 
-            if ui
-                .add_enabled(self.composer.has_open_file(), Button::new("Fit Camera"))
-                .clicked()
-            {
-                self.composer.expect_state_mut().fit_camera_to_scene();
-            }
+            ui.menu_button("Camera", |ui| {
+                setup_menu(ui);
 
-            if ui
-                .add_enabled(
-                    self.composer.has_open_file(),
-                    Button::new("Point Camera to Center"),
-                )
-                .clicked()
-            {
-                self.composer
-                    .expect_state_mut()
-                    .point_camera_to_scene_center();
-            }
+                let fit_camera_margin = Default::default();
+
+                if ui
+                    .add_enabled(
+                        self.composer.has_open_file(),
+                        Button::new("Point Camera to Center"),
+                    )
+                    .on_hover_text("Turn camera towards center of scene")
+                    .clicked()
+                {
+                    self.composer
+                        .expect_state_mut()
+                        .point_camera_to_scene_center();
+                }
+
+                if ui
+                    .add_enabled(self.composer.has_open_file(), Button::new("Fit Camera"))
+                    .on_hover_text("Move camera forward/back until it fits the scene.")
+                    .clicked()
+                {
+                    self.composer
+                        .expect_state_mut()
+                        .fit_camera_to_scene(&fit_camera_margin);
+                }
+
+                let mut fit_camera_along_axis_button = |axis, up, axis_label, tooltip| {
+                    if ui
+                        .add_enabled(
+                            self.composer.has_open_file(),
+                            Button::new(("Fit Camera to ", axis_label)),
+                        )
+                        .on_hover_text(tooltip)
+                        .clicked()
+                    {
+                        self.composer
+                            .expect_state_mut()
+                            .fit_camera_to_scene_looking_along_axis(&axis, &up, &fit_camera_margin);
+                    }
+                };
+
+                fit_camera_along_axis_button(
+                    Vector3::x(),
+                    Vector3::y(),
+                    "+X",
+                    "Look at YZ plane from left.",
+                );
+                fit_camera_along_axis_button(
+                    -Vector3::x(),
+                    Vector3::y(),
+                    "-X",
+                    "Look at YZ plane from right.",
+                );
+                fit_camera_along_axis_button(
+                    Vector3::y(),
+                    -Vector3::z(),
+                    "+Y",
+                    "Look at XZ plane from bottom.",
+                );
+                fit_camera_along_axis_button(
+                    -Vector3::y(),
+                    Vector3::z(),
+                    "-Y",
+                    "Look at XZ plane from top.",
+                );
+                fit_camera_along_axis_button(
+                    Vector3::z(),
+                    Vector3::y(),
+                    "+Z",
+                    "Look at XY plane from front.",
+                );
+                fit_camera_along_axis_button(
+                    -Vector3::z(),
+                    Vector3::y(),
+                    "-Z",
+                    "Look at XY plane from back.",
+                );
+            });
         });
     }
 

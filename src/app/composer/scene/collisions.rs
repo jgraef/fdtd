@@ -97,12 +97,12 @@ impl OctTree {
             })
     }
 
-    pub fn scene_aabb(&self) -> Aabb {
+    pub fn root_aabb(&self) -> Aabb {
         self.bvh.root_aabb()
     }
 
     pub fn center(&self) -> Point3<f32> {
-        self.scene_aabb().center()
+        self.root_aabb().center()
     }
 }
 

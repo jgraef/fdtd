@@ -18,8 +18,11 @@ use egui::{
     epaint::MarginF32,
 };
 use nalgebra::{
+    Isometry3,
     Point3,
     Translation3,
+    UnitQuaternion,
+    Vector2,
     Vector3,
 };
 use palette::WithAlpha;
@@ -76,6 +79,7 @@ impl Composer {
         ExampleScene
             .populate_scene(&mut state.scene)
             .expect("populating example scene failed");
+        //state.fit_camera_to_scene();
         self.state = Some(state);
     }
 
@@ -97,6 +101,7 @@ impl Composer {
                         color: palette::named::ORANGERED.into_format().with_alpha(1.0),
                     }
                     .populate_scene(&mut state.scene)?;
+                    state.fit_camera_to_scene(&Default::default());
                 }
                 _ => bail!("Unsupported file format: {file_format:?}"),
             }
@@ -191,7 +196,7 @@ pub struct State {
 }
 
 impl State {
-    fn new() -> Self {
+    pub fn new() -> Self {
         let mut scene = Scene::default();
 
         let camera = scene.add_camera(Transform::look_at(
@@ -209,7 +214,7 @@ impl State {
         }
     }
 
-    fn new_with_path(path: impl AsRef<Path>) -> Self {
+    pub fn new_with_path(path: impl AsRef<Path>) -> Self {
         let mut this = Self::new();
         this.path = Some(path.as_ref().to_owned());
         this
@@ -221,7 +226,7 @@ impl State {
     /// moving backwards) such that it will fit the AABB of the scene. The
     /// AABB is calculated relative to the camera orientation. The camera will
     /// also be translated laterally to its view axis to center to the AABB.
-    pub fn fit_camera_to_scene(&mut self) {
+    pub fn fit_camera_to_scene(&mut self, margin: &Vector2<f32>) {
         // get camera transform and projection
         // note: we could use another transform if we want to reposition the camera e.g.
         // along a coordinate axis.
@@ -242,27 +247,9 @@ impl State {
             return;
         };
 
-        let scene_aabb_half_extents = scene_aabb.half_extents();
-
         // center camera on aabb
         let mut translation = scene_aabb.center().coords;
-
-        // camera projection parameters
-        let half_fovy = 0.5 * camera_projection.fovy();
-        let aspect_ratio = camera_projection.aspect_ratio();
-        let half_fovx = half_fovy / aspect_ratio;
-
-        // how far back do we have to be from the face of the AABB to fit the vertical
-        // FOV of the camera? simple geometry tells us that tan(fovy/2) = y/z,
-        // where y is the half-extend of the AABB in y-direction.
-        let dz_vertical = scene_aabb_half_extents.y / half_fovy.tan();
-
-        // same for horizontal fit
-        let dz_horizontal = scene_aabb_half_extents.x / half_fovx.tan();
-
-        // we want to fit both, so we take the max. we also need to add the distance
-        // from the center of the AABB to its face along the z-axis.
-        translation.z -= scene_aabb_half_extents.z + dz_vertical.max(dz_horizontal);
+        translation.z -= camera_projection.distance_to_fit_aabb_into_fov(&scene_aabb, margin);
 
         // apply translation to camera
         let camera_transform = self
@@ -271,6 +258,41 @@ impl State {
             .query_one_mut::<&mut Transform>(self.camera_entity)
             .expect("camera should still exist");
         camera_transform.translate_local(&Translation3::from(translation));
+    }
+
+    pub fn fit_camera_to_scene_looking_along_axis(
+        &mut self,
+        axis: &Vector3<f32>,
+        up: &Vector3<f32>,
+        margin: &Vector2<f32>,
+    ) {
+        let Ok((camera_transform, camera_projection)) =
+            self.scene
+                .entities
+                .query_one_mut::<(&mut Transform, &CameraProjection)>(self.camera_entity)
+        else {
+            return;
+        };
+
+        let rotation = UnitQuaternion::face_towards(axis, up);
+
+        let reference_transform = Isometry3::from_parts(Translation3::identity(), rotation);
+
+        let scene_aabb = self
+            .scene
+            .octtree
+            .root_aabb()
+            .transform_by(&reference_transform);
+
+        let distance = camera_projection.distance_to_fit_aabb_into_fov(&scene_aabb, margin);
+
+        let mut transform = Transform::from(Isometry3::from_parts(
+            Translation3::from(scene_aabb.center().coords),
+            rotation,
+        ));
+        transform.translate_local(&Translation3::from(-Vector3::z() * distance));
+
+        *camera_transform = transform;
     }
 
     pub fn point_camera_to_scene_center(&mut self) {
@@ -283,12 +305,15 @@ impl State {
             let eye = camera_transform.position();
 
             // normally up is always +Y
-            let mut up = Vector3::y_axis();
+            let mut up = Vector3::y();
 
             // but we need to take into account when we're directly above the scene center
             const COLLINEAR_THRESHOLD: f32 = 0.01f32.to_radians();
-            if (&eye - &scene_center).dot(&up).abs() < COLLINEAR_THRESHOLD {
-                up = Vector3::z_axis();
+            if (&eye - &scene_center).cross(&up).norm_squared() < COLLINEAR_THRESHOLD {
+                // we would be looking straight up or down, so keep the up vector from the
+                // camera
+                up = camera_transform.transform.rotation.transform_vector(&up);
+                tracing::debug!(?eye, ?scene_center, ?up, "looking straight up or down");
             }
 
             *camera_transform = Transform::look_at(&eye, &scene_center, &up);

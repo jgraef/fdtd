@@ -90,6 +90,12 @@ pub struct RendererConfig {
     pub multisample_count: u32,
 }
 
+/// # Notes
+///
+/// We use a left-handed coordinate system both in the scene and in NDC:
+///  - x: from left to right
+///  - y: from bottom to top
+///  - z: from outside to inside of screen
 #[derive(derive_more::Debug)]
 pub struct Renderer {
     wgpu_context: WgpuContext,
@@ -483,8 +489,6 @@ impl Pipeline {
         // We need to flip the interpretation of the winding order here, because this
         // actually depends on the orientation of our Z axis.
         let front_face = Renderer::WINDING_ORDER.flipped().front_face();
-
-        //let depth_compare = wgpu::CompareFunction::Always;
 
         let shader_module = wgpu_context.device.create_shader_module(shader_module_desc);
 

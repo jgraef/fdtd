@@ -15,7 +15,10 @@ use palette::{
     LinSrgba,
     WithAlpha,
 };
-use parry3d::query::Ray;
+use parry3d::{
+    bounding_volume::Aabb,
+    query::Ray,
+};
 use wgpu::util::DeviceExt;
 
 use crate::app::composer::{
@@ -80,6 +83,36 @@ impl CameraProjection {
     /// Aspect ration (width / height)
     pub fn aspect_ratio(&self) -> f32 {
         self.projection.aspect()
+    }
+
+    /// Distance needed to move back from center of AABB to fit the AABB into
+    /// FOV, assuming the camera is looking straight onto its XY plane
+    ///
+    /// To fit other orientations, either rotate a given AABB, or for better
+    /// results compute the AABB in the rotated reference frame.
+    ///
+    /// One can then for example calculate a new camera transform by centering
+    /// on the center of the AABB, adding the choosen rotation, and translating
+    /// by `-Vector3::z() * distance` locally.
+    pub fn distance_to_fit_aabb_into_fov(&self, aabb: &Aabb, margin: &Vector2<f32>) -> f32 {
+        let scene_aabb_half_extents = aabb.half_extents();
+
+        // camera projection parameters
+        let half_fovy = 0.5 * self.fovy();
+        let aspect_ratio = self.aspect_ratio();
+        let half_fovx = half_fovy / aspect_ratio;
+
+        // how far back do we have to be from the face of the AABB to fit the vertical
+        // FOV of the camera? simple geometry tells us that tan(fovy/2) = y/z,
+        // where y is the half-extend of the AABB in y-direction.
+        let dz_vertical = (scene_aabb_half_extents.y + margin.y) / half_fovy.tan();
+
+        // same for horizontal fit
+        let dz_horizontal = (scene_aabb_half_extents.x + margin.x) / half_fovx.tan();
+
+        // we want to fit both, so we take the max. we also need to add the distance
+        // from the center of the AABB to its face along the z-axis.
+        scene_aabb_half_extents.z + dz_vertical.max(dz_horizontal)
     }
 }
 
@@ -153,8 +186,8 @@ impl CameraData {
     ) -> Self {
         let mut projection_matrix = camera_projection.projection.to_homogeneous();
 
-        // the projection matrix nalgebra produces has the z-axis inverted relative to
-        // our coordinate system, so we fix this here.
+        // nalgebra assumes we're using a right-handed world coordinate system and a
+        // left-handed NDC and thus flips the z-axis. Undo this here.
         projection_matrix[(2, 2)] *= -1.0;
         projection_matrix[(3, 2)] = 1.0;
 
