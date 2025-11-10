@@ -18,7 +18,7 @@ use palette::{
 use parry3d::query::Ray;
 use wgpu::util::DeviceExt;
 
-use crate::composer::{
+use crate::app::composer::{
     renderer::ClearColor,
     scene::Transform,
 };

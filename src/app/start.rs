@@ -1,0 +1,136 @@
+use std::sync::Arc;
+
+use color_eyre::eyre::{
+    Error,
+    eyre,
+};
+use eframe::NativeOptions;
+use egui::ViewportBuilder;
+use egui_wgpu::{
+    SurfaceErrorAction,
+    WgpuConfiguration,
+    WgpuSetup,
+    WgpuSetupCreateNew,
+};
+use wgpu::SurfaceError;
+
+use crate::app::{
+    composer::renderer::{
+        RendererConfig,
+        WgpuContext,
+    },
+    files::AppFiles,
+};
+
+#[derive(Clone, Debug)]
+pub struct CreateAppContext {
+    pub wgpu_context: WgpuContext,
+    pub egui_context: egui::Context,
+    pub app_files: AppFiles,
+}
+
+pub trait CreateApp: Sized {
+    type App: eframe::App;
+
+    fn create_app(self, context: CreateAppContext) -> Self::App;
+
+    fn run(self) -> Result<(), Error> {
+        run_app(|context| self.create_app(context))
+    }
+}
+
+fn run_app<A: eframe::App>(create_app: impl FnOnce(CreateAppContext) -> A) -> Result<(), Error> {
+    let multisample_count = 4;
+
+    let app_files = AppFiles::open()?;
+
+    eframe::run_native(
+        "cem",
+        NativeOptions {
+            viewport: ViewportBuilder::default()
+                .with_title("cem")
+                .with_app_id("cem"),
+            persistence_path: Some(app_files.egui_persist_path()),
+            // corresponds to `wgpu::TextureFormat::Depth32Float` (https://docs.rs/egui-wgpu/0.33.0/src/egui_wgpu/lib.rs.html#375-385)
+            depth_buffer: 32,
+            multisampling: multisample_count as u16,
+            wgpu_options: WgpuConfiguration {
+                on_surface_error: Arc::new(|error| {
+                    if error == SurfaceError::Outdated {
+                        // ignore
+                    }
+                    else {
+                        tracing::error!("{}", error);
+                    }
+                    SurfaceErrorAction::SkipFrame
+                }),
+                wgpu_setup: WgpuSetup::CreateNew(WgpuSetupCreateNew {
+                    device_descriptor: Arc::new(|adapter| {
+                        // see https://docs.rs/egui-wgpu/0.33.0/src/egui_wgpu/setup.rs.html#174
+                        let base_limits = if adapter.get_info().backend == wgpu::Backend::Gl {
+                            wgpu::Limits::downlevel_webgl2_defaults()
+                        }
+                        else {
+                            wgpu::Limits::default()
+                        };
+
+                        wgpu::DeviceDescriptor {
+                            label: Some("egui wgpu device"),
+                            required_limits: wgpu::Limits {
+                                // When using a depth buffer, we have to be able to create a texture
+                                // large enough for the entire surface, and we want to support 4k+
+                                // displays.
+                                max_texture_dimension_2d: 8192,
+                                ..base_limits
+                            },
+                            required_features: wgpu::Features {
+                                features_wgpu: wgpu::FeaturesWGPU::POLYGON_MODE_LINE,
+                                features_webgpu: Default::default(),
+                            },
+                            ..Default::default()
+                        }
+                    }),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        Box::new(|cc| {
+            let render_state = cc
+                .wgpu_render_state
+                .as_ref()
+                .expect("missing wgpu render state");
+
+            // some config options our renderer needs to know
+            let renderer_config = RendererConfig {
+                target_texture_format: render_state.target_format,
+                depth_texture_format: wgpu::TextureFormat::Depth32Float,
+                multisample_count,
+            };
+
+            // pass wgpu context to app (e.g. for compute shaders)
+            let wgpu_context = WgpuContext {
+                adapter: render_state.adapter.clone(),
+                device: render_state.device.clone(),
+                queue: render_state.queue.clone(),
+                renderer_config,
+            };
+
+            // store wgpu context in egui context
+            cc.egui_ctx.data_mut(|data| {
+                data.insert_temp(egui::Id::NULL, wgpu_context.clone());
+            });
+
+            let create_app_context = CreateAppContext {
+                wgpu_context,
+                egui_context: cc.egui_ctx.clone(),
+                app_files,
+            };
+
+            Ok(Box::new(create_app(create_app_context)))
+        }),
+    )
+    .map_err(|e| eyre!("{e}"))?;
+    Ok(())
+}

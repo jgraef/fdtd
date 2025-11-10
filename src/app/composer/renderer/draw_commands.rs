@@ -4,7 +4,7 @@ use std::{
 };
 
 use crate::{
-    composer::renderer::{
+    app::composer::renderer::{
         Renderer,
         mesh::Mesh,
     },

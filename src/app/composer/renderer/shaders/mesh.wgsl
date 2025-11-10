@@ -74,10 +74,16 @@ fn vs_main(instance: Instance, vertex_index: u32, color: vec4f) -> VertexOutput 
 }
 
 @fragment
-fn fs_main(input: VertexOutput) -> FragmentOutput {
+fn fs_main(input: VertexOutput, @builtin(front_facing) front_face: bool) -> FragmentOutput {
     var output: FragmentOutput;
 
-    output.color = input.color;
+    if front_face {
+        output.color = input.color;
+    }
+    else {
+        // for debugging purposes we'll show back-faces as pink for now
+        output.color = vec4f(1.0, 0.0, 1.0, 1.0);
+    }
 
     return output;
 }

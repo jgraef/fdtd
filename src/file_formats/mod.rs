@@ -1,4 +1,5 @@
 pub mod nec;
+pub mod obj;
 
 use std::path::Path;
 

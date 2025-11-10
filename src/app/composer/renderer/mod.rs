@@ -23,7 +23,7 @@ use palette::{
     Srgb,
 };
 
-use crate::composer::{
+use crate::app::composer::{
     renderer::{
         camera::{
             CameraConfig,
@@ -476,6 +476,10 @@ impl Pipeline {
         polygon_mode: wgpu::PolygonMode,
         vertex_shader_entry_point: Option<&str>,
     ) -> Self {
+        // disable back-face culling. the shader will paint back-faces bright pink, so
+        // we'll know if something is flipped.
+        const ENABLE_BACK_FACE_CULLING: bool = true;
+
         let shader_module = wgpu_context.device.create_shader_module(shader_module_desc);
 
         let pipeline_layout =
@@ -503,7 +507,7 @@ impl Pipeline {
                         topology: wgpu::PrimitiveTopology::TriangleList,
                         strip_index_format: None,
                         front_face: Renderer::WINDING_ORDER.front_face(),
-                        cull_mode: Some(wgpu::Face::Back),
+                        cull_mode: ENABLE_BACK_FACE_CULLING.then_some(wgpu::Face::Back),
                         unclipped_depth: false,
                         polygon_mode,
                         conservative: false,
@@ -552,7 +556,7 @@ impl Pipeline {
         Self::new(
             wgpu_context,
             label,
-            wgpu::include_wgsl!("shaders/solid.wgsl"),
+            wgpu::include_wgsl!("shaders/mesh.wgsl"),
             bind_group_layouts,
             true,
             depth_compare,

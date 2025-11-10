@@ -1,3 +1,6 @@
+pub mod renderer;
+pub mod scene;
+
 use std::{
     convert::Infallible,
     fs::File,
@@ -23,7 +26,7 @@ use parry3d::shape::Cuboid;
 
 use crate::{
     Error,
-    composer::{
+    app::composer::{
         renderer::{
             Renderer,
             WgpuContext,
@@ -49,9 +52,6 @@ use crate::{
     },
     lipsum,
 };
-
-pub mod renderer;
-pub mod scene;
 
 #[derive(Debug)]
 pub struct Composer {
@@ -82,7 +82,7 @@ impl Composer {
         tracing::debug!(path = %path.display(), "open file");
 
         if let Some(file_format) = guess_file_format_from_path(path) {
-            let mut state = State::new();
+            let mut state = State::new_with_path(path);
 
             #[allow(unreachable_patterns)]
             match file_format {
@@ -182,7 +182,7 @@ struct State {
 }
 
 impl State {
-    pub fn new() -> Self {
+    fn new() -> Self {
         let mut scene = Scene::default();
 
         let camera = scene.add_camera(Transform::look_at(
@@ -198,6 +198,12 @@ impl State {
             camera,
             scene_pointer: ScenePointer::default(),
         }
+    }
+
+    fn new_with_path(path: impl AsRef<Path>) -> Self {
+        let mut this = Self::new();
+        this.path = Some(path.as_ref().to_owned());
+        this
     }
 }
 

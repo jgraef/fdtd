@@ -7,7 +7,7 @@ use nalgebra::{
 };
 use parry3d::query::Ray;
 
-use crate::composer::{
+use crate::app::composer::{
     renderer::{
         Renderer,
         camera::{

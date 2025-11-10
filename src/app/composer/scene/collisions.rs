@@ -6,7 +6,7 @@ use parry3d::{
     query::Ray,
 };
 
-use crate::composer::scene::{
+use crate::app::composer::scene::{
     Changed,
     SharedShape,
     Transform,

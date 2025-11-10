@@ -3,7 +3,7 @@ use std::ops::Range;
 use nalgebra::Point3;
 use wgpu::util::DeviceExt;
 
-use crate::composer::scene::Shape;
+use crate::app::composer::scene::Shape;
 
 #[derive(Clone, Debug)]
 pub struct Mesh {
@@ -21,6 +21,9 @@ impl Mesh {
         device: &wgpu::Device,
         bind_group_layout: &wgpu::BindGroupLayout,
     ) -> Self {
+        // todo: we could just fix the winding order here when we write the indices into
+        // the buffer, and not bother doing that in the shader.
+
         let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("mesh index buffer"),
             contents: bytemuck::cast_slice(&surface_mesh.indices),

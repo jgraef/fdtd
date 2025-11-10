@@ -37,8 +37,10 @@ use nalgebra::{
 };
 
 use crate::{
-    CreateApp,
-    CreateAppContext,
+    app::start::{
+        CreateApp,
+        CreateAppContext,
+    },
     fdtd::{
         executor::Executor,
         geometry::Block,
