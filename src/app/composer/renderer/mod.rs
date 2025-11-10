@@ -199,6 +199,7 @@ impl Renderer {
             wgpu::CompareFunction::Always,
             wgpu::PolygonMode::Fill,
             None,
+            false,
         );
 
         let render_bind_group_layouts = [
@@ -475,10 +476,13 @@ impl Pipeline {
         depth_compare: wgpu::CompareFunction,
         polygon_mode: wgpu::PolygonMode,
         vertex_shader_entry_point: Option<&str>,
+        cull_back_faces: bool,
     ) -> Self {
-        // disable back-face culling. the shader will paint back-faces bright pink, so
-        // we'll know if something is flipped.
-        const ENABLE_BACK_FACE_CULLING: bool = true;
+        let cull_mode = cull_back_faces.then_some(wgpu::Face::Back);
+
+        // We need to flip the interpretation of the winding order here, because this
+        // actually depends on the orientation of our Z axis.
+        let front_face = Renderer::WINDING_ORDER.flipped().front_face();
 
         let shader_module = wgpu_context.device.create_shader_module(shader_module_desc);
 
@@ -506,8 +510,8 @@ impl Pipeline {
                     primitive: wgpu::PrimitiveState {
                         topology: wgpu::PrimitiveTopology::TriangleList,
                         strip_index_format: None,
-                        front_face: Renderer::WINDING_ORDER.front_face(),
-                        cull_mode: ENABLE_BACK_FACE_CULLING.then_some(wgpu::Face::Back),
+                        front_face,
+                        cull_mode,
                         unclipped_depth: false,
                         polygon_mode,
                         conservative: false,
@@ -553,6 +557,10 @@ impl Pipeline {
         polygon_mode: wgpu::PolygonMode,
         vertex_shader_entry_point: Option<&str>,
     ) -> Self {
+        // enable/disable back-face culling. the mesh shader will paint back-faces
+        // bright pink, so we'll know if something is flipped.
+        const CULL_BACK_FACES: bool = true;
+
         Self::new(
             wgpu_context,
             label,
@@ -562,6 +570,7 @@ impl Pipeline {
             depth_compare,
             polygon_mode,
             vertex_shader_entry_point,
+            CULL_BACK_FACES,
         )
     }
 }

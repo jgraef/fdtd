@@ -90,10 +90,17 @@ pub enum WindingOrder {
 }
 
 impl WindingOrder {
-    pub fn front_face(&self) -> wgpu::FrontFace {
+    pub const fn front_face(&self) -> wgpu::FrontFace {
         match self {
-            WindingOrder::Clockwise => wgpu::FrontFace::Cw,
-            WindingOrder::CounterClockwise => wgpu::FrontFace::Ccw,
+            Self::Clockwise => wgpu::FrontFace::Cw,
+            Self::CounterClockwise => wgpu::FrontFace::Ccw,
+        }
+    }
+
+    pub const fn flipped(self) -> Self {
+        match self {
+            Self::Clockwise => Self::CounterClockwise,
+            Self::CounterClockwise => Self::Clockwise,
         }
     }
 }
