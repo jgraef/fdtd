@@ -28,6 +28,10 @@ use palette::{
     WithAlpha,
 };
 use parry3d::{
+    bounding_volume::{
+        Aabb,
+        BoundingVolume,
+    },
     query::Ray,
     shape::{
         Ball,
@@ -122,6 +126,19 @@ impl Scene {
 
     pub fn update_octtree(&mut self) {
         self.octtree.update(&mut self.entities);
+    }
+
+    pub fn compute_aabb_relative_to_observer(&self, relative_to: &Transform) -> Option<Aabb> {
+        let relative_to_inv = relative_to.transform.inverse();
+
+        let mut query = self.entities.query::<(&Transform, &SharedShape)>();
+        query
+            .iter()
+            .map(|(_entity, (transform, shape))| {
+                let transform = &relative_to_inv * &transform.transform;
+                shape.compute_aabb(&transform)
+            })
+            .reduce(|accumulator, aabb| accumulator.merged(&aabb))
     }
 }
 

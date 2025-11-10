@@ -202,6 +202,19 @@ impl App {
         });
     }
 
+    fn view_menu(&mut self, ui: &mut egui::Ui) {
+        ui.menu_button("View", |ui| {
+            setup_menu(ui);
+
+            if ui
+                .add_enabled(self.composer.has_open_file(), Button::new("Fit Camera"))
+                .clicked()
+            {
+                self.composer.expect_state_mut().fit_camera();
+            }
+        });
+    }
+
     fn help_menu(&mut self, ui: &mut egui::Ui) {
         ui.menu_button("Help", |ui| {
             setup_menu(ui);
@@ -244,9 +257,7 @@ impl eframe::App for App {
                 ui.menu_button("Selection", |ui| {
                     todo_label(ui);
                 });
-                ui.menu_button("View", |ui| {
-                    todo_label(ui);
-                });
+                self.view_menu(ui);
                 ui.menu_button("Run", |ui| {
                     todo_label(ui);
                 });
@@ -324,6 +335,7 @@ fn todo_label(ui: &mut egui::Ui) {
     ui.label("todo");
 }
 
+/// To configure menus to our liking. Call from inside the menu.
 fn setup_menu(ui: &mut egui::Ui) {
     ui.set_min_width(150.0);
 }

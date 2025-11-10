@@ -31,6 +31,9 @@ pub struct CameraProjection {
 }
 
 impl CameraProjection {
+    /// # Arguments
+    ///
+    /// - `fovy`: Field of view along (camera-local) Y-axis (vertical angle).
     pub fn new(fovy: f32) -> Self {
         let projection = Perspective3::new(1.0, fovy, 0.1, 100.0);
         tracing::debug!(?projection);
@@ -69,11 +72,23 @@ impl CameraProjection {
             dir: target.coords.normalize(),
         }
     }
+
+    pub fn fovy(&self) -> f32 {
+        self.projection.fovy()
+    }
+
+    /// Aspect ration (width / height)
+    pub fn aspect_ratio(&self) -> f32 {
+        self.projection.aspect()
+    }
 }
 
 impl Default for CameraProjection {
     fn default() -> Self {
-        Self::new(FRAC_PI_4)
+        // 45 degrees
+        let fovy = FRAC_PI_4;
+
+        Self::new(fovy)
     }
 }
 
