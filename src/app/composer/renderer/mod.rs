@@ -484,6 +484,8 @@ impl Pipeline {
         // actually depends on the orientation of our Z axis.
         let front_face = Renderer::WINDING_ORDER.flipped().front_face();
 
+        //let depth_compare = wgpu::CompareFunction::Always;
+
         let shader_module = wgpu_context.device.create_shader_module(shader_module_desc);
 
         let pipeline_layout =

@@ -197,7 +197,7 @@ impl State {
         let camera = scene.add_camera(Transform::look_at(
             &Point3::new(0.0, 0.0, -2.0),
             &Point3::origin(),
-            &Vector3::y(),
+            &Vector3::y_axis(),
         ));
 
         Self {
@@ -221,7 +221,7 @@ impl State {
     /// moving backwards) such that it will fit the AABB of the scene. The
     /// AABB is calculated relative to the camera orientation. The camera will
     /// also be translated laterally to its view axis to center to the AABB.
-    pub fn fit_camera(&mut self) {
+    pub fn fit_camera_to_scene(&mut self) {
         // get camera transform and projection
         // note: we could use another transform if we want to reposition the camera e.g.
         // along a coordinate axis.
@@ -237,7 +237,7 @@ impl State {
         // compute scene AABB relative to camera
         let Some(scene_aabb) = self
             .scene
-            .compute_aabb_relative_to_observer(&camera_transform)
+            .compute_aabb_relative_to_observer(&camera_transform, false)
         else {
             return;
         };
@@ -271,6 +271,28 @@ impl State {
             .query_one_mut::<&mut Transform>(self.camera_entity)
             .expect("camera should still exist");
         camera_transform.translate_local(&Translation3::from(translation));
+    }
+
+    pub fn point_camera_to_scene_center(&mut self) {
+        if let Ok(camera_transform) = self
+            .scene
+            .entities
+            .query_one_mut::<&mut Transform>(self.camera_entity)
+        {
+            let scene_center = self.scene.octtree.center();
+            let eye = camera_transform.position();
+
+            // normally up is always +Y
+            let mut up = Vector3::y_axis();
+
+            // but we need to take into account when we're directly above the scene center
+            const COLLINEAR_THRESHOLD: f32 = 0.01f32.to_radians();
+            if (&eye - &scene_center).dot(&up).abs() < COLLINEAR_THRESHOLD {
+                up = Vector3::z_axis();
+            }
+
+            *camera_transform = Transform::look_at(&eye, &scene_center, &up);
+        }
     }
 }
 

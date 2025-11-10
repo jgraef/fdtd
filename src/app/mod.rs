@@ -210,7 +210,19 @@ impl App {
                 .add_enabled(self.composer.has_open_file(), Button::new("Fit Camera"))
                 .clicked()
             {
-                self.composer.expect_state_mut().fit_camera();
+                self.composer.expect_state_mut().fit_camera_to_scene();
+            }
+
+            if ui
+                .add_enabled(
+                    self.composer.has_open_file(),
+                    Button::new("Point Camera to Center"),
+                )
+                .clicked()
+            {
+                self.composer
+                    .expect_state_mut()
+                    .point_camera_to_scene_center();
             }
         });
     }

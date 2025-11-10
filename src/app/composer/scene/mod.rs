@@ -28,10 +28,7 @@ use palette::{
     WithAlpha,
 };
 use parry3d::{
-    bounding_volume::{
-        Aabb,
-        BoundingVolume,
-    },
+    bounding_volume::Aabb,
     query::Ray,
     shape::{
         Ball,
@@ -57,9 +54,11 @@ use crate::app::composer::{
         },
     },
     scene::collisions::{
+        BoundingBox,
         Collides,
         OctTree,
         RayHit,
+        merge_aabbs,
     },
 };
 
@@ -128,17 +127,35 @@ impl Scene {
         self.octtree.update(&mut self.entities);
     }
 
-    pub fn compute_aabb_relative_to_observer(&self, relative_to: &Transform) -> Option<Aabb> {
+    /// Computes the scene's AABB relative to an observer.
+    ///
+    /// # Arguments
+    /// - `relative_to`: The individual AABBs of objects in the scene will be
+    ///   relative to this, i.e. they wll be transformed by its inverse.
+    /// - `approximate_relative_aabbs`: Compute the individual AABBs by
+    ///   transforming the pre-computed AABB
+    pub fn compute_aabb_relative_to_observer(
+        &self,
+        relative_to: &Transform,
+        approximate_relative_aabbs: bool,
+    ) -> Option<Aabb> {
         let relative_to_inv = relative_to.transform.inverse();
 
-        let mut query = self.entities.query::<(&Transform, &SharedShape)>();
-        query
-            .iter()
-            .map(|(_entity, (transform, shape))| {
+        if approximate_relative_aabbs {
+            let mut query = self.entities.query::<&BoundingBox>();
+            let aabbs = query
+                .iter()
+                .map(|(_entity, bounding_box)| bounding_box.aabb.transform_by(&relative_to_inv));
+            merge_aabbs(aabbs)
+        }
+        else {
+            let mut query = self.entities.query::<(&Transform, &SharedShape)>();
+            let aabbs = query.iter().map(|(_entity, (transform, shape))| {
                 let transform = &relative_to_inv * &transform.transform;
                 shape.compute_aabb(&transform)
-            })
-            .reduce(|accumulator, aabb| accumulator.merged(&aabb))
+            });
+            merge_aabbs(aabbs)
+        }
     }
 }
 
@@ -272,9 +289,9 @@ impl Transform {
             .append_rotation_wrt_point_mut(rotation, anchor);
     }
 
-    pub fn look_at(eye: &Point3<f32>, target: &Point3<f32>, up: &Vector3<f32>) -> Self {
+    pub fn look_at(eye: &Point3<f32>, target: &Point3<f32>, up: &UnitVector3<f32>) -> Self {
         Self {
-            transform: Isometry3::face_towards(eye, target, up),
+            transform: Isometry3::face_towards(eye, target, &up),
         }
     }
 
@@ -289,6 +306,10 @@ impl Transform {
             * UnitQuaternion::from_axis_angle(&local_right, tilt);
 
         self.transform.rotation *= rotation;
+    }
+
+    pub fn position(&self) -> Point3<f32> {
+        self.transform.translation.vector.into()
     }
 }
 

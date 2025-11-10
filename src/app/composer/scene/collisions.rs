@@ -1,7 +1,11 @@
 use std::collections::HashMap;
 
+use nalgebra::Point3;
 use parry3d::{
-    bounding_volume::Aabb,
+    bounding_volume::{
+        Aabb,
+        BoundingVolume,
+    },
     partitioning as bvh,
     query::Ray,
 };
@@ -92,6 +96,14 @@ impl OctTree {
                 }
             })
     }
+
+    pub fn scene_aabb(&self) -> Aabb {
+        self.bvh.root_aabb()
+    }
+
+    pub fn center(&self) -> Point3<f32> {
+        self.scene_aabb().center()
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -113,3 +125,12 @@ pub struct RayHit {
 /// Tag for things that have collisions
 #[derive(Clone, Copy, Debug)]
 pub struct Collides;
+
+/// Helper to merge an iterator of AABBs
+pub fn merge_aabbs<I>(iter: I) -> Option<Aabb>
+where
+    I: IntoIterator<Item = Aabb>,
+{
+    iter.into_iter()
+        .reduce(|accumulator, aabb| accumulator.merged(&aabb))
+}
