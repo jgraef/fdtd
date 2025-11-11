@@ -37,6 +37,7 @@ use type_map::concurrent::TypeMap;
 
 use crate::app::composer::{
     renderer::{
+        ClearColor,
         Render,
         camera::{
             CameraConfig,
@@ -97,6 +98,7 @@ impl Scene {
             CameraProjection::default(),
             CameraConfig::default(),
             CameraLightFilter::default(),
+            ClearColor::from(palette::named::BLUEVIOLET),
             Label::new_static("camera"),
         ))
     }

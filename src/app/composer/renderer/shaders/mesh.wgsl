@@ -52,7 +52,7 @@ struct VertexOutputSolid {
     @location(2) world_normal: vec4f,
 }
 
-struct VertexOutputWireframe {
+struct VertexOutputSingleColor {
     @builtin(position) fragment_position: vec4f,
     @location(0) color: vec4f,
 }
@@ -146,12 +146,12 @@ fn fs_main_solid(input: VertexOutputSolid, @builtin(front_facing) front_face: bo
 }
 
 @vertex
-fn vs_main_wireframe(input: VertexInput) -> VertexOutputWireframe {
+fn vs_main_wireframe(input: VertexInput) -> VertexOutputSingleColor {
     let instance = instance_buffer[input.instance_index];
 
     let vertex = get_vertex(input.vertex_index);
 
-    var output: VertexOutputWireframe;
+    var output: VertexOutputSingleColor;
     output.color = instance.material.wireframe;
     output.fragment_position = camera.projection * camera.transform * instance.transform * vec4f(vertex, 1.0);
 
@@ -160,9 +160,25 @@ fn vs_main_wireframe(input: VertexInput) -> VertexOutputWireframe {
 
 
 @fragment
-fn fs_main_wireframe(input: VertexOutputWireframe) -> FragmentOutput {
+fn fs_main_single_color(input: VertexOutputSingleColor) -> FragmentOutput {
     var output: FragmentOutput;
     output.color = input.color;
+    return output;
+}
+
+@vertex
+fn vs_main_clear(input: VertexInput) -> VertexOutputSingleColor {
+    var output: VertexOutputSingleColor;
+
+    output.fragment_position = vec4f(
+        f32((input.vertex_index & 1) << 2) - 1.0,
+        f32((input.vertex_index & 2) << 1) - 1.0,
+        1.0, // that's what egui_wgpu clears the depth buffer to
+        1.0,
+    );
+
+    output.color = camera.clear_color;
+
     return output;
 }
 
