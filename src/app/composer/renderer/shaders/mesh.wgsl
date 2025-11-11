@@ -39,6 +39,7 @@ struct PointLight {
 const FLAG_REVERSE_WINDING: u32 = 1;
 const FLAG_SHOW_SOLID: u32 = 2;
 const FLAG_SHOW_WIREFRAME: u32 = 4;
+const FLAG_SHOW_OUTLINE: u32 = 8;
 
 struct VertexInput {
     @builtin(vertex_index) vertex_index: u32,
@@ -67,6 +68,10 @@ var<uniform> camera: Camera;
 
 @group(1) @binding(0)
 var<storage, read> instance_buffer: array<Instance>;
+
+// this would be for camera-independent point lights
+//@group(1) @binding(1)
+//var<uniform> point_light: PointLight;
 
 @group(2) @binding(0)
 var<storage, read> index_buffer: array<u32>;

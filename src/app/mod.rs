@@ -16,6 +16,7 @@ use std::{
 use color_eyre::eyre::Error;
 use egui::{
     Button,
+    Checkbox,
     Layout,
 };
 use egui_file_dialog::FileDialog;
@@ -28,7 +29,10 @@ use serde::{
 use crate::{
     app::{
         args::Args,
-        composer::Composer,
+        composer::{
+            Composer,
+            renderer::camera::CameraConfig,
+        },
         config::AppConfig,
         files::AppFiles,
         start::CreateAppContext,
@@ -204,19 +208,19 @@ impl App {
     }
 
     fn view_menu(&mut self, ui: &mut egui::Ui) {
+        let has_open_file = self.composer.has_open_file();
         ui.menu_button("View", |ui| {
             setup_menu(ui);
 
+            // note: right now this could all live directly in the view menu, but we will
+            // eventually have multiple views/cameras.
             ui.menu_button("Camera", |ui| {
                 setup_menu(ui);
 
                 let fit_camera_margin = Default::default();
 
                 if ui
-                    .add_enabled(
-                        self.composer.has_open_file(),
-                        Button::new("Point Camera to Center"),
-                    )
+                    .add_enabled(has_open_file, Button::new("Point Camera to Center"))
                     .on_hover_text("Turn camera towards center of scene")
                     .clicked()
                 {
@@ -226,7 +230,7 @@ impl App {
                 }
 
                 if ui
-                    .add_enabled(self.composer.has_open_file(), Button::new("Fit Camera"))
+                    .add_enabled(has_open_file, Button::new("Fit Camera"))
                     .on_hover_text("Move camera forward/back until it fits the scene.")
                     .clicked()
                 {
@@ -237,10 +241,7 @@ impl App {
 
                 let mut fit_camera_along_axis_button = |axis, up, axis_label, tooltip| {
                     if ui
-                        .add_enabled(
-                            self.composer.has_open_file(),
-                            Button::new(("Fit Camera to ", axis_label)),
-                        )
+                        .add_enabled(has_open_file, Button::new(("Fit Camera to ", axis_label)))
                         .on_hover_text(tooltip)
                         .clicked()
                     {
@@ -286,6 +287,34 @@ impl App {
                     "-Z",
                     "Look at XY plane from back.",
                 );
+
+                ui.separator();
+
+                let mut dummy = CameraConfig::default();
+                let camera_config = self
+                    .composer
+                    .camera_mut::<&mut CameraConfig>()
+                    .unwrap_or(&mut dummy);
+
+                ui.add_enabled(
+                    has_open_file,
+                    Checkbox::new(&mut camera_config.show_solid, "Show Solid"),
+                );
+                ui.add_enabled(
+                    has_open_file,
+                    Checkbox::new(&mut camera_config.show_outline, "Show Outline"),
+                );
+                ui.add_enabled(
+                    has_open_file,
+                    Checkbox::new(&mut camera_config.show_wireframe, "Show Wireframe"),
+                );
+
+                if ui
+                    .add_enabled(has_open_file, Button::new("Configure Lights"))
+                    .clicked()
+                {
+                    tracing::debug!("todo: configure camera lights")
+                }
             });
         });
     }

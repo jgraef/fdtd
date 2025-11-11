@@ -99,6 +99,7 @@ impl Scene {
             CameraConfig::default(),
             CameraLightFilter::default(),
             ClearColor::from(palette::named::BLUEVIOLET),
+            //PointLight::default(),
             Label::new_static("camera"),
         ))
     }

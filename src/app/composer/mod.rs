@@ -25,7 +25,6 @@ use nalgebra::{
     Vector2,
     Vector3,
 };
-use parry3d::shape::Cuboid;
 
 use crate::{
     Error,
@@ -127,6 +126,19 @@ impl Composer {
     /// button).
     pub fn expect_state_mut(&mut self) -> &mut State {
         self.state.as_mut().expect("no file open")
+    }
+
+    pub fn camera_mut<'a, Q>(&'a mut self) -> Option<Q::Item<'a>>
+    where
+        Q: hecs::Query,
+    {
+        self.state.as_mut().and_then(|state| {
+            state
+                .scene
+                .entities
+                .query_one_mut::<Q>(state.camera_entity)
+                .ok()
+        })
     }
 }
 
@@ -332,8 +344,8 @@ impl PopulateScene for ExampleScene {
     type Error = Infallible;
 
     fn populate_scene(&self, scene: &mut Scene) -> Result<(), Self::Error> {
-        let shape = |size| Cuboid::new(Vector3::repeat(size));
-        //let shape = |size| Ball::new(size);
+        let shape = |size| parry3d::shape::Cuboid::new(Vector3::repeat(size));
+        //let shape = |size| parry3d::shape::Ball::new(size);
 
         scene.add_object(Point3::new(-0.2, 0.0, 0.0), shape(0.1), palette::named::RED);
         scene.add_object(Point3::new(0.2, 0.0, 0.0), shape(0.1), palette::named::BLUE);

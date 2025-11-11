@@ -98,6 +98,18 @@ pub struct RendererConfig {
 ///  - x: from left to right
 ///  - y: from bottom to top
 ///  - z: from outside to inside of screen
+///
+/// Each [`Renderer`] can only render one scene at once, but through multiple
+/// cameras.
+///
+/// # TODO
+///
+/// Split per-scene render-state from reusable state. Only `instance_buffer`,
+/// `instance_bind_group` and `draw_command_buffer` are specific to the scene.
+/// Everything else can be shared between renderers for multiple scenes. So we
+/// could separate these out, and e.g. put them into a resource into the scene.
+/// Note that `instance_data` can be shared. It's just a scratch buffer that is
+/// used during `prepare_world`. Same for `command_buffer`.
 #[derive(derive_more::Debug)]
 pub struct Renderer {
     wgpu_context: WgpuContext,
@@ -110,12 +122,28 @@ pub struct Renderer {
     solid_pipeline: Pipeline,
     wireframe_pipeline: Pipeline,
 
-    instance_buffer: InstanceBuffer<InstanceData>,
-    instance_bind_group: wgpu::BindGroup,
+    /// Scratch buffer for instance data (in GPU format)
     instance_data: Vec<InstanceData>,
 
+    /// The instance buffer.
+    ///
+    /// [`InstanceBuffer`] will take care of the reallocation if the buffer
+    /// needs to grow.
+    instance_buffer: InstanceBuffer<InstanceData>,
+
+    /// The bind group. This needs to be replace when the instance buffer grows.
+    ///
+    /// This is purposefully not included in [`InstanceBuffer`], because we
+    /// might want to put other stuff in this bind group as well (e.g. point
+    /// lights).
+    instance_bind_group: wgpu::BindGroup,
+
+    /// This stores all draw commands that are generated during `prepare_world`.
+    /// Its `finish` method returns the finalized draw command (aggregate) for a
+    /// specific camera.
     draw_command_buffer: DrawCommandBuffer,
 
+    /// Scratch buffer for ECS commands
     #[debug(ignore)]
     command_buffer: hecs::CommandBuffer,
 }
@@ -425,6 +453,7 @@ impl Renderer {
                 )
             },
         );
+        self.instance_data.clear();
     }
 
     /// Prepares rendering a frame for a specific view.
@@ -467,6 +496,8 @@ impl Renderer {
                     })
             })
         else {
+            // fixme: use a fallback camera buffer to call the clear shader only.
+
             // if we don't have a camera we can't do anything. since we can't bind a camera
             // bind group, we can't even clear. we could have a fallback camera
             // bind group that is only used for clearing. or separate the clear color from
@@ -660,6 +691,7 @@ bitflags! {
         // flag in the vertex shader to skip anything that it shouldn't render.
         const SHOW_SOLID = 0b0010;
         const SHOW_WIREFRAME = 0b0100;
+        const SHOW_OUTLINE = 0b1000;
     }
 }
 

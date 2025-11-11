@@ -54,18 +54,40 @@ impl From<Srgb<u8>> for Material {
 ///
 /// Note that we intend to only support one light source at a time, since there
 /// isn't much need for more.
+///
+/// # TODO
+///
+/// This is currently not used. At the moment we only want one point light
+/// specific for a camera, colocated with it. The camera position (and thus the
+/// light's) is already sent to the shader. The diffuse and specular light
+/// components can be modulated by the camera as well. So there is no need for
+/// this right now.
 #[derive(Clone, Copy, Debug)]
 pub struct PointLight {
     pub diffuse: Srgb,
     pub specular: Srgb,
 }
 
+impl PointLight {
+    pub const WHITE: Self = Self::from_single_color(Srgb::new(1.0, 1.0, 1.0));
+
+    pub const fn from_single_color(color: Srgb) -> Self {
+        Self {
+            diffuse: color,
+            specular: color,
+        }
+    }
+}
+
+impl Default for PointLight {
+    fn default() -> Self {
+        Self::WHITE
+    }
+}
+
 impl From<Srgb> for PointLight {
     fn from(value: Srgb) -> Self {
-        Self {
-            diffuse: value,
-            specular: value,
-        }
+        Self::from_single_color(value)
     }
 }
 
