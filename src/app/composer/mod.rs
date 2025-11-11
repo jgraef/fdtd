@@ -1,8 +1,10 @@
 pub mod renderer;
 pub mod scene;
+pub mod tree;
 
 use std::{
     convert::Infallible,
+    f32,
     fs::File,
     io::BufReader,
     path::{
@@ -12,11 +14,7 @@ use std::{
 };
 
 use color_eyre::eyre::bail;
-use egui::{
-    RichText,
-    Widget,
-    epaint::MarginF32,
-};
+use egui::RichText;
 use nalgebra::{
     Isometry3,
     Point3,
@@ -35,7 +33,6 @@ use crate::{
             camera::CameraProjection,
         },
         scene::{
-            Label,
             PopulateScene,
             Scene,
             Transform,
@@ -44,6 +41,7 @@ use crate::{
                 SceneView,
             },
         },
+        tree::ObjectTree,
     },
     file_formats::{
         FileFormat,
@@ -56,9 +54,16 @@ use crate::{
     lipsum,
 };
 
+/// Scene composer widget.
+///
+/// This is stateful, so `&mut Composer` is the actual widget. It exists whether
+/// a file is open or not and keeps track of that.
 #[derive(Debug)]
 pub struct Composer {
+    /// The state of an open file
     state: Option<State>,
+
+    /// The renderer used to render a scene (if a file is open)
     renderer: Renderer,
 }
 
@@ -72,6 +77,7 @@ impl Composer {
         }
     }
 
+    /// Creates a new file with an example scene
     pub fn new_file(&mut self) {
         let mut state = State::new();
         ExampleScene
@@ -81,6 +87,7 @@ impl Composer {
         self.state = Some(state);
     }
 
+    /// Opens a file and populate the scene with it.
     pub fn open_file(&mut self, path: impl AsRef<Path>) -> Result<(), Error> {
         let path = path.as_ref();
         tracing::debug!(path = %path.display(), "open file");
@@ -117,6 +124,11 @@ impl Composer {
         self.state.is_some()
     }
 
+    /// Closes currently open file.
+    ///
+    /// # TODO
+    ///
+    /// Check if we need to save and prompt user for it.
     pub fn close_file(&mut self) {
         self.state = None;
     }
@@ -128,6 +140,21 @@ impl Composer {
         self.state.as_mut().expect("no file open")
     }
 
+    /// Returns the camera.
+    ///
+    /// This runs an arbitrary query against the camera entity.
+    /// Returns `None` if no file is open, or the camera entity doesn't exist
+    /// anymore (which we maybe should treat as a bug).
+    ///
+    /// This can be used to easily modify the camera from outside of the
+    /// composer (e.g. menu bar).
+    ///
+    /// # TODO
+    ///
+    /// Eventually we'll have multiple views/cameras. We could just use an enum
+    /// describing which view we mean, or pass in the camera entity itself.
+    /// Either way we will need a way to iterate over available cameras to e.g.
+    /// construct the camera menu in the menu bar.
     pub fn camera_mut<'a, Q>(&'a mut self) -> Option<Q::Item<'a>>
     where
         Q: hecs::Query,
@@ -140,77 +167,58 @@ impl Composer {
                 .ok()
         })
     }
-}
 
-impl Widget for &mut Composer {
-    fn ui(self, ui: &mut egui::Ui) -> egui::Response {
-        egui::Frame::new()
-            .show(ui, |ui| {
-                if let Some(state) = &mut self.state {
-                    state.scene.update_octtree();
-                    self.renderer.prepare_world(&mut state.scene);
-
-                    if let Some(entity_under_pointer) = &state.scene_pointer.entity_under_pointer {
-                        let label = state
-                            .scene
-                            .entities
-                            .query_one_mut::<Option<&Label>>(entity_under_pointer.entity)
-                            .ok()
-                            .flatten()
-                            .map(|label| format!(" {label}"))
-                            .unwrap_or_default();
-
-                        ui.label(format!(
-                            "Hovered: {:?}{label} at ({}, {}, {}) with {} distance",
-                            entity_under_pointer.entity,
-                            entity_under_pointer.point_hovered.x,
-                            entity_under_pointer.point_hovered.y,
-                            entity_under_pointer.point_hovered.z,
-                            entity_under_pointer.distance_from_camera
-                        ));
-                    }
-                    else {
-                        ui.label("Nothing hovered");
-                    }
-
-                    ui.add(
-                        SceneView::new(&mut state.scene, &mut self.renderer)
-                            .with_camera(state.camera_entity)
-                            .with_scene_pointer(&mut state.scene_pointer),
-                    );
-                }
-                else {
-                    egui::Frame::new()
-                        .inner_margin(MarginF32::symmetric(
-                            ui.available_width() / 2.0,
-                            ui.available_width() / 2.0,
-                        ))
-                        .show(ui, |ui| {
-                            ui.vertical_centered(|ui| {
-                                ui.label(RichText::new("Welcome!").heading());
-                                ui.label(lipsum!(20));
-                            });
-                        });
-                }
-            })
-            .response
+    pub fn show(&mut self, ctx: &egui::Context) {
+        if let Some(state) = &mut self.state {
+            state.show(ctx, &mut self.renderer);
+        }
+        else {
+            // what is being shown when no file is open
+            egui::CentralPanel::default().show(ctx, |ui| {
+                ui.add_space(100.0);
+                ui.vertical_centered(|ui| {
+                    ui.label(RichText::new("Welcome!").heading());
+                    ui.label(lipsum!(20));
+                });
+            });
+        }
     }
 }
 
+/// State for an open file
 #[derive(Debug)]
 pub struct State {
+    /// The path of the file. This will be where it's saved to.
+    ///
+    /// This might need to keep track of how it's saved (e.g. file format)
     path: Option<PathBuf>,
+
+    /// Whether the file was modified, since it was loaded or saved.
     modified: bool,
+
+    /// The scene containing all objects
     scene: Scene,
+
+    /// The camera used to render the scene.
+    ///
+    /// There will be one per view eventually
     camera_entity: hecs::Entity,
+
+    /// Stores where in the scene our mouse is pointing.
+    ///
+    /// We also need one of these per camera.
     scene_pointer: ScenePointer,
+
+    object_tree: ObjectTree,
+
+    selected_object: Option<hecs::Entity>,
 }
 
 impl State {
     pub fn new() -> Self {
         let mut scene = Scene::default();
 
-        let camera = scene.add_camera(Transform::look_at(
+        let camera_entity = scene.add_camera(Transform::look_at(
             &Point3::new(0.0, 0.0, -2.0),
             &Point3::origin(),
             &Vector3::y_axis(),
@@ -220,8 +228,10 @@ impl State {
             path: None,
             modified: false,
             scene,
-            camera_entity: camera,
-            scene_pointer: ScenePointer::default(),
+            camera_entity,
+            scene_pointer: Default::default(),
+            object_tree: Default::default(),
+            selected_object: None,
         }
     }
 
@@ -229,6 +239,73 @@ impl State {
         let mut this = Self::new();
         this.path = Some(path.as_ref().to_owned());
         this
+    }
+
+    pub fn show(&mut self, ctx: &egui::Context, renderer: &mut Renderer) {
+        // prepare world
+        self.scene.prepare();
+        renderer.prepare_world(&mut self.scene);
+
+        // left panel: shows object tree
+        egui::SidePanel::left(egui::Id::new("left_panel"))
+            .resizable(true)
+            .show(ctx, |ui| {
+                egui::ScrollArea::both()
+                    .scroll([false, true])
+                    .scroll_bar_visibility(
+                        egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded,
+                    )
+                    .show(ui, |ui| {
+                        self.object_tree
+                            .show(ui, &mut self.scene, &mut self.selected_object)
+                    });
+            });
+
+        // central panel: shows scene views (cameras)
+        egui::CentralPanel::default().show(ctx, |ui| {
+            if let Some(selected_entity) = self.selected_object {
+                ui.label(format!(
+                    "Selected: {}",
+                    self.scene.entity_debug_label(selected_entity)
+                ));
+            }
+            else {
+                ui.label("Nothing selected");
+            }
+
+            // this just shows the hovered entity at the top. will be removed later.
+            if let Some(entity_under_pointer) = &self.scene_pointer.entity_under_pointer {
+                ui.label(format!(
+                    "Hovered: {} at ({}, {}, {}) with {} distance",
+                    self.scene.entity_debug_label(entity_under_pointer.entity),
+                    entity_under_pointer.point_hovered.x,
+                    entity_under_pointer.point_hovered.y,
+                    entity_under_pointer.point_hovered.z,
+                    entity_under_pointer.distance_from_camera
+                ));
+            }
+            else {
+                ui.label("Nothing hovered");
+            }
+
+            // actually render the scene
+            if ui
+                .add(
+                    SceneView::new(&mut self.scene, renderer)
+                        .with_camera(self.camera_entity)
+                        .with_scene_pointer(&mut self.scene_pointer),
+                )
+                .clicked()
+            {
+                if let Some(entity_under_pointer) = &self.scene_pointer.entity_under_pointer {
+                    tracing::debug!(
+                        "object clicked in scene view: {}",
+                        self.scene.entity_debug_label(entity_under_pointer.entity)
+                    );
+                    self.selected_object = Some(entity_under_pointer.entity);
+                }
+            }
+        });
     }
 
     /// Moves the camera such that it fits the whole scene.

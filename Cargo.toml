@@ -18,8 +18,9 @@ eframe = { version = "0.33.0", default-features = false, features = ["accesskit"
 egui = { version = "0.33.0", features = ["persistence"] }
 egui-file-dialog = "0.12.0"
 egui-wgpu = { version = "0.33.0", features = ["default"] }
+egui_ltreeview = { version = "0.6.0", features = ["persistence"] }
 egui_plot = "0.34.0"
-hecs = { version = "0.10.5", features = ["macros"] }
+hecs = { version = "0.10.5", features = ["macros", "serde"] }
 image = "0.25.8"
 lipsum = "0.9.1"
 nalgebra = { version = "0.34.1", features = ["bytemuck"] }

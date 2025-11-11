@@ -60,6 +60,7 @@ use crate::app::composer::{
         RayHit,
         merge_aabbs,
     },
+    tree::ShowInTree,
 };
 
 #[derive(derive_more::Debug, Default)]
@@ -89,6 +90,7 @@ impl Scene {
             Render,
             label,
             Collides,
+            ShowInTree,
         ))
     }
 
@@ -126,7 +128,14 @@ impl Scene {
             .cast_ray(ray, max_time_of_impact, &self.entities)
     }
 
-    pub fn update_octtree(&mut self) {
+    /// This needs to be called every frame to update internal state.
+    ///
+    /// E.g. this updates the internal octtree used for spatial queries
+    ///
+    /// TODO: Could do deferred removals here: entities are marked for removal
+    /// by adding a tag component. Then we can remove them properly from the
+    /// octtree (and possibly the transform hierarchy).
+    pub fn prepare(&mut self) {
         self.octtree.update(&mut self.entities);
     }
 
@@ -159,6 +168,16 @@ impl Scene {
             });
             merge_aabbs(aabbs)
         }
+    }
+
+    pub fn entity_debug_label(&self, entity: hecs::Entity) -> EntityDebugLabel {
+        let label = self
+            .entities
+            .query_one::<Option<&Label>>(entity)
+            .ok()
+            .and_then(|mut query| query.get().flatten().cloned());
+
+        EntityDebugLabel { entity, label }
     }
 }
 
@@ -402,8 +421,49 @@ impl From<String> for Label {
     }
 }
 
+impl From<&Label> for egui::WidgetText {
+    fn from(value: &Label) -> Self {
+        egui::WidgetText::Text(value.label.as_ref().to_owned())
+    }
+}
+
+impl From<Label> for egui::WidgetText {
+    fn from(value: Label) -> Self {
+        egui::WidgetText::Text(value.label.as_ref().to_owned())
+    }
+}
+
 pub trait PopulateScene {
     type Error;
 
     fn populate_scene(&self, scene: &mut Scene) -> Result<(), Self::Error>;
+}
+
+#[derive(Clone, Debug)]
+pub struct EntityDebugLabel {
+    pub entity: hecs::Entity,
+    pub label: Option<Label>,
+}
+
+impl Display for EntityDebugLabel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(label) = &self.label {
+            write!(f, "{:?}:{}", self.entity, label.label)
+        }
+        else {
+            write!(f, "{:?}", self.entity)
+        }
+    }
+}
+
+impl From<&EntityDebugLabel> for egui::WidgetText {
+    fn from(value: &EntityDebugLabel) -> Self {
+        egui::WidgetText::Text(value.to_string())
+    }
+}
+
+impl From<EntityDebugLabel> for egui::WidgetText {
+    fn from(value: EntityDebugLabel) -> Self {
+        egui::WidgetText::Text(value.to_string())
+    }
 }

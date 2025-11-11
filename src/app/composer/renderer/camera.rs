@@ -48,7 +48,9 @@ impl CameraProjection {
     }
 
     pub(super) fn set_viewport(&mut self, viewport: &Viewport) {
-        self.set_aspect_ratio(viewport.aspect_ratio());
+        if let Some(aspect_ratio) = viewport.aspect_ratio() {
+            self.set_aspect_ratio(aspect_ratio);
+        }
     }
 
     /// Set aspect ratio (width / height)
@@ -135,8 +137,12 @@ pub struct Viewport {
 }
 
 impl Viewport {
-    pub fn aspect_ratio(&self) -> f32 {
-        self.viewport.aspect_ratio()
+    /// Returns aspect ratio of viewport.
+    ///
+    /// Returns `None` if either width or height are non-positive.
+    pub fn aspect_ratio(&self) -> Option<f32> {
+        (self.viewport.width() > 0.0 && self.viewport.height() > 0.0)
+            .then(|| self.viewport.aspect_ratio())
     }
 }
 

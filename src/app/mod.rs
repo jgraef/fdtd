@@ -369,9 +369,7 @@ impl eframe::App for App {
             });
         });
 
-        egui::CentralPanel::default().show(ctx, |ui| {
-            ui.add(&mut self.composer);
-        });
+        self.composer.show(ctx);
 
         egui::Window::new("About")
             .movable(true)
