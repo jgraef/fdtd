@@ -1,6 +1,7 @@
 pub mod camera;
 pub mod draw_commands;
 pub mod grid;
+pub mod light;
 pub mod mesh;
 
 use std::{
@@ -18,10 +19,7 @@ use bytemuck::{
     Zeroable,
 };
 use nalgebra::Matrix4;
-use palette::{
-    LinSrgba,
-    Srgb,
-};
+use palette::Srgb;
 
 use crate::app::composer::{
     renderer::{
@@ -37,6 +35,11 @@ use crate::app::composer::{
             DrawCommandBuffer,
             DrawCommandOptions,
         },
+        light::{
+            CameraLightFilter,
+            Material,
+            MaterialData,
+        },
         mesh::{
             Mesh,
             WindingOrder,
@@ -48,7 +51,6 @@ use crate::app::composer::{
         Scene,
         SharedShape,
         Transform,
-        VisualColor,
     },
 };
 
@@ -136,7 +138,7 @@ impl Renderer {
                     label: Some("camera_bind_group_layout"),
                     entries: &[wgpu::BindGroupLayoutEntry {
                         binding: 0,
-                        visibility: wgpu::ShaderStages::VERTEX,
+                        visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
                         ty: wgpu::BindingType::Buffer {
                             ty: wgpu::BufferBindingType::Uniform,
                             has_dynamic_offset: false,
@@ -153,7 +155,7 @@ impl Renderer {
                     label: Some("instance_bind_group_layout"),
                     entries: &[wgpu::BindGroupLayoutEntry {
                         binding: 0,
-                        visibility: wgpu::ShaderStages::VERTEX,
+                        visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
                         ty: wgpu::BindingType::Buffer {
                             ty: wgpu::BufferBindingType::Storage { read_only: true },
                             has_dynamic_offset: false,
@@ -205,6 +207,7 @@ impl Renderer {
             wgpu::CompareFunction::Always,
             wgpu::PolygonMode::Fill,
             None,
+            None,
             false,
         );
 
@@ -221,6 +224,7 @@ impl Renderer {
             wgpu::CompareFunction::Less,
             wgpu::PolygonMode::Fill,
             Some("vs_main_solid"),
+            Some("fs_main_solid"),
         );
 
         let wireframe_pipeline = Pipeline::new_objects(
@@ -230,6 +234,7 @@ impl Renderer {
             wgpu::CompareFunction::LessEqual,
             wgpu::PolygonMode::Line,
             Some("vs_main_wireframe"),
+            Some("fs_main_wireframe"),
         );
 
         let instance_buffer =
@@ -302,10 +307,16 @@ impl Renderer {
         }
 
         // create uniforms for cameras
-        for (entity, (camera_projection, camera_transform, clear_color)) in scene
-            .entities
-            .query_mut::<(&CameraProjection, &Transform, Option<&ClearColor>)>()
-            .without::<&CameraResources>()
+        for (entity, (camera_projection, camera_transform, clear_color, camera_light_filter)) in
+            scene
+                .entities
+                .query_mut::<(
+                    &CameraProjection,
+                    &Transform,
+                    Option<&ClearColor>,
+                    Option<&CameraLightFilter>,
+                )>()
+                .without::<&CameraResources>()
         {
             tracing::debug!(
                 ?entity,
@@ -314,7 +325,12 @@ impl Renderer {
                 ?clear_color,
                 "creating camera"
             );
-            let camera_data = CameraData::new(camera_projection, camera_transform, clear_color);
+            let camera_data = CameraData::new(
+                camera_projection,
+                camera_transform,
+                clear_color,
+                camera_light_filter,
+            );
             let camera_resources = CameraResources::new(
                 &self.camera_bind_group_layout,
                 &self.wgpu_context.device,
@@ -327,15 +343,28 @@ impl Renderer {
         self.command_buffer.run_on(&mut scene.entities);
 
         // update uniforms for cameras
-        for (_, (camera_resources, camera_projection, camera_transform, clear_color)) in
-            scene.entities.query_mut::<(
-                &mut CameraResources,
-                &CameraProjection,
-                &Transform,
-                Option<&ClearColor>,
-            )>()
-        {
-            let camera_data = CameraData::new(camera_projection, camera_transform, clear_color);
+        for (
+            _,
+            (
+                camera_resources,
+                camera_projection,
+                camera_transform,
+                clear_color,
+                camera_light_filter,
+            ),
+        ) in scene.entities.query_mut::<(
+            &mut CameraResources,
+            &CameraProjection,
+            &Transform,
+            Option<&ClearColor>,
+            Option<&CameraLightFilter>,
+        )>() {
+            let camera_data = CameraData::new(
+                camera_projection,
+                camera_transform,
+                clear_color,
+                camera_light_filter,
+            );
             camera_resources.update(&self.wgpu_context.queue, &camera_data);
         }
 
@@ -351,9 +380,9 @@ impl Renderer {
 
         // prepare the actual draw commands
         let mut draw_command_builder = self.draw_command_buffer.builder();
-        for (_, (transform, mesh, color)) in scene
+        for (_, (transform, mesh, material)) in scene
             .entities
-            .query::<(&Transform, &Mesh, &VisualColor)>()
+            .query::<(&Transform, &Mesh, &Material)>()
             .with::<&Render>()
             .iter()
         {
@@ -364,8 +393,12 @@ impl Renderer {
             }
 
             // write per-instance data into a buffer
-            self.instance_data
-                .push(InstanceData::new(transform, color, flags, mesh.base_vertex));
+            self.instance_data.push(InstanceData::new(
+                transform,
+                material,
+                flags,
+                mesh.base_vertex,
+            ));
 
             // for now every draw call will only draw one instance, but we could do
             // instancing for real later.
@@ -482,6 +515,7 @@ impl Pipeline {
         depth_compare: wgpu::CompareFunction,
         polygon_mode: wgpu::PolygonMode,
         vertex_shader_entry_point: Option<&str>,
+        fragment_shader_entry_point: Option<&str>,
         cull_back_faces: bool,
     ) -> Self {
         let cull_mode = cull_back_faces.then_some(wgpu::Face::Back);
@@ -536,7 +570,7 @@ impl Pipeline {
                     },
                     fragment: Some(wgpu::FragmentState {
                         module: &shader_module,
-                        entry_point: None,
+                        entry_point: fragment_shader_entry_point,
                         compilation_options: Default::default(),
                         targets: &[Some(wgpu::ColorTargetState {
                             format: wgpu_context.renderer_config.target_texture_format,
@@ -562,6 +596,7 @@ impl Pipeline {
         depth_compare: wgpu::CompareFunction,
         polygon_mode: wgpu::PolygonMode,
         vertex_shader_entry_point: Option<&str>,
+        fragment_shader_entry_point: Option<&str>,
     ) -> Self {
         // enable/disable back-face culling. the mesh shader will paint back-faces
         // bright pink, so we'll know if something is flipped.
@@ -576,6 +611,7 @@ impl Pipeline {
             depth_compare,
             polygon_mode,
             vertex_shader_entry_point,
+            fragment_shader_entry_point,
             CULL_BACK_FACES,
         )
     }
@@ -585,28 +621,25 @@ impl Pipeline {
 #[repr(C)]
 struct InstanceData {
     transform: Matrix4<f32>,
-    solid_color: LinSrgba,
-    wireframe_color: LinSrgba,
     flags: InstanceFlags,
     base_vertex: u32,
     _padding: [u32; 2],
+    material: MaterialData,
 }
 
 impl InstanceData {
     pub fn new(
         transform: &Transform,
-        color: &VisualColor,
+        material: &Material,
         flags: InstanceFlags,
         base_vertex: u32,
     ) -> Self {
         Self {
-            transform: transform.transform.cast().to_homogeneous(),
-            // shaders work with linear colors
-            solid_color: color.solid_color.into_linear(),
-            wireframe_color: color.wireframe_color.into_linear(),
+            transform: transform.transform.to_homogeneous(),
             flags,
             base_vertex,
             _padding: [0; _],
+            material: MaterialData::new(material),
         }
     }
 }

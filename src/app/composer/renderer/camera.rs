@@ -10,6 +10,7 @@ use nalgebra::{
     Point2,
     Point3,
     Vector2,
+    Vector4,
 };
 use palette::{
     LinSrgba,
@@ -22,7 +23,10 @@ use parry3d::{
 use wgpu::util::DeviceExt;
 
 use crate::app::composer::{
-    renderer::ClearColor,
+    renderer::{
+        ClearColor,
+        light::CameraLightFilter,
+    },
     scene::Transform,
 };
 
@@ -174,8 +178,11 @@ impl CameraResources {
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 #[repr(C)]
 pub(super) struct CameraData {
-    pub view_matrix: Matrix4<f32>,
+    pub transform: Matrix4<f32>,
+    pub projection: Matrix4<f32>,
+    pub world_position: Vector4<f32>,
     pub clear_color: LinSrgba,
+    pub light_filter: CameraLightFilter,
 }
 
 impl CameraData {
@@ -183,21 +190,28 @@ impl CameraData {
         camera_projection: &CameraProjection,
         camera_transform: &Transform,
         clear_color: Option<&ClearColor>,
+        light_filter: Option<&CameraLightFilter>,
     ) -> Self {
-        let mut projection_matrix = camera_projection.projection.to_homogeneous();
+        let transform = camera_transform.transform.inverse().to_homogeneous();
 
+        let mut projection = camera_projection.projection.to_homogeneous();
         // nalgebra assumes we're using a right-handed world coordinate system and a
         // left-handed NDC and thus flips the z-axis. Undo this here.
-        projection_matrix[(2, 2)] *= -1.0;
-        projection_matrix[(3, 2)] = 1.0;
+        projection[(2, 2)] *= -1.0;
+        projection[(3, 2)] = 1.0;
+
+        let world_position =
+            Point3::from(camera_transform.transform.translation.vector).to_homogeneous();
 
         Self {
-            // apply inverse transform of camera, then projection
-            view_matrix: projection_matrix * camera_transform.transform.inverse().to_homogeneous(),
+            transform,
+            projection,
+            world_position,
             // note: shaders always work with linear colors.
             clear_color: clear_color
                 .map(|clear_color| clear_color.clear_color.into_linear().with_alpha(1.0))
                 .unwrap_or_default(),
+            light_filter: light_filter.copied().unwrap_or_default(),
         }
     }
 }

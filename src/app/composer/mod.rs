@@ -25,7 +25,6 @@ use nalgebra::{
     Vector2,
     Vector3,
 };
-use palette::WithAlpha;
 use parry3d::shape::Cuboid;
 
 use crate::{
@@ -98,7 +97,7 @@ impl Composer {
                     tracing::debug!("{nec_file:#?}");
                     PopulateWithNec {
                         nec_file: &nec_file,
-                        color: palette::named::ORANGERED.into_format().with_alpha(1.0),
+                        material: palette::named::ORANGERED.into(),
                     }
                     .populate_scene(&mut state.scene)?;
                     state.fit_camera_to_scene(&Default::default());
@@ -260,6 +259,11 @@ impl State {
         camera_transform.translate_local(&Translation3::from(translation));
     }
 
+    /// Fit the camera to the scene looking along a specified axis.
+    ///
+    /// This is meant to be used along the canonical axis of the scene. It will
+    /// not calculate the scene's AABB as viewed along the axis, but instead
+    /// just rotate the scene's AABB.
     pub fn fit_camera_to_scene_looking_along_axis(
         &mut self,
         axis: &Vector3<f32>,
@@ -329,6 +333,7 @@ impl PopulateScene for ExampleScene {
 
     fn populate_scene(&self, scene: &mut Scene) -> Result<(), Self::Error> {
         let shape = |size| Cuboid::new(Vector3::repeat(size));
+        //let shape = |size| Ball::new(size);
 
         scene.add_object(Point3::new(-0.2, 0.0, 0.0), shape(0.1), palette::named::RED);
         scene.add_object(Point3::new(0.2, 0.0, 0.0), shape(0.1), palette::named::BLUE);

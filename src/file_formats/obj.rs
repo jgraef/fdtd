@@ -6,21 +6,18 @@ use std::{
 use nalgebra::Point3;
 use parry3d::shape::TriMesh;
 use tobj::LoadOptions;
-pub use tobj::{
-    Material,
-    Mesh,
-    Model,
-};
 
 use crate::app::composer::{
-    renderer::Render,
+    renderer::{
+        Render,
+        light::Material,
+    },
     scene::{
         Label,
         PopulateScene,
         Scene,
         SharedShape,
         Transform,
-        VisualColor,
         collisions::Collides,
     },
 };
@@ -29,8 +26,8 @@ pub type Error = tobj::LoadError;
 
 #[derive(Clone, Debug)]
 pub struct ObjFile {
-    pub models: Vec<Model>,
-    pub materials: Vec<Material>,
+    pub models: Vec<tobj::Model>,
+    pub materials: Vec<tobj::Material>,
 }
 
 impl ObjFile {
@@ -57,7 +54,7 @@ impl ObjFile {
 pub struct PopulateSceneWithObjFile<'a> {
     obj_file: &'a ObjFile,
     transform: Transform,
-    color: VisualColor,
+    material: Material,
 }
 
 impl<'a> PopulateScene for PopulateSceneWithObjFile<'a> {
@@ -100,7 +97,7 @@ impl<'a> PopulateScene for PopulateSceneWithObjFile<'a> {
 
             scene.entities.spawn((
                 self.transform,
-                self.color,
+                self.material,
                 SharedShape::from(tri_mesh),
                 label,
                 Render,

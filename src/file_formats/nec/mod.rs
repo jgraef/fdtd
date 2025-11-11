@@ -17,15 +17,17 @@ use nalgebra::{
     UnitVector3,
     Vector4,
 };
-use palette::Srgba;
 use parry3d::shape::Cylinder;
 
 pub use crate::file_formats::nec::interpreter::NecFile;
 use crate::{
-    app::composer::scene::{
-        PopulateScene,
-        Scene,
-        Transform,
+    app::composer::{
+        renderer::light::Material,
+        scene::{
+            PopulateScene,
+            Scene,
+            Transform,
+        },
     },
     file_formats::nec::{
         card::{
@@ -41,7 +43,7 @@ use crate::{
 #[derive(Clone, Copy, Debug)]
 pub struct PopulateWithNec<'a> {
     pub nec_file: &'a NecFile,
-    pub color: Srgba,
+    pub material: Material,
 }
 
 impl<'a> PopulateScene for PopulateWithNec<'a> {
@@ -79,7 +81,7 @@ impl<'a> PopulateScene for PopulateWithNec<'a> {
                                     ),
                                 );
 
-                                scene.add_object(transform, shape, self.color);
+                                scene.add_object(transform, shape, self.material);
                             }
                             WireSegmentDimensions::Tapered { .. } => todo!("truncated cone shape"),
                         }

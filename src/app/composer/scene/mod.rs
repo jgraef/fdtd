@@ -21,11 +21,6 @@ use nalgebra::{
     Vector2,
     Vector3,
 };
-use palette::{
-    Srgb,
-    Srgba,
-    WithAlpha,
-};
 use parry3d::{
     bounding_volume::Aabb,
     math::UnitVector,
@@ -48,6 +43,10 @@ use crate::app::composer::{
             CameraProjection,
         },
         grid::GridPlane,
+        light::{
+            CameraLightFilter,
+            Material,
+        },
         mesh::{
             SurfaceMesh,
             WindingOrder,
@@ -78,14 +77,14 @@ impl Scene {
         &mut self,
         transform: impl Into<Transform>,
         shape: impl Into<SharedShape>,
-        color: impl Into<VisualColor>,
+        material: impl Into<Material>,
     ) -> Entity {
         let shape = shape.into();
         let label = Label::from(format!("object.{:?}", shape.shape_type()));
         self.entities.spawn((
             transform.into(),
             shape,
-            color.into(),
+            material.into(),
             Render,
             label,
             Collides,
@@ -97,6 +96,7 @@ impl Scene {
             transform.into(),
             CameraProjection::default(),
             CameraConfig::default(),
+            CameraLightFilter::default(),
             Label::new_static("camera"),
         ))
     }
@@ -341,33 +341,6 @@ impl From<Point3<f32>> for Transform {
 impl From<UnitQuaternion<f32>> for Transform {
     fn from(value: UnitQuaternion<f32>) -> Self {
         Self::from(Isometry3::from_parts(Default::default(), value))
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct VisualColor {
-    pub solid_color: Srgba,
-    pub wireframe_color: Srgba,
-}
-
-impl From<Srgba> for VisualColor {
-    fn from(value: Srgba) -> Self {
-        Self {
-            solid_color: value,
-            wireframe_color: Default::default(),
-        }
-    }
-}
-
-impl From<Srgb> for VisualColor {
-    fn from(value: Srgb) -> Self {
-        Self::from(value.with_alpha(1.0))
-    }
-}
-
-impl From<Srgb<u8>> for VisualColor {
-    fn from(value: Srgb<u8>) -> Self {
-        Self::from(value.into_format::<f32>())
     }
 }
 
