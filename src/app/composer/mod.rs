@@ -289,21 +289,27 @@ impl State {
             }
 
             // actually render the scene
-            if ui
-                .add(
-                    SceneView::new(&mut self.scene, renderer)
-                        .with_camera(self.camera_entity)
-                        .with_scene_pointer(&mut self.scene_pointer),
-                )
-                .clicked()
-            {
-                if let Some(entity_under_pointer) = &self.scene_pointer.entity_under_pointer {
-                    tracing::debug!(
-                        "object clicked in scene view: {}",
-                        self.scene.entity_debug_label(entity_under_pointer.entity)
-                    );
-                    self.selected_object = Some(entity_under_pointer.entity);
-                }
+            let view_response = ui.add(
+                SceneView::new(&mut self.scene, renderer)
+                    .with_camera(self.camera_entity)
+                    .with_scene_pointer(&mut self.scene_pointer),
+            );
+
+            if view_response.clicked() {
+                self.selected_object = self
+                    .scene_pointer
+                    .entity_under_pointer
+                    .as_ref()
+                    .map(|entity_under_pointer| entity_under_pointer.entity)
+                    .inspect(|entity| {
+                        tracing::debug!(
+                            "object clicked in scene view: {}",
+                            self.scene.entity_debug_label(*entity)
+                        );
+                    });
+            }
+            if view_response.secondary_clicked() {
+                // todo: open context menu
             }
         });
     }

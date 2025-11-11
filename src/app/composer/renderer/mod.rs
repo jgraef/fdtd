@@ -88,7 +88,7 @@ pub struct WgpuContext {
 #[derive(Clone, Copy, Debug)]
 pub struct RendererConfig {
     pub target_texture_format: wgpu::TextureFormat,
-    pub depth_texture_format: wgpu::TextureFormat,
+    pub depth_texture_format: Option<wgpu::TextureFormat>,
     pub multisample_count: u32,
 }
 
@@ -590,13 +590,17 @@ impl Pipeline {
                         polygon_mode,
                         conservative: false,
                     },
-                    depth_stencil: Some(wgpu::DepthStencilState {
-                        format: wgpu::TextureFormat::Depth32Float,
-                        depth_write_enabled,
-                        depth_compare,
-                        stencil: Default::default(),
-                        bias: Default::default(),
-                    }),
+                    depth_stencil: wgpu_context.renderer_config.depth_texture_format.map(
+                        |depth_texture_format| {
+                            wgpu::DepthStencilState {
+                                format: depth_texture_format,
+                                depth_write_enabled,
+                                depth_compare,
+                                stencil: Default::default(),
+                                bias: Default::default(),
+                            }
+                        },
+                    ),
                     multisample: wgpu::MultisampleState {
                         count: wgpu_context.renderer_config.multisample_count,
                         mask: !0,
