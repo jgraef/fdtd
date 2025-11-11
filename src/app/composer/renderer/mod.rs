@@ -18,6 +18,7 @@ use bytemuck::{
     Pod,
     Zeroable,
 };
+use hecs::Satisfies;
 use nalgebra::Matrix4;
 use palette::Srgb;
 
@@ -121,6 +122,7 @@ pub struct Renderer {
     clear_pipeline: Pipeline,
     solid_pipeline: Pipeline,
     wireframe_pipeline: Pipeline,
+    outline_pipeline: Pipeline,
 
     /// Scratch buffer for instance data (in GPU format)
     instance_data: Vec<InstanceData>,
@@ -232,10 +234,35 @@ impl Renderer {
             "render/clear",
             Self::MESH_SHADER_MODULE,
             &[&camera_bind_group_layout],
-            // we don't need to write depth for the clear pipeline. egui_wgpu clears the depth
-            // buffer when it creates the render pass (to a value of 1.0)
-            false,
-            wgpu::CompareFunction::Always,
+            DepthState {
+                // egui clears the depth buffer with a value of 1.0 when starting the render pass.
+                // but we could enable this to write to the depth buffer with the clear shader - if
+                // we want to clear to another value.
+                write_enable: false,
+                // render regardless of depth state
+                compare: wgpu::CompareFunction::Always,
+                bias: Default::default(),
+            },
+            {
+                // this should always zero the stencil state
+                let stencil_face_state = wgpu::StencilFaceState {
+                    compare: wgpu::CompareFunction::Always,
+                    fail_op: wgpu::StencilOperation::Zero,
+                    depth_fail_op: wgpu::StencilOperation::Zero,
+                    pass_op: wgpu::StencilOperation::Zero,
+                };
+                wgpu::StencilState {
+                    // same stencil face state for both faces
+                    front: stencil_face_state,
+                    back: stencil_face_state,
+                    // ignore buffer state
+                    read_mask: 0x00,
+                    // clear bits
+                    // I thought a value of 0x00 would do it here, but the `is_enabled` method would
+                    // return false then.
+                    write_mask: 0xff,
+                }
+            },
             wgpu::PolygonMode::Fill,
             Some("vs_main_clear"),
             Some("fs_main_single_color"),
@@ -253,6 +280,8 @@ impl Renderer {
             "render/object/solid",
             &render_bind_group_layouts,
             wgpu::CompareFunction::Less,
+            Some(Stencil::OUTLINE),
+            None,
             wgpu::PolygonMode::Fill,
             Some("vs_main_solid"),
             Some("fs_main_solid"),
@@ -263,8 +292,23 @@ impl Renderer {
             "render/object/wireframe",
             &render_bind_group_layouts,
             wgpu::CompareFunction::LessEqual,
+            None,
+            None,
             wgpu::PolygonMode::Line,
             Some("vs_main_wireframe"),
+            Some("fs_main_single_color"),
+        );
+
+        let outline_pipeline = Pipeline::new_objects(
+            &wgpu_context,
+            "render/object/outline",
+            &render_bind_group_layouts,
+            wgpu::CompareFunction::Always,
+            None,
+            // mask used, todo: don't hardcode values like this :D
+            Some(Stencil::OUTLINE),
+            wgpu::PolygonMode::Fill,
+            Some("vs_main_outline"),
             Some("fs_main_single_color"),
         );
 
@@ -284,6 +328,7 @@ impl Renderer {
             clear_pipeline,
             solid_pipeline,
             wireframe_pipeline,
+            outline_pipeline,
             instance_buffer,
             instance_bind_group,
             instance_data: vec![],
@@ -411,9 +456,9 @@ impl Renderer {
 
         // prepare the actual draw commands
         let mut draw_command_builder = self.draw_command_buffer.builder();
-        for (_, (transform, mesh, material)) in scene
+        for (_, (transform, mesh, material, outline)) in scene
             .entities
-            .query::<(&Transform, &Mesh, &Material)>()
+            .query::<(&Transform, &Mesh, &Material, Satisfies<&Outline>)>()
             .with::<&Render>()
             .iter()
         {
@@ -437,7 +482,7 @@ impl Renderer {
             first_instance += 1;
 
             // prepare draw commands
-            draw_command_builder.draw_mesh(instances, &mesh);
+            draw_command_builder.draw_mesh(instances, &mesh, outline);
         }
 
         // send instance data to gpu
@@ -512,6 +557,7 @@ impl Renderer {
                 enable_clear: has_clear_color,
                 enable_solid: camera_config.show_solid,
                 enable_wireframe: camera_config.show_wireframe,
+                enable_outline: camera_config.show_outline,
             },
         ))
     }
@@ -545,8 +591,8 @@ impl Pipeline {
         label: &str,
         shader_module_desc: wgpu::ShaderModuleDescriptor,
         bind_group_layouts: &[&wgpu::BindGroupLayout],
-        depth_write_enabled: bool,
-        depth_compare: wgpu::CompareFunction,
+        depth_state: DepthState,
+        stencil_state: wgpu::StencilState,
         polygon_mode: wgpu::PolygonMode,
         vertex_shader_entry_point: Option<&str>,
         fragment_shader_entry_point: Option<&str>,
@@ -594,10 +640,10 @@ impl Pipeline {
                         |depth_texture_format| {
                             wgpu::DepthStencilState {
                                 format: depth_texture_format,
-                                depth_write_enabled,
-                                depth_compare,
-                                stencil: Default::default(),
-                                bias: Default::default(),
+                                depth_write_enabled: depth_state.write_enable,
+                                depth_compare: depth_state.compare,
+                                stencil: stencil_state,
+                                bias: depth_state.bias,
                             }
                         },
                     ),
@@ -632,6 +678,8 @@ impl Pipeline {
         label: &str,
         bind_group_layouts: &[&wgpu::BindGroupLayout],
         depth_compare: wgpu::CompareFunction,
+        write_to_stencil_buffer: Option<Stencil>,
+        test_against_stencil_buffer: Option<Stencil>,
         polygon_mode: wgpu::PolygonMode,
         vertex_shader_entry_point: Option<&str>,
         fragment_shader_entry_point: Option<&str>,
@@ -640,13 +688,39 @@ impl Pipeline {
         // bright pink, so we'll know if something is flipped.
         const CULL_BACK_FACES: bool = true;
 
+        let mut stencil_state = wgpu::StencilState::default();
+        if let Some(write_mask) = write_to_stencil_buffer {
+            // write stencil reference to stencil buffer
+            stencil_state.front.pass_op = wgpu::StencilOperation::Replace;
+
+            // remove this and the selected object will shine through anything occluding
+            // with the outline color. give it a try :)
+            stencil_state.front.depth_fail_op = wgpu::StencilOperation::Replace;
+
+            // for now we'll replace all bits of the stencil buffer with the reference
+            stencil_state.write_mask = write_mask.into();
+        }
+        if let Some(read_mask) = test_against_stencil_buffer {
+            // check masked stencil buffer against stencil reference.
+
+            // e.g. for outline drawing, when drawing the outline, the stencil reference
+            // will be 0, so if the bit in the stencil buffer is set the test will fail and
+            // thus the outline will not draw over the object itself.
+            stencil_state.front.compare = wgpu::CompareFunction::Equal;
+            stencil_state.read_mask = read_mask.into();
+        }
+
         Self::new(
             wgpu_context,
             label,
             Renderer::MESH_SHADER_MODULE,
             bind_group_layouts,
-            true,
-            depth_compare,
+            DepthState {
+                write_enable: true,
+                compare: depth_compare,
+                bias: Default::default(),
+            },
+            stencil_state,
             polygon_mode,
             vertex_shader_entry_point,
             fragment_shader_entry_point,
@@ -801,4 +875,27 @@ fn allocate_instance_buffer<T>(
         usage: usage | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     })
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Outline;
+
+#[derive(Clone, Copy, Debug)]
+struct DepthState {
+    pub write_enable: bool,
+    pub compare: wgpu::CompareFunction,
+    pub bias: wgpu::DepthBiasState,
+}
+
+bitflags! {
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+    pub struct Stencil: u8 {
+        const OUTLINE = 0b0000_0001;
+    }
+}
+
+impl From<Stencil> for u32 {
+    fn from(value: Stencil) -> Self {
+        value.bits().into()
+    }
 }

@@ -28,6 +28,7 @@ use crate::{
     Error,
     app::composer::{
         renderer::{
+            Outline,
             Renderer,
             WgpuContext,
             camera::CameraProjection,
@@ -246,6 +247,8 @@ impl State {
         self.scene.prepare();
         renderer.prepare_world(&mut self.scene);
 
+        let selected_before_ui_input = self.selected_object;
+
         // left panel: shows object tree
         egui::SidePanel::left(egui::Id::new("left_panel"))
             .resizable(true)
@@ -312,6 +315,19 @@ impl State {
                 // todo: open context menu
             }
         });
+
+        // selection changed
+        if selected_before_ui_input != self.selected_object {
+            if let Some(entity) = selected_before_ui_input {
+                // remove outline tag from previously selected entity
+                let _ = self.scene.entities.remove_one::<Outline>(entity);
+            }
+
+            if let Some(entity) = self.selected_object {
+                // add outline tag to new selection
+                let _ = self.scene.entities.insert_one(entity, Outline);
+            }
+        }
     }
 
     /// Moves the camera such that it fits the whole scene.

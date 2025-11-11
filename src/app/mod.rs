@@ -13,13 +13,18 @@ use std::{
     },
 };
 
-use color_eyre::eyre::Error;
+use chrono::Local;
+use color_eyre::eyre::{
+    Error,
+    OptionExt,
+};
 use egui::{
     Button,
     Checkbox,
     Layout,
 };
 use egui_file_dialog::FileDialog;
+use image::RgbaImage;
 use nalgebra::Vector3;
 use serde::{
     Deserialize,
@@ -350,10 +355,60 @@ impl App {
             }
         });
     }
+
+    fn save_screenshot(&self, image: &egui::ColorImage) -> Result<(), Error> {
+        let filename = format!("{}.png", Local::now().format("%Y-%m-%d_%H:%M:%S"));
+
+        let screenshot_path = self.app_files.screenshots_dir().join(&filename);
+
+        let image = RgbaImage::from_raw(
+            image.width() as u32,
+            image.height() as u32,
+            image.as_raw().to_owned(),
+        )
+        .ok_or_eyre("Invalid image data provided by egui")?;
+
+        image.save(&screenshot_path)?;
+        tracing::info!(path = %screenshot_path.display(), "Screenshot saved");
+
+        Ok(())
+    }
 }
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        {
+            let mut take_screenshot = false;
+
+            ctx.input(|input| {
+                for event in &input.events {
+                    match event {
+                        egui::Event::Key {
+                            key: egui::Key::F6,
+                            repeat: false,
+                            pressed: true,
+                            ..
+                        } => {
+                            take_screenshot = true;
+                        }
+                        egui::Event::Screenshot {
+                            viewport_id: _,
+                            user_data: _,
+                            image,
+                        } => {
+                            self.save_screenshot(&image)
+                                .unwrap_or_else(|error| self.error_dialog.display_error(error));
+                        }
+                        _ => {}
+                    }
+                }
+            });
+
+            if take_screenshot {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::default()));
+            }
+        }
+
         egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
                 self.file_menu(ui);

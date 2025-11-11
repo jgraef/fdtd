@@ -25,6 +25,7 @@ pub struct Material {
     pub shininess: f32,
     pub wireframe: Srgb,
     pub outline: Srgb,
+    pub outline_thickness: f32,
 }
 
 impl From<Srgb> for Material {
@@ -36,7 +37,8 @@ impl From<Srgb> for Material {
             emissive: Srgb::new(0.0, 0.0, 0.0),
             shininess: 8.0,
             wireframe: Srgb::new(0.0, 0.0, 0.0),
-            outline: Srgb::new(0.0, 0.0, 0.0),
+            outline: Srgb::new(1.0, 1.0, 1.0),
+            outline_thickness: 0.1,
         }
     }
 }
@@ -138,20 +140,23 @@ pub struct MaterialData {
     specular: LinSrgba,
     emissive: LinSrgba,
     shininess: f32,
-    _padding: [u32; 3],
+    outline_thickness: f32,
+    _padding: [u32; 2],
 }
 
 impl MaterialData {
     pub fn new(material: &Material) -> Self {
+        let convert = |c: Srgb| c.into_linear().with_alpha(1.0);
         Self {
-            wireframe: material.wireframe.into_linear().with_alpha(1.0),
-            outline: material.outline.into_linear().with_alpha(1.0),
-            ambient: material.ambient.into_linear().with_alpha(1.0),
-            diffuse: material.diffuse.into_linear().with_alpha(1.0),
-            specular: material.specular.into_linear().with_alpha(1.0),
-            emissive: material.emissive.into_linear().with_alpha(1.0),
+            wireframe: convert(material.wireframe),
+            outline: convert(material.outline),
+            ambient: convert(material.ambient),
+            diffuse: convert(material.diffuse),
+            specular: convert(material.specular),
+            emissive: convert(material.emissive),
             shininess: material.shininess,
-            _padding: Default::default(),
+            outline_thickness: material.outline_thickness,
+            _padding: [0; _],
         }
     }
 }

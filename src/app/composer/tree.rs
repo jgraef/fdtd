@@ -45,6 +45,7 @@ impl ObjectTree {
             .allow_drag_and_drop(false)
             .show_state(ui, &mut self.tree_state, |builder| {
                 builder.dir(ObjectTreeId::ObjectDirectory, "Objects");
+
                 for (entity, label) in scene
                     .entities
                     .query_mut::<Option<&Label>>()

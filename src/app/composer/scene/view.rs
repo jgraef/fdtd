@@ -102,6 +102,7 @@ impl<'a> SceneView<'a> {
                             unit: egui::MouseWheelUnit::Line,
                             delta: egui::Vec2 { x: _, y: delta },
                             modifiers: _,
+                            phase: _,
                         } => {
                             if let Ok(camera_transform) = self
                                 .scene

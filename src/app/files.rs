@@ -30,6 +30,7 @@ impl AppFiles {
     pub fn create_directories(&self) -> Result<(), Error> {
         std::fs::create_dir_all(self.state_dir_with_fallback())?;
         std::fs::create_dir_all(self.project_dirs.config_local_dir())?;
+        std::fs::create_dir_all(self.screenshots_dir())?;
         Ok(())
     }
 
@@ -47,6 +48,10 @@ impl AppFiles {
         self.project_dirs
             .state_dir()
             .unwrap_or_else(|| self.project_dirs.data_local_dir())
+    }
+
+    pub fn screenshots_dir(&self) -> PathBuf {
+        self.project_dirs.data_local_dir().join("screenshots")
     }
 
     /// Returns path to file for egui's persistence.

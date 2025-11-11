@@ -1,11 +1,16 @@
 use std::{
-    ops::Range,
+    ops::{
+        Deref,
+        DerefMut,
+        Range,
+    },
     sync::Arc,
 };
 
 use crate::{
     app::composer::renderer::{
         Renderer,
+        Stencil,
         mesh::Mesh,
     },
     util::{
@@ -16,21 +21,21 @@ use crate::{
 
 #[derive(Debug, Default)]
 pub struct DrawCommandBuffer {
-    draw_meshes: ReusableSharedBuffer<Vec<DrawMesh>>,
+    buffer: ReusableSharedBuffer<DrawCommandBuilderBuffer>,
 }
 
 impl DrawCommandBuffer {
     pub fn builder(&mut self) -> DrawCommandBuilder<'_> {
-        let mut draw_meshes = self.draw_meshes.write(Default::default);
+        let mut buffer = self.buffer.write(Default::default);
 
         // very important lol
-        draw_meshes.clear();
+        buffer.clear();
 
-        if draw_meshes.reallocated() {
+        if buffer.reallocated() {
             tracing::warn!("draw command buffer reallocated");
         }
 
-        DrawCommandBuilder { draw_meshes }
+        DrawCommandBuilder { buffer }
     }
 
     pub fn finish(
@@ -50,8 +55,11 @@ impl DrawCommandBuffer {
             wireframe_pipeline: options
                 .enable_wireframe
                 .then(|| renderer.wireframe_pipeline.pipeline.clone()),
+            outline_pipeline: options
+                .enable_outline
+                .then(|| renderer.outline_pipeline.pipeline.clone()),
             mesh_instance_bind_group: renderer.instance_bind_group.clone(),
-            draw_meshes: self.draw_meshes.get(),
+            buffer: self.buffer.get(),
         }
     }
 }
@@ -61,6 +69,7 @@ pub struct DrawCommandOptions {
     pub enable_clear: bool,
     pub enable_solid: bool,
     pub enable_wireframe: bool,
+    pub enable_outline: bool,
 }
 
 impl Default for DrawCommandOptions {
@@ -69,88 +78,47 @@ impl Default for DrawCommandOptions {
             enable_clear: true,
             enable_solid: true,
             enable_wireframe: true,
+            enable_outline: true,
         }
     }
 }
 
 #[derive(Debug)]
 pub struct DrawCommandBuilder<'a> {
-    draw_meshes: ReusableSharedBufferGuard<'a, Vec<DrawMesh>>,
+    buffer: ReusableSharedBufferGuard<'a, DrawCommandBuilderBuffer>,
 }
 
 impl<'a> DrawCommandBuilder<'a> {
-    pub fn draw_mesh(&mut self, instances: Range<u32>, mesh: &Mesh) {
-        self.draw_meshes.push(DrawMesh {
+    pub fn draw_mesh(&mut self, instances: Range<u32>, mesh: &Mesh, outline: bool) {
+        let mut stencil_reference = Stencil::default();
+
+        if outline {
+            stencil_reference.insert(Stencil::OUTLINE);
+            let draw_mesh_index = self.buffer.draw_meshes.len();
+            self.buffer
+                .draw_outlines
+                .push(DrawOutline { draw_mesh_index });
+        }
+
+        self.buffer.draw_meshes.push(DrawMesh {
             instances,
             indices: mesh.indices.clone(),
             bind_group: mesh.bind_group.clone(),
+            stencil_reference,
         });
     }
 }
 
-#[derive(Debug)]
-pub struct DrawCommand {
-    camera_bind_group: wgpu::BindGroup,
-    clear_pipeline: Option<wgpu::RenderPipeline>,
-
-    // draw meshes
-    solid_pipeline: Option<wgpu::RenderPipeline>,
-    wireframe_pipeline: Option<wgpu::RenderPipeline>,
-    mesh_instance_bind_group: wgpu::BindGroup,
-    draw_meshes: Arc<Vec<DrawMesh>>,
+#[derive(Debug, Default)]
+struct DrawCommandBuilderBuffer {
+    draw_meshes: Vec<DrawMesh>,
+    draw_outlines: Vec<DrawOutline>,
 }
 
-impl DrawCommand {
-    pub fn render(&self, render_pass: &mut wgpu::RenderPass<'static>) {
-        // set camera
-        render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
-
-        // clear
-        if let Some(clear_pipeline) = &self.clear_pipeline {
-            render_pass.set_pipeline(clear_pipeline);
-            render_pass.draw(0..3, 0..1);
-        }
-
-        // set instance buffer (this is shared between all draw calls)
-        render_pass.set_bind_group(1, &self.mesh_instance_bind_group, &[]);
-
-        // render all objects with the solid and/or wireframe pipeline
-        if let Some(solid_pipeline) = &self.solid_pipeline {
-            render_meshes_with_pipeline(solid_pipeline, render_pass, &self.draw_meshes);
-        }
-        if let Some(wireframe_pipeline) = &self.wireframe_pipeline {
-            render_meshes_with_pipeline(wireframe_pipeline, render_pass, &self.draw_meshes);
-        }
-    }
-}
-
-impl egui_wgpu::CallbackTrait for DrawCommand {
-    fn paint(
-        &self,
-        _info: egui::PaintCallbackInfo,
-        render_pass: &mut wgpu::RenderPass<'static>,
-        _callback_resources: &egui_wgpu::CallbackResources,
-    ) {
-        self.render(render_pass);
-    }
-}
-
-/// Helper function to render objects with a given pipeline.
-///
-/// Obviously the pipeline must be compatible. This works
-/// with solid or wireframe rendering
-fn render_meshes_with_pipeline(
-    pipeline: &wgpu::RenderPipeline,
-    render_pass: &mut wgpu::RenderPass<'static>,
-    draw_commands: &[DrawMesh],
-) {
-    // set draw (solid) pipeline
-    render_pass.set_pipeline(pipeline);
-
-    // issue draw commands
-    for draw_command in draw_commands {
-        render_pass.set_bind_group(2, &draw_command.bind_group, &[]);
-        render_pass.draw(draw_command.indices.clone(), draw_command.instances.clone());
+impl DrawCommandBuilderBuffer {
+    fn clear(&mut self) {
+        self.draw_meshes.clear();
+        self.draw_outlines.clear();
     }
 }
 
@@ -164,4 +132,157 @@ struct DrawMesh {
 
     /// the bind group containing the index and vertex buffer for the mesh.
     bind_group: wgpu::BindGroup,
+
+    /// the stencil reference to set before the draw call is issued.
+    stencil_reference: Stencil,
+}
+
+#[derive(Debug)]
+struct DrawOutline {
+    // just point to the DrawMesh command
+    draw_mesh_index: usize,
+}
+
+#[derive(Debug)]
+pub struct DrawCommand {
+    camera_bind_group: wgpu::BindGroup,
+    clear_pipeline: Option<wgpu::RenderPipeline>,
+
+    // draw meshes
+    solid_pipeline: Option<wgpu::RenderPipeline>,
+    wireframe_pipeline: Option<wgpu::RenderPipeline>,
+    outline_pipeline: Option<wgpu::RenderPipeline>,
+    mesh_instance_bind_group: wgpu::BindGroup,
+
+    buffer: Arc<DrawCommandBuilderBuffer>,
+}
+
+impl DrawCommand {
+    pub fn render(&self, render_pass: &mut wgpu::RenderPass<'static>) {
+        let mut render_pass = RenderPass::from(render_pass);
+
+        // set camera
+        render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
+
+        // clear
+        if let Some(clear_pipeline) = &self.clear_pipeline {
+            render_pass.set_pipeline(clear_pipeline);
+            render_pass.draw(0..3, 0..1);
+        }
+
+        // set instance buffer (this is shared between all draw calls)
+        render_pass.set_bind_group(1, &self.mesh_instance_bind_group, &[]);
+
+        // solid mesh
+        if let Some(solid_pipeline) = &self.solid_pipeline {
+            render_pass.draw_meshes_with_pipeline(solid_pipeline, &self.buffer.draw_meshes, true);
+        }
+
+        // wireframe mesh
+        if let Some(wireframe_pipeline) = &self.wireframe_pipeline {
+            render_pass.draw_meshes_with_pipeline(
+                wireframe_pipeline,
+                &self.buffer.draw_meshes,
+                false,
+            );
+        }
+
+        // selection outline
+        if let Some(outline_pipeline) = &self.outline_pipeline {
+            render_pass.draw_meshes_with_pipeline(
+                outline_pipeline,
+                self.buffer
+                    .draw_outlines
+                    .iter()
+                    .map(|draw_outline| &self.buffer.draw_meshes[draw_outline.draw_mesh_index]),
+                false,
+            );
+        }
+    }
+}
+
+impl egui_wgpu::CallbackTrait for DrawCommand {
+    fn paint(
+        &self,
+        _info: egui::PaintCallbackInfo,
+        render_pass: &mut wgpu::RenderPass<'static>,
+        _callback_resources: &egui_wgpu::CallbackResources,
+    ) {
+        self.render(render_pass.into());
+    }
+}
+
+/// Wrapper around [`wgpu::RenderPass`] for convenience.
+#[derive(Debug)]
+struct RenderPass<'a> {
+    inner: &'a mut wgpu::RenderPass<'static>,
+
+    /// Currently set stencil reference.
+    ///
+    /// We keep track of this, so we only set this if we actually change the
+    /// value.
+    stencil_reference: Stencil,
+}
+
+impl<'a> RenderPass<'a> {
+    pub fn set_stencil_reference(&mut self, stencil_reference: Stencil) {
+        if self.stencil_reference != stencil_reference {
+            self.inner.set_stencil_reference(stencil_reference.into());
+            self.stencil_reference = stencil_reference;
+        }
+    }
+
+    /// Helper function to render objects with a given pipeline.
+    ///
+    /// Obviously the pipeline must be compatible. This works
+    /// with solid or wireframe rendering
+    fn draw_meshes_with_pipeline<'b>(
+        &mut self,
+        pipeline: &wgpu::RenderPipeline,
+        draw_meshes: impl IntoIterator<Item = &'b DrawMesh>,
+        set_stencil_reference: bool,
+    ) {
+        // set draw (solid) pipeline
+        self.inner.set_pipeline(pipeline);
+
+        if !set_stencil_reference {
+            // make sure it's set to 0 in the pipeline
+            self.set_stencil_reference(Default::default());
+        }
+
+        // issue draw commands
+        for draw_command in draw_meshes {
+            self.inner.set_bind_group(2, &draw_command.bind_group, &[]);
+
+            if set_stencil_reference {
+                self.set_stencil_reference(draw_command.stencil_reference);
+            }
+
+            self.inner
+                .draw(draw_command.indices.clone(), draw_command.instances.clone());
+        }
+    }
+}
+
+impl<'a> From<&'a mut wgpu::RenderPass<'static>> for RenderPass<'a> {
+    fn from(value: &'a mut wgpu::RenderPass<'static>) -> Self {
+        Self {
+            inner: value,
+            stencil_reference: Default::default(),
+        }
+    }
+}
+
+impl<'a> Deref for RenderPass<'a> {
+    type Target = wgpu::RenderPass<'static>;
+
+    fn deref(&self) -> &Self::Target {
+        &*self.inner
+    }
+}
+
+impl<'a> DerefMut for RenderPass<'a> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut *self.inner
+    }
 }

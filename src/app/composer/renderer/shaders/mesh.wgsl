@@ -28,6 +28,7 @@ struct Material {
     specular: vec4f,
     emissive: vec4f,
     shininess: f32,
+    outline_thickness: f32,
 }
 
 struct PointLight {
@@ -159,6 +160,21 @@ fn vs_main_wireframe(input: VertexInput) -> VertexOutputSingleColor {
     var output: VertexOutputSingleColor;
     output.color = instance.material.wireframe;
     output.fragment_position = camera.projection * camera.transform * instance.transform * vec4f(vertex, 1.0);
+
+    return output;
+}
+
+// note: almost completely identical to vs_main_wireframe
+@vertex
+fn vs_main_outline(input: VertexInput) -> VertexOutputSingleColor {
+    let instance = instance_buffer[input.instance_index];
+
+    let vertex = get_vertex(input.vertex_index);
+    let scaling = 1.0 + instance.material.outline_thickness;    
+
+    var output: VertexOutputSingleColor;
+    output.color = instance.material.outline;
+    output.fragment_position = camera.projection * camera.transform * instance.transform * vec4f(vertex, 1.0 / scaling);
 
     return output;
 }
