@@ -70,8 +70,7 @@ pub struct Scene {
 
     pub octtree: OctTree,
 
-    //pub undo_buffer: Vec<UndoAction>,
-    deferred_deletions: Vec<Entity>,
+    deferred_deletions: Vec<DeferredDeletion>,
 }
 
 impl Scene {
@@ -135,15 +134,23 @@ impl Scene {
     /// TODO: Could do deferred removals here: entities are marked for removal
     /// by adding a tag component. Then we can remove them properly from the
     /// octtree (and possibly the transform hierarchy).
-    pub fn prepare(&mut self) {
+    pub fn prepare(&mut self, mut send_to_hades: impl FnMut(hecs::TakenEntity)) {
         // remove entities from octtree
-        self.octtree
-            .pre_update_removals(&mut self.entities, &self.deferred_deletions);
+        self.octtree.pre_update_removals(
+            &mut self.entities,
+            self.deferred_deletions
+                .iter()
+                .map(|deletion| deletion.entity),
+        );
 
         // remove entities from world
-        for entity in &self.deferred_deletions {
-            tracing::debug!(?entity, "Removing entity");
-            let _ = self.entities.despawn(*entity);
+        for deletion in &self.deferred_deletions {
+            tracing::debug!(?deletion, "Removing entity");
+            if let Ok(deleted_entity) = self.entities.take(deletion.entity)
+                && deletion.send_to_hades
+            {
+                send_to_hades(deleted_entity);
+            }
         }
         self.deferred_deletions.clear();
 
@@ -182,18 +189,36 @@ impl Scene {
     }
 
     pub fn entity_debug_label(&self, entity: hecs::Entity) -> EntityDebugLabel {
-        let label = self
-            .entities
-            .query_one::<Option<&Label>>(entity)
-            .ok()
-            .and_then(|mut query| query.get().flatten().cloned());
+        let exists = self.entities.contains(entity);
 
-        EntityDebugLabel { entity, label }
+        let label = exists
+            .then(|| {
+                self.entities
+                    .query_one::<Option<&Label>>(entity)
+                    .ok()
+                    .and_then(|mut query| query.get().flatten().cloned())
+            })
+            .flatten();
+
+        EntityDebugLabel {
+            entity,
+            label,
+            invalid: !exists,
+        }
     }
 
-    pub fn delete(&mut self, entity: Entity) {
-        self.deferred_deletions.push(entity);
+    pub fn delete(&mut self, entity: Entity, send_to_hades: bool) {
+        self.deferred_deletions.push(DeferredDeletion {
+            entity,
+            send_to_hades,
+        });
     }
+}
+
+#[derive(Debug)]
+struct DeferredDeletion {
+    entity: hecs::Entity,
+    send_to_hades: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -458,16 +483,22 @@ pub trait PopulateScene {
 pub struct EntityDebugLabel {
     pub entity: hecs::Entity,
     pub label: Option<Label>,
+    pub invalid: bool,
 }
 
 impl Display for EntityDebugLabel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self.entity)?;
+
         if let Some(label) = &self.label {
-            write!(f, "{:?}:{}", self.entity, label.label)
+            write!(f, ":{}", label.label)?;
         }
-        else {
-            write!(f, "{:?}", self.entity)
+
+        if self.invalid {
+            write!(f, ":invalid-ref")?;
         }
+
+        Ok(())
     }
 }
 

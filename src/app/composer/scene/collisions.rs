@@ -37,14 +37,17 @@ impl OctTree {
     pub(super) fn pre_update_removals(
         &mut self,
         world: &mut hecs::World,
-        deletions: &[hecs::Entity],
+        deleted_entities: impl IntoIterator<Item = hecs::Entity>,
     ) {
-        for entity in deletions {
-            if let Ok(leaf_index) = world.query_one_mut::<&LeafIndex>(*entity) {
+        for entity in deleted_entities {
+            if let Ok(leaf_index) = world.query_one_mut::<&LeafIndex>(entity) {
                 tracing::debug!(?entity, ?leaf_index, "removing from octtree");
                 self.bvh.remove(leaf_index.index);
+                self.command_buffer.remove_one::<LeafIndex>(entity);
             }
         }
+
+        self.command_buffer.run_on(world);
     }
 
     pub(super) fn update(&mut self, world: &mut hecs::World) {

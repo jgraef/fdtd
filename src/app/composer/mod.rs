@@ -37,6 +37,7 @@ use crate::{
             PopulateScene,
             Scene,
             Transform,
+            undo::UndoBuffer,
             view::{
                 ScenePointer,
                 SceneView,
@@ -62,7 +63,7 @@ use crate::{
 #[derive(Debug)]
 pub struct Composer {
     /// The state of an open file
-    state: Option<State>,
+    pub state: Option<State>,
 
     /// The renderer used to render a scene (if a file is open)
     renderer: Renderer,
@@ -121,7 +122,7 @@ impl Composer {
         Ok(())
     }
 
-    pub fn has_open_file(&self) -> bool {
+    pub fn has_file_open(&self) -> bool {
         self.state.is_some()
     }
 
@@ -184,6 +185,33 @@ impl Composer {
             });
         }
     }
+
+    pub fn show_debug(&mut self, ui: &mut egui::Ui) {
+        if let Some(state) = &mut self.state {
+            ui.collapsing("Undo Buffer", |ui| {
+                ui.label("Undo:");
+                let mut empty = true;
+                for undo_action in state.undo_buffer.iter_undo().take(10) {
+                    empty = false;
+                    ui.code(format!("{undo_action:?}"));
+                }
+                if empty {
+                    ui.label("No undo actions");
+                }
+
+                ui.separator();
+                ui.label("Redo:");
+                let mut empty = true;
+                for redo_action in state.undo_buffer.iter_redo().take(10) {
+                    empty = false;
+                    ui.code(format!("{redo_action:?}"));
+                }
+                if empty {
+                    ui.label("No redo actions");
+                }
+            });
+        }
+    }
 }
 
 /// State for an open file
@@ -214,6 +242,8 @@ pub struct State {
 
     selected_object: Option<hecs::Entity>,
     context_menu_object: Option<hecs::Entity>,
+
+    undo_buffer: UndoBuffer,
 }
 
 impl Default for State {
@@ -235,6 +265,7 @@ impl Default for State {
             object_tree: Default::default(),
             selected_object: None,
             context_menu_object: None,
+            undo_buffer: Default::default(),
         }
     }
 }
@@ -249,7 +280,14 @@ impl State {
 
     pub fn show(&mut self, ctx: &egui::Context, renderer: &mut Renderer) {
         // prepare world
-        self.scene.prepare();
+        self.scene.prepare(|user_deleted_entity| {
+            // this is called for entities that were deleted with the
+            // `send_to_hades` flag set. This means we want to send them to the
+            // undo buffer.
+
+            self.undo_buffer.deleted_entity(user_deleted_entity);
+        });
+
         renderer.prepare_world(&mut self.scene);
 
         let selected_before_ui_input = self.selected_object;
@@ -361,7 +399,7 @@ impl State {
             ui.separator();
 
             if ui.button("Delete").clicked() {
-                self.scene.delete(entity);
+                self.delete_selected();
             }
 
             if ui.button("Properties").clicked() {
@@ -476,6 +514,33 @@ impl State {
             }
 
             *camera_transform = Transform::look_at(&eye, &scene_center, &up);
+        }
+    }
+
+    pub fn has_undos(&self) -> bool {
+        self.undo_buffer.has_undos()
+    }
+
+    pub fn has_redos(&self) -> bool {
+        self.undo_buffer.has_redos()
+    }
+
+    pub fn undo(&mut self) {
+        self.undo_buffer.undo_most_recent(&mut self.scene);
+    }
+
+    pub fn redo(&mut self) {
+        tracing::debug!("todo: redo");
+    }
+
+    pub fn has_selected(&self) -> bool {
+        self.selected_object.is_some()
+    }
+
+    pub fn delete_selected(&mut self) {
+        if let Some(entity) = self.selected_object.take() {
+            let _ = self.scene.entities.remove_one::<Outline>(entity);
+            self.scene.delete(entity, true);
         }
     }
 }

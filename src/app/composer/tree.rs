@@ -59,7 +59,14 @@ impl ObjectTree {
                 self.object_scratch.sort_by_key(|(entity, _)| *entity);
 
                 for (entity, label) in self.object_scratch.drain(..) {
-                    builder.leaf(entity.into(), EntityDebugLabel { entity, label });
+                    builder.leaf(
+                        entity.into(),
+                        EntityDebugLabel {
+                            entity,
+                            label,
+                            invalid: false,
+                        },
+                    );
                 }
             });
 

@@ -4,6 +4,10 @@ This app is work-in-progress. It's intended to model electromagnetic behavior. I
 
 # TODO
 
+ - do we need deferred deletion? it complicates things a lot. try to remove it.
+  - then delete/cut can take the object out of scene immediately and send it to hades and/or serialize it into clipboard
+  - maybe just allow generic on_delete hooks, so e.g. renderer can remove mesh, outline, etc. octtree can remove entity from bvh.
+
  - clicking objects: left-click selects, right-click opens context menu
  - manipulating objects: movement, other properties in window
  - camera (and light) config ui

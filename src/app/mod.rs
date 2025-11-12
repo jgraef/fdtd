@@ -22,6 +22,7 @@ use egui::{
     Button,
     Checkbox,
     Layout,
+    ScrollArea,
 };
 use egui_file_dialog::FileDialog;
 use image::RgbaImage;
@@ -152,13 +153,13 @@ impl App {
             ui.separator();
 
             if ui
-                .add_enabled(self.composer.has_open_file(), Button::new("Save"))
+                .add_enabled(self.composer.has_file_open(), Button::new("Save"))
                 .clicked()
             {
                 tracing::debug!("todo: save");
             }
             if ui
-                .add_enabled(self.composer.has_open_file(), Button::new("Save As"))
+                .add_enabled(self.composer.has_file_open(), Button::new("Save As"))
                 .clicked()
             {
                 self.file_dialog.set_user_data(FileDialogAction::SaveAs);
@@ -174,7 +175,7 @@ impl App {
             ui.separator();
 
             if ui
-                .add_enabled(self.composer.has_open_file(), Button::new("Close File"))
+                .add_enabled(self.composer.has_file_open(), Button::new("Close File"))
                 .clicked()
             {
                 self.composer.close_file();
@@ -193,27 +194,66 @@ impl App {
         ui.menu_button("Edit", |ui| {
             setup_menu(ui);
 
-            if ui.button("Undo").clicked() {
-                tracing::debug!("todo: undo");
+            let (_has_file_open, can_undo, can_redo, has_selected) = self
+                .composer
+                .state
+                .as_ref()
+                .map(|state| {
+                    (
+                        true,
+                        state.has_undos(),
+                        state.has_redos(),
+                        state.has_selected(),
+                    )
+                })
+                .unwrap_or_default();
+
+            if ui
+                .add_enabled(can_undo, egui::Button::new("Undo"))
+                .clicked()
+            {
+                self.composer.expect_state_mut().undo();
             }
-            if ui.button("Redo").clicked() {
-                tracing::debug!("todo: redo");
+            if ui
+                .add_enabled(can_redo, egui::Button::new("Redo"))
+                .clicked()
+            {
+                self.composer.expect_state_mut().redo();
             }
 
-            if ui.button("Cut").clicked() {
+            ui.separator();
+
+            if ui
+                .add_enabled(has_selected, egui::Button::new("Cut"))
+                .clicked()
+            {
                 tracing::debug!("todo: cut");
             }
-            if ui.button("Copy").clicked() {
+
+            if ui
+                .add_enabled(has_selected, egui::Button::new("Copy"))
+                .clicked()
+            {
                 tracing::debug!("todo: copy");
             }
-            if ui.button("Past").clicked() {
+
+            if ui.button("Paste").clicked() {
                 tracing::debug!("todo: paste");
+            }
+
+            ui.separator();
+
+            if ui
+                .add_enabled(has_selected, egui::Button::new("Delete"))
+                .clicked()
+            {
+                self.composer.expect_state_mut().delete_selected();
             }
         });
     }
 
     fn view_menu(&mut self, ui: &mut egui::Ui) {
-        let has_open_file = self.composer.has_open_file();
+        let has_file_open = self.composer.has_file_open();
         ui.menu_button("View", |ui| {
             setup_menu(ui);
 
@@ -225,7 +265,7 @@ impl App {
                 let fit_camera_margin = Default::default();
 
                 if ui
-                    .add_enabled(has_open_file, Button::new("Point Camera to Center"))
+                    .add_enabled(has_file_open, Button::new("Point Camera to Center"))
                     .on_hover_text("Turn camera towards center of scene")
                     .clicked()
                 {
@@ -235,7 +275,7 @@ impl App {
                 }
 
                 if ui
-                    .add_enabled(has_open_file, Button::new("Fit Camera"))
+                    .add_enabled(has_file_open, Button::new("Fit Camera"))
                     .on_hover_text("Move camera forward/back until it fits the scene.")
                     .clicked()
                 {
@@ -246,7 +286,7 @@ impl App {
 
                 let mut fit_camera_along_axis_button = |axis, up, axis_label, tooltip| {
                     if ui
-                        .add_enabled(has_open_file, Button::new(("Fit Camera to ", axis_label)))
+                        .add_enabled(has_file_open, Button::new(("Fit Camera to ", axis_label)))
                         .on_hover_text(tooltip)
                         .clicked()
                     {
@@ -302,20 +342,20 @@ impl App {
                     .unwrap_or(&mut dummy);
 
                 ui.add_enabled(
-                    has_open_file,
+                    has_file_open,
                     Checkbox::new(&mut camera_config.show_solid, "Show Solid"),
                 );
                 ui.add_enabled(
-                    has_open_file,
+                    has_file_open,
                     Checkbox::new(&mut camera_config.show_outline, "Show Outline"),
                 );
                 ui.add_enabled(
-                    has_open_file,
+                    has_file_open,
                     Checkbox::new(&mut camera_config.show_wireframe, "Show Wireframe"),
                 );
 
                 if ui
-                    .add_enabled(has_open_file, Button::new("Configure Lights"))
+                    .add_enabled(has_file_open, Button::new("Configure Lights"))
                     .clicked()
                 {
                     tracing::debug!("todo: configure camera lights")
@@ -438,23 +478,30 @@ impl eframe::App for App {
 
         egui::Window::new("Debug Info")
             .movable(true)
+            .default_size([300.0, 300.0])
+            .max_size([f32::INFINITY, f32::INFINITY])
             .open(&mut self.show_debug)
             .show(ctx, |ui| {
                 egui::ScrollArea::vertical()
                     .id_salt("debug_panel")
                     .show(ui, |ui| {
-                        ui.collapsing("Settings", |ui| {
-                            ctx.settings_ui(ui);
-                        });
+                        ScrollArea::both().show(ui, |ui| {
+                            ui.collapsing("Settings", |ui| {
+                                ctx.settings_ui(ui);
+                            });
 
-                        ui.collapsing("Inspection", |ui| {
-                            ctx.inspection_ui(ui);
-                        });
+                            ui.collapsing("Inspection", |ui| {
+                                ctx.inspection_ui(ui);
+                            });
 
-                        ui.collapsing("Memory", |ui| {
-                            ctx.memory_ui(ui);
+                            ui.collapsing("Memory", |ui| {
+                                ctx.memory_ui(ui);
+                            });
+
+                            self.composer.show_debug(ui);
                         });
                     });
+                ui.take_available_space();
             });
 
         self.file_dialog.update(ctx);
