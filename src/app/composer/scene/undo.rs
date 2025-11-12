@@ -94,7 +94,7 @@ pub enum UndoAction {
 impl UndoAction {
     fn hades_entities(&self) -> Vec<hecs::Entity> {
         match self {
-            UndoAction::DeleteEntity { hades_entity } => vec![*hades_entity],
+            UndoAction::DeleteEntity { hades_entity, .. } => vec![*hades_entity],
             _ => vec![],
         }
     }

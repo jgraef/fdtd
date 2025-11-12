@@ -39,7 +39,7 @@ pub fn iter_points(
     PointIter {
         x0,
         x1,
-        x: Some(x0),
+        x: (x0 != x1).then_some(x0),
     }
 }
 
@@ -89,53 +89,6 @@ impl Iterator for PointIter {
 }
 
 impl ExactSizeIterator for PointIter {}
-
-#[cfg(test)]
-mod tests {
-    use nalgebra::Point3;
-
-    use crate::fdtd::util::iter_points;
-
-    #[test]
-    fn it_iters_inclusive() {
-        let x0 = Point3::new(1, 2, 3);
-        let x1 = Point3::new(2, 3, 4);
-        let points = iter_points(x0..=x1, x1.coords).collect::<Vec<_>>();
-        assert_eq!(
-            points,
-            vec![
-                Point3::new(1, 2, 3),
-                Point3::new(2, 2, 3),
-                Point3::new(1, 3, 3),
-                Point3::new(2, 3, 3),
-                Point3::new(1, 2, 4),
-                Point3::new(2, 2, 4),
-                Point3::new(1, 3, 4),
-                Point3::new(2, 3, 4),
-            ]
-        );
-    }
-
-    #[test]
-    fn it_iters_exclusive() {
-        let x0 = Point3::new(1, 2, 3);
-        let x1 = Point3::new(2, 3, 4);
-
-        let points = iter_points(x0..x1, x1.coords).collect::<Vec<_>>();
-        assert_eq!(
-            points,
-            vec![
-                Point3::new(1, 2, 3),
-                Point3::new(2, 2, 3),
-                Point3::new(1, 3, 3),
-                Point3::new(2, 3, 3),
-                Point3::new(1, 2, 4),
-                Point3::new(2, 2, 4),
-                Point3::new(1, 3, 4),
-            ]
-        );
-    }
-}
 
 pub fn round_to_grid(
     x: &Point3<f64>,
@@ -266,4 +219,52 @@ pub fn partial_derivative<T>(
 
     // fixme: the boundary conditions should be invariant under dx
     boundary_conditions[i].apply_df(f0, f1) / dx
+}
+
+#[cfg(test)]
+mod tests {
+    use nalgebra::Point3;
+
+    use crate::fdtd::util::iter_points;
+
+    #[test]
+    fn it_iters_inclusive() {
+        let x0 = Point3::new(1, 2, 3);
+        let x1 = Point3::new(2, 3, 4);
+        let points = iter_points(x0..=x1, x1.coords).collect::<Vec<_>>();
+        assert_eq!(
+            points,
+            vec![
+                Point3::new(1, 2, 3),
+                Point3::new(2, 2, 3),
+                Point3::new(1, 3, 3),
+                Point3::new(2, 3, 3),
+                Point3::new(1, 2, 4),
+                Point3::new(2, 2, 4),
+                Point3::new(1, 3, 4),
+                Point3::new(2, 3, 4),
+            ]
+        );
+    }
+
+    #[test]
+    fn it_iters_exclusive() {
+        let x0 = Point3::new(1, 2, 3);
+        let x1 = Point3::new(3, 4, 5);
+
+        let points = iter_points(x0..x1, x1.coords).collect::<Vec<_>>();
+        assert_eq!(
+            points,
+            vec![
+                Point3::new(1, 2, 3),
+                Point3::new(2, 2, 3),
+                Point3::new(1, 3, 3),
+                Point3::new(2, 3, 3),
+                Point3::new(1, 2, 4),
+                Point3::new(2, 2, 4),
+                Point3::new(1, 3, 4),
+                Point3::new(2, 3, 4),
+            ]
+        );
+    }
 }

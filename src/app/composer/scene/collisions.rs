@@ -29,25 +29,16 @@ pub struct OctTree {
 }
 
 impl OctTree {
-    /// Remove entities from the octtree
-    ///
-    /// Call this before [`Self::update`] to remove deleted entities from the
-    /// octtree, then remove the entities from the world, and finally call
-    /// [`Self::update`].
-    pub(super) fn pre_update_removals(
-        &mut self,
-        world: &mut hecs::World,
-        deleted_entities: impl IntoIterator<Item = hecs::Entity>,
-    ) {
-        for entity in deleted_entities {
-            if let Ok(leaf_index) = world.query_one_mut::<&LeafIndex>(entity) {
-                tracing::debug!(?entity, ?leaf_index, "removing from octtree");
-                self.bvh.remove(leaf_index.index);
-                self.command_buffer.remove_one::<LeafIndex>(entity);
-            }
-        }
+    pub(super) fn remove(&mut self, entity: hecs::Entity, world: &mut hecs::World) {
+        if let Ok(leaf_index) = world.remove_one::<LeafIndex>(entity) {
+            tracing::debug!(?entity, index = leaf_index.index, "removing from octtree");
 
-        self.command_buffer.run_on(world);
+            // do we need to do this?
+            //let _ = world.remove_one::<BoundingBox>(entity);
+
+            self.bvh.remove(leaf_index.index);
+            self.stored_entities.remove(&leaf_index.index);
+        }
     }
 
     pub(super) fn update(&mut self, world: &mut hecs::World) {
@@ -149,4 +140,62 @@ where
 {
     iter.into_iter()
         .reduce(|accumulator, aabb| accumulator.merged(&aabb))
+}
+
+#[cfg(test)]
+mod tests {
+    use parry3d::shape::Ball;
+
+    use crate::app::composer::scene::{
+        SharedShape,
+        Transform,
+        collisions::{
+            Collides,
+            OctTree,
+        },
+    };
+
+    fn test_bundle() -> impl hecs::DynamicBundle {
+        (
+            Collides,
+            SharedShape::from(Ball::new(1.0)),
+            Transform::identity(),
+        )
+    }
+
+    #[test]
+    fn it_adds_entities() {
+        let mut world = hecs::World::new();
+        let mut octtree = OctTree::default();
+
+        let entity = world.spawn(test_bundle());
+        octtree.update(&mut world);
+
+        octtree.bvh.assert_well_formed();
+        let leaves = octtree.bvh.leaves(|_| true).collect::<Vec<_>>();
+        assert_eq!(leaves.len(), 1);
+        assert_eq!(
+            octtree.stored_entities.get(&leaves[0]).copied(),
+            Some(entity)
+        );
+    }
+
+    #[test]
+    fn it_removes_entities() {
+        let mut world = hecs::World::new();
+        let mut octtree = OctTree::default();
+
+        let entity = world.spawn(test_bundle());
+        octtree.update(&mut world);
+
+        octtree.remove(entity, &mut world);
+        octtree.bvh.assert_well_formed(); // ?
+
+        world.despawn(entity).unwrap();
+
+        octtree.update(&mut world);
+        octtree.bvh.assert_well_formed();
+        assert!(octtree.bvh.is_empty());
+        assert!(octtree.stored_entities.is_empty());
+    }
 }

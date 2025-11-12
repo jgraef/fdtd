@@ -63,7 +63,7 @@ use crate::{
 #[derive(Debug)]
 pub struct Composer {
     /// The state of an open file
-    pub state: Option<State>,
+    pub state: Option<ComposerState>,
 
     /// The renderer used to render a scene (if a file is open)
     renderer: Renderer,
@@ -81,7 +81,7 @@ impl Composer {
 
     /// Creates a new file with an example scene
     pub fn new_file(&mut self) {
-        let mut state = State::default();
+        let mut state = ComposerState::default();
         ExampleScene
             .populate_scene(&mut state.scene)
             .expect("populating example scene failed");
@@ -95,7 +95,7 @@ impl Composer {
         tracing::debug!(path = %path.display(), "open file");
 
         if let Some(file_format) = guess_file_format_from_path(path) {
-            let mut state = State::new_with_path(path);
+            let mut state = ComposerState::new_with_path(path);
 
             #[allow(unreachable_patterns)]
             match file_format {
@@ -138,7 +138,7 @@ impl Composer {
     /// Useful for actions from UI elements outside the compose (e.g. the menu
     /// bar), and we already checked that a file is open (e.g. for disabling a
     /// button).
-    pub fn expect_state_mut(&mut self) -> &mut State {
+    pub fn expect_state_mut(&mut self) -> &mut ComposerState {
         self.state.as_mut().expect("no file open")
     }
 
@@ -168,6 +168,15 @@ impl Composer {
                 .query_one_mut::<Q>(state.camera_entity)
                 .ok()
         })
+    }
+
+    pub fn with_selected<R>(
+        &mut self,
+        f: impl FnOnce(&mut ComposerState, hecs::Entity) -> R,
+    ) -> Option<R> {
+        self.state
+            .as_mut()
+            .and_then(|state| state.selected_object.map(|entity| f(state, entity)))
     }
 
     pub fn show(&mut self, ctx: &egui::Context) {
@@ -216,7 +225,7 @@ impl Composer {
 
 /// State for an open file
 #[derive(Debug)]
-pub struct State {
+pub struct ComposerState {
     /// The path of the file. This will be where it's saved to.
     ///
     /// This might need to keep track of how it's saved (e.g. file format)
@@ -246,7 +255,7 @@ pub struct State {
     undo_buffer: UndoBuffer,
 }
 
-impl Default for State {
+impl Default for ComposerState {
     fn default() -> Self {
         let mut scene = Scene::default();
 
@@ -270,7 +279,7 @@ impl Default for State {
     }
 }
 
-impl State {
+impl ComposerState {
     pub fn new_with_path(path: impl AsRef<Path>) -> Self {
         Self {
             path: Some(path.as_ref().to_owned()),
@@ -280,14 +289,7 @@ impl State {
 
     pub fn show(&mut self, ctx: &egui::Context, renderer: &mut Renderer) {
         // prepare world
-        self.scene.prepare(|user_deleted_entity| {
-            // this is called for entities that were deleted with the
-            // `send_to_hades` flag set. This means we want to send them to the
-            // undo buffer.
-
-            self.undo_buffer.deleted_entity(user_deleted_entity);
-        });
-
+        self.scene.prepare();
         renderer.prepare_world(&mut self.scene);
 
         let selected_before_ui_input = self.selected_object;
@@ -399,7 +401,7 @@ impl State {
             ui.separator();
 
             if ui.button("Delete").clicked() {
-                self.delete_selected();
+                self.delete(entity);
             }
 
             if ui.button("Properties").clicked() {
@@ -537,11 +539,23 @@ impl State {
         self.selected_object.is_some()
     }
 
-    pub fn delete_selected(&mut self) {
-        if let Some(entity) = self.selected_object.take() {
-            let _ = self.scene.entities.remove_one::<Outline>(entity);
-            self.scene.delete(entity, true);
+    pub fn delete(&mut self, entity: hecs::Entity) {
+        let _ = self.scene.entities.remove_one::<Outline>(entity);
+
+        if let Some(taken_entity) = self.scene.delete(entity) {
+            self.undo_buffer.deleted_entity(taken_entity);
         }
+        else {
+            tracing::warn!(?entity, "Selected entity doesn't exist");
+        }
+    }
+
+    pub fn cut(&mut self, _entity: hecs::Entity) {
+        tracing::debug!("todo");
+    }
+
+    pub fn copy(&mut self, _entity: hecs::Entity) {
+        tracing::debug!("todo");
     }
 }
 

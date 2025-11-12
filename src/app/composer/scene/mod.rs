@@ -13,7 +13,6 @@ use std::{
     sync::Arc,
 };
 
-use hecs::Entity;
 use nalgebra::{
     Isometry3,
     Point3,
@@ -69,8 +68,6 @@ pub struct Scene {
     pub entities: hecs::World,
 
     pub octtree: OctTree,
-
-    deferred_deletions: Vec<DeferredDeletion>,
 }
 
 impl Scene {
@@ -79,7 +76,7 @@ impl Scene {
         transform: impl Into<Transform>,
         shape: impl Into<SharedShape>,
         material: impl Into<Material>,
-    ) -> Entity {
+    ) -> hecs::Entity {
         let shape = shape.into();
         let label = Label::from(format!("object.{:?}", shape.shape_type()));
         self.entities.spawn((
@@ -93,7 +90,7 @@ impl Scene {
         ))
     }
 
-    pub fn add_camera(&mut self, transform: impl Into<Transform>) -> Entity {
+    pub fn add_camera(&mut self, transform: impl Into<Transform>) -> hecs::Entity {
         self.entities.spawn((
             transform.into(),
             CameraProjection::default(),
@@ -109,7 +106,7 @@ impl Scene {
         &mut self,
         transform: impl Into<Transform>,
         line_spacing: Vector2<f32>,
-    ) -> Entity {
+    ) -> hecs::Entity {
         self.entities.spawn((
             transform.into(),
             SharedShape::from(HalfSpace::new(Vector3::y_axis())),
@@ -130,30 +127,7 @@ impl Scene {
     /// This needs to be called every frame to update internal state.
     ///
     /// E.g. this updates the internal octtree used for spatial queries
-    ///
-    /// TODO: Could do deferred removals here: entities are marked for removal
-    /// by adding a tag component. Then we can remove them properly from the
-    /// octtree (and possibly the transform hierarchy).
-    pub fn prepare(&mut self, mut send_to_hades: impl FnMut(hecs::TakenEntity)) {
-        // remove entities from octtree
-        self.octtree.pre_update_removals(
-            &mut self.entities,
-            self.deferred_deletions
-                .iter()
-                .map(|deletion| deletion.entity),
-        );
-
-        // remove entities from world
-        for deletion in &self.deferred_deletions {
-            tracing::debug!(?deletion, "Removing entity");
-            if let Ok(deleted_entity) = self.entities.take(deletion.entity)
-                && deletion.send_to_hades
-            {
-                send_to_hades(deleted_entity);
-            }
-        }
-        self.deferred_deletions.clear();
-
+    pub fn prepare(&mut self) {
         self.octtree.update(&mut self.entities);
     }
 
@@ -207,11 +181,9 @@ impl Scene {
         }
     }
 
-    pub fn delete(&mut self, entity: Entity, send_to_hades: bool) {
-        self.deferred_deletions.push(DeferredDeletion {
-            entity,
-            send_to_hades,
-        });
+    pub fn delete(&mut self, entity: hecs::Entity) -> Option<hecs::TakenEntity<'_>> {
+        self.octtree.remove(entity, &mut self.entities);
+        self.entities.take(entity).ok()
     }
 }
 
@@ -317,7 +289,19 @@ pub struct Transform {
     pub transform: Isometry3<f32>,
 }
 
+impl Default for Transform {
+    fn default() -> Self {
+        Self::identity()
+    }
+}
+
 impl Transform {
+    pub fn identity() -> Self {
+        Self {
+            transform: Isometry3::identity(),
+        }
+    }
+
     pub fn new(
         translation: impl Into<Translation3<f32>>,
         rotation: impl Into<UnitQuaternion<f32>>,

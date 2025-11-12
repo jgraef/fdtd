@@ -20,6 +20,7 @@ use clap::{
 };
 use color_eyre::eyre::Error;
 use dotenvy::dotenv;
+use tracing_subscriber::EnvFilter;
 
 use crate::{
     app::start::CreateApp,
@@ -28,8 +29,11 @@ use crate::{
 
 fn main() -> Result<(), Error> {
     let _ = dotenv();
-    tracing_subscriber::fmt::init();
     color_eyre::install()?;
+    tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::from_default_env())
+        .pretty()
+        .init();
 
     let args = Args::parse();
     match args.command {

@@ -37,6 +37,7 @@ use crate::{
         args::Args,
         composer::{
             Composer,
+            ComposerState,
             renderer::camera::CameraConfig,
         },
         config::AppConfig,
@@ -227,14 +228,14 @@ impl App {
                 .add_enabled(has_selected, egui::Button::new("Cut"))
                 .clicked()
             {
-                tracing::debug!("todo: cut");
+                self.composer.with_selected(ComposerState::cut);
             }
 
             if ui
                 .add_enabled(has_selected, egui::Button::new("Copy"))
                 .clicked()
             {
-                tracing::debug!("todo: copy");
+                self.composer.with_selected(ComposerState::copy);
             }
 
             if ui.button("Paste").clicked() {
@@ -247,7 +248,7 @@ impl App {
                 .add_enabled(has_selected, egui::Button::new("Delete"))
                 .clicked()
             {
-                self.composer.expect_state_mut().delete_selected();
+                self.composer.with_selected(ComposerState::delete);
             }
         });
     }
