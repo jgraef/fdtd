@@ -230,7 +230,7 @@ impl Renderer {
                 });
 
         let clear_pipeline = Pipeline::new(
-            &wgpu_context,
+            wgpu_context,
             "render/clear",
             Self::MESH_SHADER_MODULE,
             &[&camera_bind_group_layout],
@@ -276,7 +276,7 @@ impl Renderer {
         ];
 
         let solid_pipeline = Pipeline::new_objects(
-            &wgpu_context,
+            wgpu_context,
             "render/object/solid",
             &render_bind_group_layouts,
             wgpu::CompareFunction::Less,
@@ -288,7 +288,7 @@ impl Renderer {
         );
 
         let wireframe_pipeline = Pipeline::new_objects(
-            &wgpu_context,
+            wgpu_context,
             "render/object/wireframe",
             &render_bind_group_layouts,
             wgpu::CompareFunction::LessEqual,
@@ -300,7 +300,7 @@ impl Renderer {
         );
 
         let outline_pipeline = Pipeline::new_objects(
-            &wgpu_context,
+            wgpu_context,
             "render/object/outline",
             &render_bind_group_layouts,
             wgpu::CompareFunction::Always,
@@ -482,7 +482,7 @@ impl Renderer {
             first_instance += 1;
 
             // prepare draw commands
-            draw_command_builder.draw_mesh(instances, &mesh, outline);
+            draw_command_builder.draw_mesh(instances, mesh, outline);
         }
 
         // send instance data to gpu
@@ -551,7 +551,7 @@ impl Renderer {
         };
 
         Some(self.draw_command_buffer.finish(
-            &self,
+            self,
             camera_bind_group,
             DrawCommandOptions {
                 enable_clear: has_clear_color,
@@ -570,7 +570,7 @@ fn create_instance_bind_group(
 ) -> wgpu::BindGroup {
     device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("instance bind group"),
-        layout: &instance_bind_group_layout,
+        layout: instance_bind_group_layout,
         entries: &[wgpu::BindGroupEntry {
             binding: 0,
             resource: buffer.as_entire_binding(),
@@ -586,7 +586,8 @@ struct Pipeline {
 }
 
 impl Pipeline {
-    pub fn new(
+    #[allow(clippy::too_many_arguments)]
+    fn new(
         wgpu_context: &WgpuContext,
         label: &str,
         shader_module_desc: wgpu::ShaderModuleDescriptor,
@@ -673,7 +674,8 @@ impl Pipeline {
         }
     }
 
-    pub fn new_objects(
+    #[allow(clippy::too_many_arguments)]
+    fn new_objects(
         wgpu_context: &WgpuContext,
         label: &str,
         bind_group_layouts: &[&wgpu::BindGroupLayout],
@@ -848,13 +850,13 @@ impl<'a, T: Pod> Deref for InstanceBufferWriteView<'a, T> {
     type Target = [T];
 
     fn deref(&self) -> &Self::Target {
-        bytemuck::cast_slice(&*self.view)
+        bytemuck::cast_slice(&self.view)
     }
 }
 
 impl<'a, T: Pod> DerefMut for InstanceBufferWriteView<'a, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        bytemuck::cast_slice_mut(&mut *self.view)
+        bytemuck::cast_slice_mut(&mut self.view)
     }
 }
 

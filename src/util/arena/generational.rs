@@ -162,11 +162,7 @@ impl<T> Handle<T> {
 
 impl<T> Clone for Handle<T> {
     fn clone(&self) -> Self {
-        Self {
-            index: self.index.clone(),
-            generation: self.generation.clone(),
-            _phantom: self._phantom.clone(),
-        }
+        *self
     }
 }
 
@@ -205,12 +201,9 @@ impl<'a, T> Iterator for Iter<'a, T> {
     fn next(&mut self) -> Option<Self::Item> {
         loop {
             let (index, slot) = self.iter.next()?;
-            match slot {
-                Slot::Occupied { value, generation } => {
-                    self.remaining -= 1;
-                    return Some((Handle::new(index, *generation), value));
-                }
-                _ => {}
+            if let Slot::Occupied { value, generation } = slot {
+                self.remaining -= 1;
+                return Some((Handle::new(index, *generation), value));
             }
         }
     }
@@ -226,12 +219,9 @@ impl<'a, T> DoubleEndedIterator for Iter<'a, T> {
     fn next_back(&mut self) -> Option<Self::Item> {
         loop {
             let (index, slot) = self.iter.next_back()?;
-            match slot {
-                Slot::Occupied { value, generation } => {
-                    self.remaining -= 1;
-                    return Some((Handle::new(index, *generation), value));
-                }
-                _ => {}
+            if let Slot::Occupied { value, generation } = slot {
+                self.remaining -= 1;
+                return Some((Handle::new(index, *generation), value));
             }
         }
     }
@@ -249,12 +239,9 @@ impl<'a, T> Iterator for IterMut<'a, T> {
     fn next(&mut self) -> Option<Self::Item> {
         loop {
             let (index, slot) = self.iter.next()?;
-            match slot {
-                Slot::Occupied { value, generation } => {
-                    self.remaining -= 1;
-                    return Some((Handle::new(index, *generation), value));
-                }
-                _ => {}
+            if let Slot::Occupied { value, generation } = slot {
+                self.remaining -= 1;
+                return Some((Handle::new(index, *generation), value));
             }
         }
     }
@@ -270,12 +257,9 @@ impl<'a, T> DoubleEndedIterator for IterMut<'a, T> {
     fn next_back(&mut self) -> Option<Self::Item> {
         loop {
             let (index, slot) = self.iter.next_back()?;
-            match slot {
-                Slot::Occupied { value, generation } => {
-                    self.remaining -= 1;
-                    return Some((Handle::new(index, *generation), value));
-                }
-                _ => {}
+            if let Slot::Occupied { value, generation } = slot {
+                self.remaining -= 1;
+                return Some((Handle::new(index, *generation), value));
             }
         }
     }

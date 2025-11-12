@@ -68,10 +68,7 @@ impl<T> Handle<T> {
 
 impl<T> Clone for Handle<T> {
     fn clone(&self) -> Self {
-        Self {
-            index: self.index.clone(),
-            _phantom: self._phantom.clone(),
-        }
+        *self
     }
 }
 

@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 
-use nalgebra::Point3;
 use parry3d::{
     bounding_volume::{
         Aabb,
@@ -30,7 +29,25 @@ pub struct OctTree {
 }
 
 impl OctTree {
-    pub fn update(&mut self, world: &mut hecs::World) {
+    /// Remove entities from the octtree
+    ///
+    /// Call this before [`Self::update`] to remove deleted entities from the
+    /// octtree, then remove the entities from the world, and finally call
+    /// [`Self::update`].
+    pub(super) fn pre_update_removals(
+        &mut self,
+        world: &mut hecs::World,
+        deletions: &[hecs::Entity],
+    ) {
+        for entity in deletions {
+            if let Ok(leaf_index) = world.query_one_mut::<&LeafIndex>(*entity) {
+                tracing::debug!(?entity, ?leaf_index, "removing from octtree");
+                self.bvh.remove(leaf_index.index);
+            }
+        }
+    }
+
+    pub(super) fn update(&mut self, world: &mut hecs::World) {
         // update changed entities
         for (_entity, (transform, shape, leaf_index, bounding_box)) in world
             .query_mut::<(&Transform, &SharedShape, &LeafIndex, &mut BoundingBox)>()
@@ -99,10 +116,6 @@ impl OctTree {
 
     pub fn root_aabb(&self) -> Aabb {
         self.bvh.root_aabb()
-    }
-
-    pub fn center(&self) -> Point3<f32> {
-        self.root_aabb().center()
     }
 }
 

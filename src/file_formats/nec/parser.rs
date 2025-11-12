@@ -347,10 +347,8 @@ impl<'a> TokenReader<'a> {
         T: FromStr,
     {
         self.read_token()
-            .ok_or_else(|| {
-                Error::UnexpectedEnd {
-                    section: self.section,
-                }
+            .ok_or(Error::UnexpectedEnd {
+                section: self.section,
             })?
             .parse::<T>()
             .map_err(|_error| {

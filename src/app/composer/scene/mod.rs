@@ -1,4 +1,5 @@
 pub mod collisions;
+pub mod undo;
 pub mod view;
 
 use std::{
@@ -33,7 +34,6 @@ use parry3d::{
         TriMesh,
     },
 };
-use type_map::concurrent::TypeMap;
 
 use crate::app::composer::{
     renderer::{
@@ -70,8 +70,8 @@ pub struct Scene {
 
     pub octtree: OctTree,
 
-    // todo: we don't use this at all right now
-    pub resources: TypeMap,
+    //pub undo_buffer: Vec<UndoAction>,
+    deferred_deletions: Vec<Entity>,
 }
 
 impl Scene {
@@ -136,6 +136,17 @@ impl Scene {
     /// by adding a tag component. Then we can remove them properly from the
     /// octtree (and possibly the transform hierarchy).
     pub fn prepare(&mut self) {
+        // remove entities from octtree
+        self.octtree
+            .pre_update_removals(&mut self.entities, &self.deferred_deletions);
+
+        // remove entities from world
+        for entity in &self.deferred_deletions {
+            tracing::debug!(?entity, "Removing entity");
+            let _ = self.entities.despawn(*entity);
+        }
+        self.deferred_deletions.clear();
+
         self.octtree.update(&mut self.entities);
     }
 
@@ -163,7 +174,7 @@ impl Scene {
         else {
             let mut query = self.entities.query::<(&Transform, &SharedShape)>();
             let aabbs = query.iter().map(|(_entity, (transform, shape))| {
-                let transform = &relative_to_inv * &transform.transform;
+                let transform = relative_to_inv * transform.transform;
                 shape.compute_aabb(&transform)
             });
             merge_aabbs(aabbs)
@@ -178,6 +189,10 @@ impl Scene {
             .and_then(|mut query| query.get().flatten().cloned());
 
         EntityDebugLabel { entity, label }
+    }
+
+    pub fn delete(&mut self, entity: Entity) {
+        self.deferred_deletions.push(entity);
     }
 }
 
@@ -322,7 +337,7 @@ impl Transform {
     /// Pan is the horizontal turning. Tilt is the vertical turning.
     pub fn pan_tilt(&mut self, pan: f32, tilt: f32, up: &Vector3<f32>) {
         let local_up =
-            UnitVector::new_normalize(self.transform.rotation.inverse_transform_vector(&up));
+            UnitVector::new_normalize(self.transform.rotation.inverse_transform_vector(up));
         let local_right = Vector3::x_axis();
 
         let rotation = UnitQuaternion::from_axis_angle(&local_up, -pan)
@@ -380,7 +395,7 @@ impl<T> Default for Changed<T> {
 
 impl<T> Clone for Changed<T> {
     fn clone(&self) -> Self {
-        Self::default()
+        *self
     }
 }
 

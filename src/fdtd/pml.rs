@@ -73,5 +73,5 @@ impl PmlCell {
 }
 
 fn psi_total(psi: &Matrix3<f64>) -> Vector3<f64> {
-    Vector3::new(psi.m12 - psi.m13, psi.m23 - psi.m21, psi.m31 - psi.m31)
+    Vector3::new(psi.m12 - psi.m13, psi.m23 - psi.m21, psi.m31 - psi.m32)
 }

@@ -396,7 +396,7 @@ impl eframe::App for App {
                             user_data: _,
                             image,
                         } => {
-                            self.save_screenshot(&image)
+                            self.save_screenshot(image)
                                 .unwrap_or_else(|error| self.error_dialog.display_error(error));
                         }
                         _ => {}
@@ -494,6 +494,8 @@ fn todo_label(ui: &mut egui::Ui) {
 
 /// To configure menus to our liking. Call from inside the menu.
 fn setup_menu(ui: &mut egui::Ui) {
+    let style = ui.style_mut();
+    egui::containers::menu::menu_style(style);
     ui.set_min_width(150.0);
 }
 

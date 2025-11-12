@@ -54,10 +54,7 @@ macro_rules! make_handle {
 
         impl<T> Clone for $name<T> {
             fn clone(&self) -> Self {
-                Self {
-                    index: self.index.clone(),
-                    _phantom: self._phantom.clone(),
-                }
+                *self
             }
         }
 

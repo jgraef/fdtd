@@ -1,3 +1,6 @@
+// disable clippy for this, since we will be refactoring this into the app later
+#![allow(clippy::all)]
+
 pub mod boundary_condition;
 pub mod executor;
 pub mod geometry;

@@ -208,7 +208,7 @@ impl egui_wgpu::CallbackTrait for DrawCommand {
         render_pass: &mut wgpu::RenderPass<'static>,
         _callback_resources: &egui_wgpu::CallbackResources,
     ) {
-        self.render(render_pass.into());
+        self.render(render_pass);
     }
 }
 

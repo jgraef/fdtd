@@ -97,6 +97,7 @@ impl<'a> SceneView<'a> {
         if response.contains_pointer() {
             response.ctx.input(|input| {
                 for event in &input.events {
+                    #[allow(clippy::single_match)]
                     match event {
                         egui::Event::MouseWheel {
                             unit: egui::MouseWheelUnit::Line,
@@ -181,48 +182,46 @@ impl<'a> SceneView<'a> {
                 );
             }
         }
-        else if response.dragged_by(egui::PointerButton::Secondary) {
-            if let Ok(camera_transform) = self
+        else if response.dragged_by(egui::PointerButton::Secondary)
+            && let Ok(camera_transform) = self
                 .scene
                 .entities
                 .query_one_mut::<&mut Transform>(camera_entity)
-            {
-                // todo: we need to take the aspect ratio into account when translating
-                let drag_delta = drag_delta();
-                camera_transform.translate_local(&Translation3::new(
-                    -camera_translation_speed.x * drag_delta.x,
-                    -camera_translation_speed.y * drag_delta.y,
-                    0.0,
-                ));
-            }
+        {
+            // todo: we need to take the aspect ratio into account when translating
+            let drag_delta = drag_delta();
+            camera_transform.translate_local(&Translation3::new(
+                -camera_translation_speed.x * drag_delta.x,
+                -camera_translation_speed.y * drag_delta.y,
+                0.0,
+            ));
         }
 
         if let Some(scene_pointer) = &mut self.scene_pointer {
             scene_pointer.entity_under_pointer = None;
 
-            if let Some(pointer_position) = pointer_position() {
-                if let Some(ray) =
-                    shoot_ray_from_camera(&self.scene, camera_entity, pointer_position)
-                {
-                    if let Some(ray_hit) = self.scene.cast_ray(&ray, None) {
-                        let point_hovered = ray.point_at(ray_hit.time_of_impact);
+            if let Some(pointer_position) = pointer_position()
+                && let Some(ray) =
+                    shoot_ray_from_camera(self.scene, camera_entity, pointer_position)
+            {
+                if let Some(ray_hit) = self.scene.cast_ray(&ray, None) {
+                    let point_hovered = ray.point_at(ray_hit.time_of_impact);
 
-                        scene_pointer.entity_under_pointer = Some(EntityUnderPointer {
-                            entity: ray_hit.entity,
-                            distance_from_camera: ray_hit.time_of_impact,
-                            point_hovered,
-                        });
-                    }
-
-                    scene_pointer.ray = Some(ray);
+                    scene_pointer.entity_under_pointer = Some(EntityUnderPointer {
+                        entity: ray_hit.entity,
+                        distance_from_camera: ray_hit.time_of_impact,
+                        point_hovered,
+                    });
                 }
+
+                scene_pointer.ray = Some(ray);
             }
         }
     }
 
     pub fn shoot_ray_from_camera(&mut self, pointer_position: Point2<f32>) -> Option<Ray> {
         self.camera_entity.and_then(|camera_entity| {
-            shoot_ray_from_camera(&self.scene, camera_entity, pointer_position)
+            shoot_ray_from_camera(self.scene, camera_entity, pointer_position)
         })
     }
 }
@@ -260,7 +259,7 @@ impl<'a> egui::Widget for SceneView<'a> {
 
         if !ui.is_sizing_pass() && ui.is_rect_visible(response.rect) {
             // draw frame
-            if let Some(draw_command) = self.renderer.prepare_frame(&self.scene, self.camera_entity)
+            if let Some(draw_command) = self.renderer.prepare_frame(self.scene, self.camera_entity)
             {
                 let painter = ui.painter();
                 painter.add(egui_wgpu::Callback::new_paint_callback(

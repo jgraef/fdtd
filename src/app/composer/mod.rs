@@ -80,7 +80,7 @@ impl Composer {
 
     /// Creates a new file with an example scene
     pub fn new_file(&mut self) {
-        let mut state = State::new();
+        let mut state = State::default();
         ExampleScene
             .populate_scene(&mut state.scene)
             .expect("populating example scene failed");
@@ -213,10 +213,11 @@ pub struct State {
     object_tree: ObjectTree,
 
     selected_object: Option<hecs::Entity>,
+    context_menu_object: Option<hecs::Entity>,
 }
 
-impl State {
-    pub fn new() -> Self {
+impl Default for State {
+    fn default() -> Self {
         let mut scene = Scene::default();
 
         let camera_entity = scene.add_camera(Transform::look_at(
@@ -233,13 +234,17 @@ impl State {
             scene_pointer: Default::default(),
             object_tree: Default::default(),
             selected_object: None,
+            context_menu_object: None,
         }
     }
+}
 
+impl State {
     pub fn new_with_path(path: impl AsRef<Path>) -> Self {
-        let mut this = Self::new();
-        this.path = Some(path.as_ref().to_owned());
-        this
+        Self {
+            path: Some(path.as_ref().to_owned()),
+            ..Default::default()
+        }
     }
 
     pub fn show(&mut self, ctx: &egui::Context, renderer: &mut Renderer) {
@@ -299,21 +304,15 @@ impl State {
             );
 
             if view_response.clicked() {
+                // object selected/delected by left-lick
                 self.selected_object = self
                     .scene_pointer
                     .entity_under_pointer
                     .as_ref()
-                    .map(|entity_under_pointer| entity_under_pointer.entity)
-                    .inspect(|entity| {
-                        tracing::debug!(
-                            "object clicked in scene view: {}",
-                            self.scene.entity_debug_label(*entity)
-                        );
-                    });
+                    .map(|entity_under_pointer| entity_under_pointer.entity);
             }
-            if view_response.secondary_clicked() {
-                // todo: open context menu
-            }
+
+            self.context_menu(&view_response);
         });
 
         // selection changed
@@ -327,6 +326,51 @@ impl State {
                 // add outline tag to new selection
                 let _ = self.scene.entities.insert_one(entity, Outline);
             }
+        }
+    }
+
+    pub fn context_menu(&mut self, response: &egui::Response) {
+        if response.secondary_clicked() {
+            self.context_menu_object = self
+                .scene_pointer
+                .entity_under_pointer
+                .map(|entity_under_pointer| entity_under_pointer.entity);
+        }
+
+        let Some(entity) = self.context_menu_object
+        else {
+            return;
+        };
+
+        let response = egui::Popup::context_menu(response).show(|ui| {
+            ui.label(self.scene.entity_debug_label(entity));
+            ui.separator();
+
+            if ui.button("Cut").clicked() {
+                tracing::debug!("todo: cut");
+            }
+
+            if ui.button("Copy").clicked() {
+                tracing::debug!("todo: cut");
+            }
+
+            if ui.button("Paste").clicked() {
+                tracing::debug!("todo: cut");
+            }
+
+            ui.separator();
+
+            if ui.button("Delete").clicked() {
+                self.scene.delete(entity);
+            }
+
+            if ui.button("Properties").clicked() {
+                tracing::debug!("todo: properties");
+            }
+        });
+
+        if response.is_none() {
+            self.context_menu_object = None;
         }
     }
 
@@ -344,7 +388,7 @@ impl State {
             .scene
             .entities
             .query_one_mut::<(&Transform, &CameraProjection)>(self.camera_entity)
-            .map(|(t, p)| (t.clone(), p.clone()))
+            .map(|(t, p)| (*t, *p))
         else {
             return;
         };
@@ -416,7 +460,7 @@ impl State {
             .entities
             .query_one_mut::<&mut Transform>(self.camera_entity)
         {
-            let scene_center = self.scene.octtree.center();
+            let scene_center = self.scene.octtree.root_aabb().center();
             let eye = camera_transform.position();
 
             // normally up is always +Y
@@ -424,7 +468,7 @@ impl State {
 
             // but we need to take into account when we're directly above the scene center
             const COLLINEAR_THRESHOLD: f32 = 0.01f32.to_radians();
-            if (&eye - &scene_center).cross(&up).norm_squared() < COLLINEAR_THRESHOLD {
+            if (eye - scene_center).cross(&up).norm_squared() < COLLINEAR_THRESHOLD {
                 // we would be looking straight up or down, so keep the up vector from the
                 // camera
                 up = camera_transform.transform.rotation.transform_vector(&up);

@@ -63,7 +63,7 @@ pub struct Geometry {
 
 impl Geometry {
     pub fn append_transform(&mut self, transform: &Matrix4<f32>) {
-        self.transform = transform * &self.transform;
+        self.transform = transform * self.transform;
     }
 }
 
@@ -221,11 +221,10 @@ impl CardHandler for CardInterpreter {
     /// GE card
     fn end_geometry_input(&mut self, ground_plane_flag: GroundPlaneFlag) {
         self.ground_plane_flag = ground_plane_flag;
-        match (ground_plane_flag, &mut self.symmetry_flag) {
-            (GroundPlaneFlag::Present { .. }, SymmetryFlag::Planar(axis)) => {
-                axis.remove(ReflectionAxis::Z);
-            }
-            _ => {}
+        if let (GroundPlaneFlag::Present { .. }, SymmetryFlag::Planar(axis)) =
+            (ground_plane_flag, &mut self.symmetry_flag)
+        {
+            axis.remove(ReflectionAxis::Z);
         }
     }
 
@@ -243,8 +242,7 @@ impl CardHandler for CardInterpreter {
             self.symmetry_flag = Default::default();
         }
 
-        let start_bound =
-            tag_start.map_or_else(|| Bound::Unbounded, |tag_start| Bound::Included(tag_start));
+        let start_bound = tag_start.map_or(Bound::Unbounded, Bound::Included);
 
         let base_rotation =
             UnitQuaternion::from_axis_angle(&Vector3::z_axis(), rotation[2].to_radians())
@@ -359,7 +357,7 @@ impl CardHandler for CardInterpreter {
 
                 let new_geometry = Geometry {
                     specification: geometry.specification,
-                    transform: &reflection_matrix * &geometry.transform,
+                    transform: reflection_matrix * geometry.transform,
                 };
 
                 self.deferred_insertions.push((new_tag, new_geometry));

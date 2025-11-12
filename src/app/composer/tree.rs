@@ -64,6 +64,7 @@ impl ObjectTree {
             });
 
         for action in actions {
+            #[allow(clippy::single_match)]
             match action {
                 Action::SetSelected(items) => {
                     assert!(items.len() == 1, "expected exactly one item in selection");
