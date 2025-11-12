@@ -20,6 +20,8 @@ pub struct ObjectTree {
 
     // kinda hack to know what the tree view state has selected
     previous_selection: Option<hecs::Entity>,
+
+    object_scratch: Vec<(hecs::Entity, Option<Label>)>,
 }
 
 impl ObjectTree {
@@ -51,13 +53,13 @@ impl ObjectTree {
                     .query_mut::<Option<&Label>>()
                     .with::<&ShowInTree>()
                 {
-                    builder.leaf(
-                        entity.into(),
-                        EntityDebugLabel {
-                            entity,
-                            label: label.cloned(),
-                        },
-                    );
+                    self.object_scratch.push((entity, label.cloned()));
+                }
+
+                self.object_scratch.sort_by_key(|(entity, _)| *entity);
+
+                for (entity, label) in self.object_scratch.drain(..) {
+                    builder.leaf(entity.into(), EntityDebugLabel { entity, label });
                 }
             });
 

@@ -5,6 +5,7 @@ use bytemuck::{
 use palette::{
     LinSrgba,
     Srgb,
+    Srgba,
     WithAlpha,
 };
 
@@ -16,36 +17,50 @@ use palette::{
 /// It also defines the colors for wireframe and outline rendering.
 ///
 /// Note that these are only visual properties!
+///
+/// # TODO: Needs to know if this is transparent, so we can sort by depth.
 #[derive(Clone, Copy, Debug)]
 pub struct Material {
-    pub ambient: Srgb,
-    pub diffuse: Srgb,
-    pub specular: Srgb,
-    pub emissive: Srgb,
+    pub ambient: Srgba,
+    pub diffuse: Srgba,
+    pub specular: Srgba,
+    pub emissive: Srgba,
     pub shininess: f32,
-    pub wireframe: Srgb,
-    pub outline: Srgb,
+    pub wireframe: Srgba,
+    pub outline: Srgba,
     pub outline_thickness: f32,
 }
 
-impl From<Srgb> for Material {
-    fn from(value: Srgb) -> Self {
+impl From<Srgba> for Material {
+    fn from(value: Srgba) -> Self {
         Self {
             ambient: value,
             diffuse: value,
-            specular: Srgb::new(1.0, 1.0, 1.0),
-            emissive: Srgb::new(0.0, 0.0, 0.0),
+            specular: Srgba::new(1.0, 1.0, 1.0, 1.0),
+            emissive: Srgba::new(0.0, 0.0, 0.0, 1.0),
             shininess: 8.0,
-            wireframe: Srgb::new(0.0, 0.0, 0.0),
-            outline: Srgb::new(1.0, 1.0, 1.0),
+            wireframe: Srgba::new(0.0, 0.0, 0.0, 1.0),
+            outline: Srgba::new(1.0, 1.0, 1.0, 0.5),
             outline_thickness: 0.1,
         }
     }
 }
 
+impl From<Srgba<u8>> for Material {
+    fn from(value: Srgba<u8>) -> Self {
+        Self::from(value.into_format::<f32, f32>())
+    }
+}
+
+impl From<Srgb> for Material {
+    fn from(value: Srgb) -> Self {
+        Self::from(value.with_alpha(1.0))
+    }
+}
+
 impl From<Srgb<u8>> for Material {
     fn from(value: Srgb<u8>) -> Self {
-        Self::from(value.into_format::<f32>())
+        Self::from(value.with_alpha(255))
     }
 }
 
@@ -146,14 +161,13 @@ pub struct MaterialData {
 
 impl MaterialData {
     pub fn new(material: &Material) -> Self {
-        let convert = |c: Srgb| c.into_linear().with_alpha(1.0);
         Self {
-            wireframe: convert(material.wireframe),
-            outline: convert(material.outline),
-            ambient: convert(material.ambient),
-            diffuse: convert(material.diffuse),
-            specular: convert(material.specular),
-            emissive: convert(material.emissive),
+            wireframe: material.wireframe.into_linear(),
+            outline: material.outline.into_linear(),
+            ambient: material.ambient.into_linear(),
+            diffuse: material.diffuse.into_linear(),
+            specular: material.specular.into_linear(),
+            emissive: material.emissive.into_linear(),
             shininess: material.shininess,
             outline_thickness: material.outline_thickness,
             _padding: [0; _],
