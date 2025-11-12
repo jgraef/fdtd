@@ -18,9 +18,11 @@ use bytemuck::{
     Pod,
     Zeroable,
 };
-use hecs::Satisfies;
 use nalgebra::Matrix4;
-use palette::Srgb;
+use palette::{
+    Srgb,
+    Srgba,
+};
 
 use crate::app::composer::{
     renderer::{
@@ -458,7 +460,7 @@ impl Renderer {
         let mut draw_command_builder = self.draw_command_buffer.builder();
         for (_, (transform, mesh, material, outline)) in scene
             .entities
-            .query::<(&Transform, &Mesh, &Material, Satisfies<&Outline>)>()
+            .query::<(&Transform, &Mesh, &Material, Option<&Outline>)>()
             .with::<&Render>()
             .iter()
         {
@@ -474,6 +476,7 @@ impl Renderer {
                 material,
                 flags,
                 mesh.base_vertex,
+                outline,
             ));
 
             // for now every draw call will only draw one instance, but we could do
@@ -482,7 +485,7 @@ impl Renderer {
             first_instance += 1;
 
             // prepare draw commands
-            draw_command_builder.draw_mesh(instances, mesh, outline);
+            draw_command_builder.draw_mesh(instances, mesh, outline.is_some());
         }
 
         // send instance data to gpu
@@ -731,6 +734,10 @@ impl Pipeline {
     }
 }
 
+/// # TODO
+///
+/// Could merge [`MaterialData`] directly into it and arrange fields such the we
+/// save some bytes.
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 #[repr(C)]
 struct InstanceData {
@@ -747,13 +754,14 @@ impl InstanceData {
         material: &Material,
         flags: InstanceFlags,
         base_vertex: u32,
+        outline: Option<&Outline>,
     ) -> Self {
         Self {
             transform: transform.transform.to_homogeneous(),
             flags,
             base_vertex,
             _padding: [0; _],
-            material: MaterialData::new(material),
+            material: MaterialData::new(material, outline),
         }
     }
 }
@@ -879,8 +887,20 @@ fn allocate_instance_buffer<T>(
     })
 }
 
-#[derive(Clone, Copy, Debug, Default)]
-pub struct Outline;
+#[derive(Clone, Copy, Debug)]
+pub struct Outline {
+    pub color: Srgba,
+    pub thickness: f32,
+}
+
+impl Default for Outline {
+    fn default() -> Self {
+        Self {
+            color: Srgba::new(1.0, 1.0, 1.0, 0.75),
+            thickness: 0.1,
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug)]
 struct DepthState {

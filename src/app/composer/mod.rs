@@ -37,13 +37,17 @@ use crate::{
             PopulateScene,
             Scene,
             Transform,
-            undo::UndoBuffer,
+            undo::{
+                HadesId,
+                UndoAction,
+                UndoBuffer,
+            },
             view::{
                 ScenePointer,
                 SceneView,
             },
         },
-        tree::ObjectTree,
+        tree::ObjectTreeState,
     },
     file_formats::{
         FileFormat,
@@ -172,11 +176,11 @@ impl Composer {
 
     pub fn with_selected<R>(
         &mut self,
-        f: impl FnOnce(&mut ComposerState, hecs::Entity) -> R,
+        f: impl FnOnce(&mut ComposerState, Vec<hecs::Entity>) -> R,
     ) -> Option<R> {
         self.state
             .as_mut()
-            .and_then(|state| state.selected_object.map(|entity| f(state, entity)))
+            .map(|state| f(state, state.selected_entities()))
     }
 
     pub fn show(&mut self, ctx: &egui::Context) {
@@ -224,7 +228,7 @@ impl Composer {
 }
 
 /// State for an open file
-#[derive(Debug)]
+#[derive(derive_more::Debug)]
 pub struct ComposerState {
     /// The path of the file. This will be where it's saved to.
     ///
@@ -247,12 +251,15 @@ pub struct ComposerState {
     /// We also need one of these per camera.
     scene_pointer: ScenePointer,
 
-    object_tree: ObjectTree,
+    object_tree: ObjectTreeState,
 
-    selected_object: Option<hecs::Entity>,
     context_menu_object: Option<hecs::Entity>,
 
     undo_buffer: UndoBuffer,
+
+    /// Temporary ECS command buffer
+    #[debug("hecs::CommandBuffer {{ ... }}")]
+    command_buffer: hecs::CommandBuffer,
 }
 
 impl Default for ComposerState {
@@ -272,9 +279,9 @@ impl Default for ComposerState {
             camera_entity,
             scene_pointer: Default::default(),
             object_tree: Default::default(),
-            selected_object: None,
             context_menu_object: None,
             undo_buffer: Default::default(),
+            command_buffer: Default::default(),
         }
     }
 }
@@ -292,8 +299,6 @@ impl ComposerState {
         self.scene.prepare();
         renderer.prepare_world(&mut self.scene);
 
-        let selected_before_ui_input = self.selected_object;
-
         // left panel: shows object tree
         egui::SidePanel::left(egui::Id::new("left_panel"))
             .resizable(true)
@@ -303,37 +308,43 @@ impl ComposerState {
                     .scroll_bar_visibility(
                         egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded,
                     )
-                    .show(ui, |ui| {
-                        self.object_tree
-                            .show(ui, &mut self.scene, &mut self.selected_object)
-                    });
+                    .show(ui, |ui| self.object_tree(ui));
             });
 
         // central panel: shows scene views (cameras)
         egui::CentralPanel::default().show(ctx, |ui| {
-            if let Some(selected_entity) = self.selected_object {
-                ui.label(format!(
-                    "Selected: {}",
-                    self.scene.entity_debug_label(selected_entity)
-                ));
-            }
-            else {
-                ui.label("Nothing selected");
-            }
+            {
+                // this whole block is just for debugging
+                let selected_entities = self.selected_entities();
+                if selected_entities.is_empty() {
+                    ui.label("Nothing selected");
+                }
+                else {
+                    ui.label(format!(
+                        "Selected: {}{}",
+                        self.scene.entity_debug_label(selected_entities[0]),
+                        if selected_entities.len() > 1 {
+                            format!(" ({} more)", selected_entities.len() - 1)
+                        }
+                        else {
+                            Default::default()
+                        }
+                    ));
+                }
 
-            // this just shows the hovered entity at the top. will be removed later.
-            if let Some(entity_under_pointer) = &self.scene_pointer.entity_under_pointer {
-                ui.label(format!(
-                    "Hovered: {} at ({}, {}, {}) with {} distance",
-                    self.scene.entity_debug_label(entity_under_pointer.entity),
-                    entity_under_pointer.point_hovered.x,
-                    entity_under_pointer.point_hovered.y,
-                    entity_under_pointer.point_hovered.z,
-                    entity_under_pointer.distance_from_camera
-                ));
-            }
-            else {
-                ui.label("Nothing hovered");
+                if let Some(entity_under_pointer) = &self.scene_pointer.entity_under_pointer {
+                    ui.label(format!(
+                        "Hovered: {} at ({}, {}, {}) with {} distance",
+                        self.scene.entity_debug_label(entity_under_pointer.entity),
+                        entity_under_pointer.point_hovered.x,
+                        entity_under_pointer.point_hovered.y,
+                        entity_under_pointer.point_hovered.z,
+                        entity_under_pointer.distance_from_camera
+                    ));
+                }
+                else {
+                    ui.label("Nothing hovered");
+                }
             }
 
             // actually render the scene
@@ -344,29 +355,18 @@ impl ComposerState {
             );
 
             if view_response.clicked() {
-                // object selected/delected by left-lick
-                self.selected_object = self
-                    .scene_pointer
-                    .entity_under_pointer
-                    .as_ref()
-                    .map(|entity_under_pointer| entity_under_pointer.entity);
+                let shift_key = ui.input(|input| input.modifiers.shift);
+                self.set_selected_entities(
+                    self.scene_pointer
+                        .entity_under_pointer
+                        .as_ref()
+                        .map(|entity_under_pointer| entity_under_pointer.entity),
+                    !shift_key,
+                );
             }
 
             self.context_menu(&view_response);
         });
-
-        // selection changed
-        if selected_before_ui_input != self.selected_object {
-            if let Some(entity) = selected_before_ui_input {
-                // remove outline tag from previously selected entity
-                let _ = self.scene.entities.remove_one::<Outline>(entity);
-            }
-
-            if let Some(entity) = self.selected_object {
-                // add outline tag to new selection
-                let _ = self.scene.entities.insert_one(entity, Outline);
-            }
-        }
     }
 
     pub fn context_menu(&mut self, response: &egui::Response) {
@@ -401,7 +401,7 @@ impl ComposerState {
             ui.separator();
 
             if ui.button("Delete").clicked() {
-                self.delete(entity);
+                self.delete([entity]);
             }
 
             if ui.button("Properties").clicked() {
@@ -536,25 +536,82 @@ impl ComposerState {
     }
 
     pub fn has_selected(&self) -> bool {
-        self.selected_object.is_some()
+        self.scene
+            .entities
+            .query::<()>()
+            .with::<&Selected>()
+            .iter()
+            .len()
+            != 0
     }
 
-    pub fn delete(&mut self, entity: hecs::Entity) {
-        let _ = self.scene.entities.remove_one::<Outline>(entity);
-
-        if let Some(taken_entity) = self.scene.delete(entity) {
-            self.undo_buffer.deleted_entity(taken_entity);
-        }
-        else {
-            tracing::warn!(?entity, "Selected entity doesn't exist");
-        }
+    pub fn selected_entities(&self) -> Vec<hecs::Entity> {
+        self.scene
+            .entities
+            .query::<()>()
+            .with::<&Selected>()
+            .iter()
+            .map(|(entity, ())| entity)
+            .collect()
     }
 
-    pub fn cut(&mut self, _entity: hecs::Entity) {
+    pub fn set_selected_entities(
+        &mut self,
+        entities: impl IntoIterator<Item = hecs::Entity>,
+        clear_previous_selection: bool,
+    ) {
+        if clear_previous_selection {
+            for (entity, ()) in self.scene.entities.query_mut::<()>().with::<&Selected>() {
+                self.command_buffer.remove_one::<Selected>(entity);
+                self.command_buffer.remove_one::<Outline>(entity);
+            }
+        }
+
+        for entity in entities {
+            self.command_buffer
+                .insert(entity, (Selected, Outline::default()));
+        }
+
+        self.command_buffer.run_on(&mut self.scene.entities);
+    }
+
+    fn send_to_hades(
+        &mut self,
+        entities: impl IntoIterator<Item = hecs::Entity>,
+        mut before_deletion: impl FnMut(&mut Scene, hecs::Entity),
+    ) -> Vec<HadesId> {
+        entities
+            .into_iter()
+            .filter_map(|entity| {
+                let _ = self.scene.entities.remove_one::<Outline>(entity);
+                let _ = self.scene.entities.remove_one::<Selected>(entity);
+
+                before_deletion(&mut self.scene, entity);
+
+                if let Some(taken_entity) = self.scene.delete(entity) {
+                    Some(self.undo_buffer.send_to_hades(taken_entity))
+                }
+                else {
+                    tracing::warn!(?entity, "Selected entity doesn't exist");
+                    None
+                }
+            })
+            .collect()
+    }
+
+    pub fn delete(&mut self, entities: impl IntoIterator<Item = hecs::Entity>) {
+        let hades_ids = self.send_to_hades(entities, |_, _| {});
+        self.undo_buffer
+            .push_undo(UndoAction::DeleteEntity { hades_ids });
+    }
+
+    pub fn cut(&mut self, _entities: impl IntoIterator<Item = hecs::Entity>) {
+        // todo: send to handes while serializing into buffer
         tracing::debug!("todo");
     }
 
-    pub fn copy(&mut self, _entity: hecs::Entity) {
+    pub fn copy(&mut self, _entities: impl IntoIterator<Item = hecs::Entity>) {
+        // just serialize into buffer. no need for undo
         tracing::debug!("todo");
     }
 }
@@ -595,3 +652,7 @@ impl PopulateScene for ExampleScene {
         Ok(())
     }
 }
+
+/// Tag for entities that are selected.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Selected;

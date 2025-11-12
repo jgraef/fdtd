@@ -62,6 +62,11 @@ use crate::app::composer::{
     tree::ShowInTree,
 };
 
+/// # TODO
+///
+/// - The `add_*` methods could be bundles. But I don't think bundles support
+///   optional components. We could make our own trait that inserts an entity
+///   (which would be identical to `PopulateScene`).
 #[derive(derive_more::Debug, Default)]
 pub struct Scene {
     #[debug("hecs::World {{ ... }}")]

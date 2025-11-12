@@ -9,6 +9,8 @@ use palette::{
     WithAlpha,
 };
 
+use crate::app::composer::renderer::Outline;
+
 /// Material properties that define how an object looks in the scene.
 ///
 /// This defines how the light from point sources and ambient light it modulated
@@ -27,8 +29,6 @@ pub struct Material {
     pub emissive: Srgba,
     pub shininess: f32,
     pub wireframe: Srgba,
-    pub outline: Srgba,
-    pub outline_thickness: f32,
 }
 
 impl From<Srgba> for Material {
@@ -40,8 +40,6 @@ impl From<Srgba> for Material {
             emissive: Srgba::new(0.0, 0.0, 0.0, 1.0),
             shininess: 8.0,
             wireframe: Srgba::new(0.0, 0.0, 0.0, 1.0),
-            outline: Srgba::new(1.0, 1.0, 1.0, 0.5),
-            outline_thickness: 0.1,
         }
     }
 }
@@ -160,16 +158,20 @@ pub struct MaterialData {
 }
 
 impl MaterialData {
-    pub fn new(material: &Material) -> Self {
+    pub fn new(material: &Material, outline: Option<&Outline>) -> Self {
+        let (outline, outline_thickness) = outline
+            .map(|outline| (outline.color.into_linear(), outline.thickness))
+            .unwrap_or_default();
+
         Self {
             wireframe: material.wireframe.into_linear(),
-            outline: material.outline.into_linear(),
+            outline,
             ambient: material.ambient.into_linear(),
             diffuse: material.diffuse.into_linear(),
             specular: material.specular.into_linear(),
             emissive: material.emissive.into_linear(),
             shininess: material.shininess,
-            outline_thickness: material.outline_thickness,
+            outline_thickness,
             _padding: [0; _],
         }
     }

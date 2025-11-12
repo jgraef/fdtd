@@ -8,57 +8,52 @@ use serde::{
     Serialize,
 };
 
-use crate::app::composer::scene::{
-    EntityDebugLabel,
-    Label,
-    Scene,
+use crate::app::composer::{
+    ComposerState,
+    scene::{
+        EntityDebugLabel,
+        Label,
+    },
 };
 
 #[derive(Debug, Default)]
-pub struct ObjectTree {
+pub struct ObjectTreeState {
     tree_state: TreeViewState<ObjectTreeId>,
-
-    // kinda hack to know what the tree view state has selected
-    previous_selection: Option<hecs::Entity>,
 
     object_scratch: Vec<(hecs::Entity, Option<Label>)>,
 }
 
-impl ObjectTree {
-    pub fn show(
-        &mut self,
-        ui: &mut egui::Ui,
-        scene: &mut Scene,
-        selected_object: &mut Option<hecs::Entity>,
-    ) {
-        // sync selection from composer with tree view
-        if self.previous_selection != *selected_object {
-            if let Some(selected_object) = *selected_object {
-                self.tree_state
-                    .set_one_selected(ObjectTreeId::Object(selected_object));
-            }
-            else {
-                self.tree_state.set_selected(vec![]);
-            }
-        }
+impl ComposerState {
+    pub(super) fn object_tree(&mut self, ui: &mut egui::Ui) -> egui::Response {
+        let selected = self
+            .selected_entities()
+            .into_iter()
+            .map(Into::into)
+            .collect();
+        self.object_tree.tree_state.set_selected(selected);
 
-        let (_response, actions) = TreeView::new(ui.make_persistent_id("composer_object_tree"))
-            .allow_multi_selection(false)
+        let (response, actions) = TreeView::new(ui.make_persistent_id("composer_object_tree"))
+            .allow_multi_selection(true)
             .allow_drag_and_drop(false)
-            .show_state(ui, &mut self.tree_state, |builder| {
+            .show_state(ui, &mut self.object_tree.tree_state, |builder| {
                 builder.dir(ObjectTreeId::ObjectDirectory, "Objects");
 
-                for (entity, label) in scene
+                for (entity, label) in self
+                    .scene
                     .entities
                     .query_mut::<Option<&Label>>()
                     .with::<&ShowInTree>()
                 {
-                    self.object_scratch.push((entity, label.cloned()));
+                    self.object_tree
+                        .object_scratch
+                        .push((entity, label.cloned()));
                 }
 
-                self.object_scratch.sort_by_key(|(entity, _)| *entity);
+                self.object_tree
+                    .object_scratch
+                    .sort_by_key(|(entity, _)| *entity);
 
-                for (entity, label) in self.object_scratch.drain(..) {
+                for (entity, label) in self.object_tree.object_scratch.drain(..) {
                     builder.leaf(
                         entity.into(),
                         EntityDebugLabel {
@@ -70,27 +65,31 @@ impl ObjectTree {
                 }
             });
 
+        let mut set_selected = false;
         for action in actions {
             #[allow(clippy::single_match)]
             match action {
                 Action::SetSelected(items) => {
-                    assert!(items.len() == 1, "expected exactly one item in selection");
-                    match items[0] {
-                        ObjectTreeId::Object(entity) => {
-                            // entity selected
-                            tracing::debug!(
-                                "object selected in tree: {}",
-                                scene.entity_debug_label(entity)
-                            );
-                            *selected_object = Some(entity);
-                            self.previous_selection = Some(entity);
+                    let selected = items.into_iter().filter_map(|node_id| {
+                        match node_id {
+                            ObjectTreeId::Object(entity) => Some(entity),
+                            _ => None,
                         }
-                        _ => {}
-                    }
+                    });
+
+                    self.set_selected_entities(selected, true);
+                    set_selected = true;
                 }
                 _ => {}
             }
         }
+
+        // if the widget was clicked, but nothing was selected, clear selection
+        if response.clicked() && !set_selected {
+            self.set_selected_entities([], true);
+        }
+
+        response
     }
 }
 

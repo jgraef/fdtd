@@ -21,21 +21,20 @@ impl Default for UndoBuffer {
             undo_limit: Some(100),
             redo_actions: VecDeque::new(),
             redo_limit: Some(100),
-            hades: hecs::World::new(),
+            hades: Default::default(),
         }
     }
 }
 
 impl UndoBuffer {
-    pub fn deleted_entity(&mut self, taken_entity: hecs::TakenEntity) {
-        let hades_entity = self.hades.spawn(taken_entity);
+    pub fn send_to_hades(&mut self, entity: hecs::TakenEntity) -> HadesId {
+        HadesId {
+            entity: self.hades.spawn(entity),
+        }
+    }
 
-        // todo: we might want to remove some components from the entity to save
-        // resources (e.g. the mesh)
-
-        self.undo_actions
-            .push_front(UndoAction::DeleteEntity { hades_entity });
-
+    pub fn push_undo(&mut self, undo: UndoAction) {
+        self.undo_actions.push_front(undo);
         self.limit_undo_buffer();
     }
 
@@ -44,8 +43,14 @@ impl UndoBuffer {
             while self.undo_actions.len() > undo_limit {
                 let undo_action = self.undo_actions.pop_back().unwrap();
 
-                for hades_entity in undo_action.hades_entities() {
-                    self.hades.despawn(hades_entity).unwrap();
+                #[allow(clippy::single_match)]
+                match undo_action {
+                    UndoAction::DeleteEntity { hades_ids } => {
+                        for hades_id in hades_ids {
+                            self.hades.despawn(hades_id.entity).unwrap();
+                        }
+                    }
+                    _ => {}
                 }
             }
         }
@@ -54,11 +59,13 @@ impl UndoBuffer {
     pub fn undo_most_recent(&mut self, scene: &mut Scene) {
         if let Some(undo_action) = self.undo_actions.pop_front() {
             match undo_action {
-                UndoAction::DeleteEntity { hades_entity } => {
-                    let resurrected_entity = self.hades.take(hades_entity).unwrap();
-                    let entity = scene.entities.spawn(resurrected_entity);
-                    self.redo_actions
-                        .push_front(RedoAction::DeleteEntity { entity });
+                UndoAction::DeleteEntity { hades_ids } => {
+                    for hades_id in hades_ids {
+                        let resurrected_entity = self.hades.take(hades_id.entity).unwrap();
+                        let entity = scene.entities.spawn(resurrected_entity);
+                        self.redo_actions
+                            .push_front(RedoAction::DeleteEntity { entity });
+                    }
                 }
                 UndoAction::CreateEntity { entity: _ } => {
                     //scene.delete(entity);
@@ -87,20 +94,17 @@ impl UndoBuffer {
 
 #[derive(Debug)]
 pub enum UndoAction {
-    DeleteEntity { hades_entity: hecs::Entity },
+    DeleteEntity { hades_ids: Vec<HadesId> },
     CreateEntity { entity: hecs::Entity },
-}
-
-impl UndoAction {
-    fn hades_entities(&self) -> Vec<hecs::Entity> {
-        match self {
-            UndoAction::DeleteEntity { hades_entity, .. } => vec![*hades_entity],
-            _ => vec![],
-        }
-    }
 }
 
 #[derive(Debug)]
 pub enum RedoAction {
     DeleteEntity { entity: hecs::Entity },
+}
+
+/// It's just an [`hecs::Entity`], but wrapped to avoid mixups.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct HadesId {
+    entity: hecs::Entity,
 }
