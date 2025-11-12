@@ -1,6 +1,7 @@
 pub mod renderer;
 pub mod scene;
 pub mod tree;
+pub mod view;
 
 use std::{
     convert::Infallible,
@@ -42,12 +43,12 @@ use crate::{
                 UndoAction,
                 UndoBuffer,
             },
-            view::{
-                ScenePointer,
-                SceneView,
-            },
         },
         tree::ObjectTreeState,
+        view::{
+            ScenePointer,
+            SceneView,
+        },
     },
     file_formats::{
         FileFormat,

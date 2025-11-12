@@ -1,6 +1,5 @@
 pub mod collisions;
 pub mod undo;
-pub mod view;
 
 use std::{
     borrow::Cow,
