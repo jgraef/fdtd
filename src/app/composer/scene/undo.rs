@@ -16,17 +16,21 @@ pub struct UndoBuffer {
 
 impl Default for UndoBuffer {
     fn default() -> Self {
-        Self {
-            undo_actions: VecDeque::new(),
-            undo_limit: Some(100),
-            redo_actions: VecDeque::new(),
-            redo_limit: Some(100),
-            hades: Default::default(),
-        }
+        Self::new(None, None)
     }
 }
 
 impl UndoBuffer {
+    pub fn new(undo_limit: Option<usize>, redo_limit: Option<usize>) -> Self {
+        Self {
+            undo_actions: VecDeque::new(),
+            undo_limit,
+            redo_actions: VecDeque::new(),
+            redo_limit,
+            hades: Default::default(),
+        }
+    }
+
     pub fn send_to_hades(&mut self, entity: hecs::TakenEntity) -> HadesId {
         HadesId {
             entity: self.hades.spawn(entity),

@@ -67,7 +67,7 @@ pub struct Render;
 
 // todo: respect eguis theme. we might just pass this in from the view when
 // rendering and remove this component.
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
 pub struct ClearColor {
     pub clear_color: Srgb,
 }
@@ -893,6 +893,7 @@ fn allocate_instance_buffer<T>(
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct Outline {
+    #[serde(with = "crate::util::serde::palette")]
     pub color: Srgba,
     pub thickness: f32,
 }

@@ -18,12 +18,18 @@ use clap::{
     Parser,
     Subcommand,
 };
-use color_eyre::eyre::Error;
+use color_eyre::eyre::{
+    Error,
+    bail,
+};
 use dotenvy::dotenv;
 use tracing_subscriber::EnvFilter;
 
 use crate::{
-    app::start::CreateApp,
+    app::{
+        config::AppConfig,
+        start::CreateApp,
+    },
     file_formats::nec::NecFile,
 };
 
@@ -48,6 +54,20 @@ fn main() -> Result<(), Error> {
             let nec = NecFile::from_reader(reader)?;
             println!("{nec:#?}");
         }
+        Command::DumpDefaultConfig { output, format } => {
+            let config = AppConfig::default();
+            let config = match format.as_str() {
+                "toml" => toml::to_string_pretty(&config)?,
+                "json" => serde_json::to_string_pretty(&config)?,
+                _ => bail!("Invalid format: {format}"),
+            };
+            if let Some(output) = &output {
+                std::fs::write(output, &config)?;
+            }
+            else {
+                println!("{config}");
+            }
+        }
     }
 
     Ok(())
@@ -64,5 +84,13 @@ enum Command {
     // the main app, the other's are just temporary for testing purposes
     Main(crate::app::args::Args),
     Fdtd(fdtd::Args),
-    ReadNec { file: PathBuf },
+    ReadNec {
+        file: PathBuf,
+    },
+    DumpDefaultConfig {
+        #[clap(short, long)]
+        output: Option<PathBuf>,
+        #[clap(short, long, default_value = "toml")]
+        format: String,
+    },
 }

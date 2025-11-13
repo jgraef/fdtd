@@ -1,4 +1,5 @@
 pub mod arena;
+pub mod serde;
 
 use std::{
     fmt::Display,

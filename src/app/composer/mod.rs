@@ -1,11 +1,11 @@
 pub mod renderer;
 pub mod scene;
+pub mod solver;
 pub mod tree;
 pub mod view;
 
 use std::{
     convert::Infallible,
-    f32,
     fs::File,
     io::BufReader,
     path::{
@@ -35,28 +35,37 @@ use serde::{
 
 use crate::{
     Error,
-    app::composer::{
-        renderer::{
-            Outline,
-            Renderer,
-            WgpuContext,
-            camera::CameraProjection,
-        },
-        scene::{
-            PopulateScene,
-            Scene,
-            Transform,
-            undo::{
-                HadesId,
-                UndoAction,
-                UndoBuffer,
+    app::{
+        composer::{
+            renderer::{
+                ClearColor,
+                Outline,
+                Renderer,
+                WgpuContext,
+                camera::{
+                    CameraConfig,
+                    CameraProjection,
+                },
+            },
+            scene::{
+                Label,
+                PopulateScene,
+                Scene,
+                Transform,
+                undo::{
+                    HadesId,
+                    UndoAction,
+                    UndoBuffer,
+                },
+            },
+            solver::SolverConfig,
+            tree::ObjectTreeState,
+            view::{
+                ScenePointer,
+                SceneView,
             },
         },
-        tree::ObjectTreeState,
-        view::{
-            ScenePointer,
-            SceneView,
-        },
+        config::ComposerConfig,
     },
     file_formats::{
         FileFormat,
@@ -80,26 +89,39 @@ pub struct Composer {
 
     /// The renderer used to render a scene (if a file is open)
     renderer: Renderer,
+
+    config: ComposerConfig,
 }
 
 impl Composer {
-    pub fn new(wgpu_context: &WgpuContext) -> Self {
+    pub fn new(wgpu_context: &WgpuContext, config: ComposerConfig) -> Self {
         let renderer = Renderer::new(wgpu_context);
 
         Self {
             state: None,
             renderer,
+            config,
         }
+    }
+
+    fn new_state<P>(&mut self, populate: P) -> Result<&mut ComposerState, Error>
+    where
+        P: PopulateScene,
+        Error: From<P::Error>,
+    {
+        // we might not want to pass a copy, but somehow by reference
+        let mut state = ComposerState::new(self.config.clone());
+
+        populate.populate_scene(&mut state.scene)?;
+
+        self.state = Some(state);
+        Ok(self.state.as_mut().unwrap())
     }
 
     /// Creates a new file with an example scene
     pub fn new_file(&mut self) {
-        let mut state = ComposerState::default();
-        ExampleScene
-            .populate_scene(&mut state.scene)
+        self.new_state(ExampleScene)
             .expect("populating example scene failed");
-        //state.fit_camera_to_scene();
-        self.state = Some(state);
     }
 
     /// Opens a file and populate the scene with it.
@@ -108,25 +130,23 @@ impl Composer {
         tracing::debug!(path = %path.display(), "open file");
 
         if let Some(file_format) = guess_file_format_from_path(path) {
-            let mut state = ComposerState::new_with_path(path);
-
             #[allow(unreachable_patterns)]
             match file_format {
                 FileFormat::Nec => {
                     let reader = BufReader::new(File::open(path)?);
                     let nec_file = NecFile::from_reader(reader)?;
                     tracing::debug!("{nec_file:#?}");
-                    PopulateWithNec {
+
+                    let state = self.new_state(PopulateWithNec {
                         nec_file: &nec_file,
                         material: palette::named::ORANGERED.into(),
-                    }
-                    .populate_scene(&mut state.scene)?;
+                    })?;
+
+                    state.path = Some(path.to_owned());
                     state.fit_camera_to_scene(&Default::default());
                 }
                 _ => bail!("Unsupported file format: {file_format:?}"),
             }
-
-            self.state = Some(state);
         }
         else {
             tracing::debug!("todo: unknown file format");
@@ -234,11 +254,29 @@ impl Composer {
             });
         }
     }
+
+    pub fn solver_configurations(&self) -> impl Iterator<Item = &SolverConfig> {
+        self.state
+            .as_ref()
+            .map(|state| state.config.solvers.iter())
+            .into_iter()
+            .flatten()
+    }
+
+    pub fn run_solver(&self, index: usize) {
+        if let Some(state) = &self.state {
+            let solver_configuration = &state.config.solvers[index];
+
+            tracing::debug!("todo: run {} solver", solver_configuration.name);
+        }
+    }
 }
 
 /// State for an open file
 #[derive(derive_more::Debug)]
 pub struct ComposerState {
+    config: ComposerConfig,
+
     /// The path of the file. This will be where it's saved to.
     ///
     /// This might need to keep track of how it's saved (e.g. file format)
@@ -260,10 +298,13 @@ pub struct ComposerState {
     /// We also need one of these per camera.
     scene_pointer: ScenePointer,
 
+    /// the object tree shown in the left panel
     object_tree: ObjectTreeState,
 
+    /// If an context menu is open, which entity is it about
     context_menu_object: Option<hecs::Entity>,
 
+    /// Buffer storing undo and redo commands
     undo_buffer: UndoBuffer,
 
     /// Temporary ECS command buffer
@@ -271,17 +312,30 @@ pub struct ComposerState {
     command_buffer: hecs::CommandBuffer,
 }
 
-impl Default for ComposerState {
-    fn default() -> Self {
+impl ComposerState {
+    fn new(config: ComposerConfig) -> Self {
         let mut scene = Scene::default();
 
-        let camera_entity = scene.add_camera(Transform::look_at(
-            &Point3::new(0.0, 0.0, -2.0),
-            &Point3::origin(),
-            &Vector3::y_axis(),
+        // the only view we have right now
+        let view_config = &config.views.view_3d;
+        let camera_entity = scene.entities.spawn((
+            Transform::look_at(
+                &Point3::new(0.0, 0.0, -2.0),
+                &Point3::origin(),
+                &Vector3::y_axis(),
+            ),
+            ClearColor::from(view_config.background_color),
+            CameraProjection::new(view_config.fovy.to_radians()),
+            CameraConfig::default(),
+            view_config.light_filter.unwrap_or_default(),
+            //PointLight::default(),
+            Label::new_static("camera"),
         ));
 
+        let undo_buffer = UndoBuffer::new(config.undo_limit, config.redo_limit);
+
         Self {
+            config,
             path: None,
             modified: false,
             scene,
@@ -289,20 +343,13 @@ impl Default for ComposerState {
             scene_pointer: Default::default(),
             object_tree: Default::default(),
             context_menu_object: None,
-            undo_buffer: Default::default(),
+            undo_buffer,
             command_buffer: Default::default(),
         }
     }
 }
 
 impl ComposerState {
-    pub fn new_with_path(path: impl AsRef<Path>) -> Self {
-        Self {
-            path: Some(path.as_ref().to_owned()),
-            ..Default::default()
-        }
-    }
-
     pub fn show(&mut self, ctx: &egui::Context, renderer: &mut Renderer) {
         // prepare world
         self.scene.prepare();
@@ -364,6 +411,8 @@ impl ComposerState {
             );
 
             if view_response.clicked() {
+                // todo: shift should also remove from selection
+
                 let shift_key = ui.input(|input| input.modifiers.shift);
                 self.set_selected_entities(
                     self.scene_pointer
@@ -585,7 +634,7 @@ impl ComposerState {
 
         for entity in entities {
             self.command_buffer
-                .insert(entity, (Selected, Outline::default()));
+                .insert(entity, (Selected, self.config.views.outline));
         }
 
         self.command_buffer.run_on(&mut self.scene.entities);

@@ -40,17 +40,9 @@ use serde::{
 
 use crate::app::composer::{
     renderer::{
-        ClearColor,
         Render,
-        camera::{
-            CameraConfig,
-            CameraProjection,
-        },
         grid::GridPlane,
-        light::{
-            CameraLightFilter,
-            Material,
-        },
+        light::Material,
         mesh::{
             SurfaceMesh,
             WindingOrder,
@@ -99,18 +91,6 @@ impl Scene {
             label,
             Collides,
             ShowInTree,
-        ))
-    }
-
-    pub fn add_camera(&mut self, transform: impl Into<Transform>) -> hecs::Entity {
-        self.entities.spawn((
-            transform.into(),
-            CameraProjection::default(),
-            CameraConfig::default(),
-            CameraLightFilter::default(),
-            ClearColor::from(palette::named::BLUEVIOLET),
-            //PointLight::default(),
-            Label::new_static("camera"),
         ))
     }
 
@@ -201,12 +181,6 @@ impl Scene {
     pub fn serialize(&self, entity: hecs::Entity) -> Option<SerializeEntity<'_>> {
         self.entities.entity(entity).ok().map(SerializeEntity::new)
     }
-}
-
-#[derive(Debug)]
-struct DeferredDeletion {
-    entity: hecs::Entity,
-    send_to_hades: bool,
 }
 
 #[derive(Clone, Debug)]

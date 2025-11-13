@@ -59,6 +59,12 @@ impl AppFiles {
         self.state_dir_with_fallback().join("ui_state")
     }
 
+    /// Read config file, or create one if it doesn't exist yet.
+    ///
+    /// # TODO
+    ///
+    /// - What format shall we use? TOML is nice and all, but JSON5 also seems
+    ///   fine.
     pub fn read_config_or_create<T>(&self) -> Result<T, Error>
     where
         T: Serialize + DeserializeOwned + Default,

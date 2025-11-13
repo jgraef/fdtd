@@ -86,7 +86,7 @@ impl App {
             .add_file_filter_extensions("NEC", vec!["nec"]);
 
         // create composer ui
-        let mut composer = Composer::new(&context.wgpu_context);
+        let mut composer = Composer::new(&context.wgpu_context, config.composer.clone());
 
         if args.new_file {
             // command line telling us to directly go to a new file
@@ -363,6 +363,32 @@ impl App {
                     tracing::debug!("todo: configure camera lights")
                 }
             });
+        });
+    }
+
+    fn run_menu(&mut self, ui: &mut egui::Ui) {
+        ui.menu_button("Run", |ui| {
+            setup_menu(ui);
+
+            let has_file_open = self.composer.has_file_open();
+
+            if ui
+                .add_enabled(has_file_open, egui::Button::new("Configure Solvers"))
+                .clicked()
+            {
+                tracing::debug!("todo: configure solvers");
+            }
+
+            ui.separator();
+
+            for (i, solver_configuration) in self.composer.solver_configurations().enumerate() {
+                if ui
+                    .button(("Run ", &solver_configuration.name, " Solver"))
+                    .clicked()
+                {
+                    self.composer.run_solver(i);
+                }
+            }
         });
     }
 

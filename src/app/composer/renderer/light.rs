@@ -27,11 +27,21 @@ use crate::app::composer::renderer::Outline;
 /// # TODO: Needs to know if this is transparent, so we can sort by depth.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct Material {
+    #[serde(with = "crate::util::serde::palette")]
     pub ambient: Srgba,
+
+    #[serde(with = "crate::util::serde::palette")]
     pub diffuse: Srgba,
+
+    #[serde(with = "crate::util::serde::palette")]
     pub specular: Srgba,
+
+    #[serde(with = "crate::util::serde::palette")]
     pub emissive: Srgba,
+
     pub shininess: f32,
+
+    #[serde(with = "crate::util::serde::palette")]
     pub wireframe: Srgba,
 }
 
@@ -83,7 +93,10 @@ impl From<Srgb<u8>> for Material {
 /// this right now.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct PointLight {
+    #[serde(with = "crate::util::serde::palette")]
     pub diffuse: Srgb,
+
+    #[serde(with = "crate::util::serde::palette")]
     pub specular: Srgb,
 }
 
@@ -127,9 +140,16 @@ impl From<Srgb<u8>> for PointLight {
 #[derive(Clone, Copy, Debug, Pod, Zeroable, Serialize, Deserialize)]
 #[repr(C)]
 pub struct CameraLightFilter {
+    #[serde(with = "crate::util::serde::palette")]
     pub ambient: LinSrgba,
+
+    #[serde(with = "crate::util::serde::palette")]
     pub diffuse: LinSrgba,
+
+    #[serde(with = "crate::util::serde::palette")]
     pub specular: LinSrgba,
+
+    #[serde(with = "crate::util::serde::palette")]
     pub emissive: LinSrgba,
 }
 
