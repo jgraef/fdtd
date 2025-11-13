@@ -25,12 +25,11 @@ pub struct ObjectTreeState {
 
 impl ComposerState {
     pub(super) fn object_tree(&mut self, ui: &mut egui::Ui) -> egui::Response {
-        let selected = self
-            .selected_entities()
-            .into_iter()
-            .map(Into::into)
-            .collect();
-        self.object_tree.tree_state.set_selected(selected);
+        self.object_tree
+            .tree_state
+            .set_selected(self.selection().with_query_iter::<(), _>(|selected| {
+                selected.map(|(entity, ())| entity.into()).collect()
+            }));
 
         let (response, actions) = TreeView::new(ui.make_persistent_id("composer_object_tree"))
             .allow_multi_selection(true)
@@ -65,19 +64,27 @@ impl ComposerState {
                 }
             });
 
+        // whether something was selected in the tree view
         let mut set_selected = false;
+
+        let mut selection = self.selection_mut();
+
         for action in actions {
             #[allow(clippy::single_match)]
             match action {
                 Action::SetSelected(items) => {
-                    let selected = items.into_iter().filter_map(|node_id| {
-                        match node_id {
-                            ObjectTreeId::Object(entity) => Some(entity),
-                            _ => None,
-                        }
-                    });
+                    // the tree view always gives us the complete selection, so we need to clear the
+                    // selection first
+                    selection.clear();
 
-                    self.set_selected_entities(selected, true);
+                    // add selected entities to selection
+                    for item in items {
+                        if let ObjectTreeId::Entity(entity) = item {
+                            selection.select(entity);
+                        }
+                    }
+
+                    // remember that we selected something for later
                     set_selected = true;
                 }
                 _ => {}
@@ -86,7 +93,7 @@ impl ComposerState {
 
         // if the widget was clicked, but nothing was selected, clear selection
         if response.clicked() && !set_selected {
-            self.set_selected_entities([], true);
+            selection.clear();
         }
 
         response
@@ -100,11 +107,11 @@ pub struct ShowInTree;
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum ObjectTreeId {
     ObjectDirectory,
-    Object(hecs::Entity),
+    Entity(hecs::Entity),
 }
 
 impl From<hecs::Entity> for ObjectTreeId {
     fn from(value: hecs::Entity) -> Self {
-        Self::Object(value)
+        Self::Entity(value)
     }
 }

@@ -39,6 +39,7 @@ use crate::{
             Composer,
             ComposerState,
             renderer::camera::CameraConfig,
+            solver::SolverConfig,
         },
         config::AppConfig,
         files::AppFiles,
@@ -86,11 +87,11 @@ impl App {
             .add_file_filter_extensions("NEC", vec!["nec"]);
 
         // create composer ui
-        let mut composer = Composer::new(&context.wgpu_context, config.composer.clone());
+        let mut composer = Composer::new(&context.wgpu_context);
 
         if args.new_file {
             // command line telling us to directly go to a new file
-            composer.new_file();
+            composer.new_file(&config);
         }
         else if let Some(path) = &args.file {
             // if a file was passed via command line argument, open it
@@ -102,7 +103,7 @@ impl App {
             );
 
             composer
-                .open_file(path)
+                .open_file(&config, path)
                 .unwrap_or_else(|error| error_dialog.display_error(error));
         }
 
@@ -123,7 +124,7 @@ impl App {
 
             if ui.button("New File").clicked() {
                 tracing::debug!("new file");
-                self.composer.new_file();
+                self.composer.new_file(&self.config);
             }
 
             ui.separator();
@@ -141,7 +142,7 @@ impl App {
                             RecentlyOpenedFiles::move_to_top(ui.ctx(), &path);
 
                             self.composer
-                                .open_file(&path)
+                                .open_file(&self.config, &path)
                                 .unwrap_or_else(|error| self.error_dialog.display_error(error));
                         }
                     }
@@ -204,7 +205,7 @@ impl App {
                         true,
                         state.has_undos(),
                         state.has_redos(),
-                        state.has_selected(),
+                        !state.selection().is_empty(),
                     )
                 })
                 .unwrap_or_default();
@@ -372,22 +373,35 @@ impl App {
 
             let has_file_open = self.composer.has_file_open();
 
-            if ui
-                .add_enabled(has_file_open, egui::Button::new("Configure Solvers"))
-                .clicked()
-            {
-                tracing::debug!("todo: configure solvers");
+            if ui.button("Configure Solvers").clicked() {
+                //self.solver_config_window.open();
+                todo!();
             }
 
             ui.separator();
 
-            for (i, solver_configuration) in self.composer.solver_configurations().enumerate() {
-                if ui
-                    .button(("Run ", &solver_configuration.name, " Solver"))
-                    .clicked()
-                {
-                    self.composer.run_solver(i);
+            let solver_button =
+                |solver: &SolverConfig| egui::Button::new(("Run ", &solver.name, " Solver"));
+
+            let mut i = 0;
+            if has_file_open {
+                // show solvers configured in the composer state
+                for solver in self.composer.solver_configurations() {
+                    if ui.add(solver_button(solver)).clicked() {
+                        self.composer.run_solver(i);
+                    }
+                    i += 1;
                 }
+            }
+            else {
+                // show default solver configs as disabled buttons if no file is open
+                for solver in &self.config.default_solver_configs {
+                    ui.add_enabled(false, solver_button(solver));
+                }
+            }
+
+            if i == 0 {
+                ui.label("No Solvers configured");
             }
         });
     }
@@ -485,9 +499,7 @@ impl eframe::App for App {
                     todo_label(ui);
                 });
                 self.view_menu(ui);
-                ui.menu_button("Run", |ui| {
-                    todo_label(ui);
-                });
+                self.run_menu(ui);
                 self.help_menu(ui);
             });
         });
@@ -546,7 +558,7 @@ impl eframe::App for App {
                         );
 
                         self.composer
-                            .open_file(path)
+                            .open_file(&self.config, path)
                             .unwrap_or_else(|error| self.error_dialog.display_error(error));
                     }
                     FileDialogAction::SaveAs => {

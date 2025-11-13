@@ -48,6 +48,7 @@ use crate::{
                 },
             },
             scene::{
+                EntityDebugLabel,
                 Label,
                 PopulateScene,
                 Scene,
@@ -65,7 +66,10 @@ use crate::{
                 SceneView,
             },
         },
-        config::ComposerConfig,
+        config::{
+            AppConfig,
+            ComposerConfig,
+        },
     },
     file_formats::{
         FileFormat,
@@ -89,43 +93,34 @@ pub struct Composer {
 
     /// The renderer used to render a scene (if a file is open)
     renderer: Renderer,
-
-    config: ComposerConfig,
 }
 
 impl Composer {
-    pub fn new(wgpu_context: &WgpuContext, config: ComposerConfig) -> Self {
+    pub fn new(wgpu_context: &WgpuContext) -> Self {
         let renderer = Renderer::new(wgpu_context);
 
         Self {
             state: None,
             renderer,
-            config,
         }
     }
 
-    fn new_state<P>(&mut self, populate: P) -> Result<&mut ComposerState, Error>
-    where
-        P: PopulateScene,
-        Error: From<P::Error>,
-    {
-        // we might not want to pass a copy, but somehow by reference
-        let mut state = ComposerState::new(self.config.clone());
-
-        populate.populate_scene(&mut state.scene)?;
-
-        self.state = Some(state);
-        Ok(self.state.as_mut().unwrap())
-    }
-
     /// Creates a new file with an example scene
-    pub fn new_file(&mut self) {
-        self.new_state(ExampleScene)
+    pub fn new_file(&mut self, app_config: &AppConfig) {
+        let mut state = ComposerState::new(app_config.composer.clone());
+        ExampleScene
+            .populate_scene(&mut state.scene)
             .expect("populating example scene failed");
+        state.solver_configs = app_config.default_solver_configs.clone();
+        self.state = Some(state);
     }
 
     /// Opens a file and populate the scene with it.
-    pub fn open_file(&mut self, path: impl AsRef<Path>) -> Result<(), Error> {
+    pub fn open_file(
+        &mut self,
+        app_config: &AppConfig,
+        path: impl AsRef<Path>,
+    ) -> Result<(), Error> {
         let path = path.as_ref();
         tracing::debug!(path = %path.display(), "open file");
 
@@ -137,13 +132,19 @@ impl Composer {
                     let nec_file = NecFile::from_reader(reader)?;
                     tracing::debug!("{nec_file:#?}");
 
-                    let state = self.new_state(PopulateWithNec {
+                    let mut state = ComposerState::new(app_config.composer.clone());
+
+                    PopulateWithNec {
                         nec_file: &nec_file,
                         material: palette::named::ORANGERED.into(),
-                    })?;
+                    }
+                    .populate_scene(&mut state.scene)?;
 
+                    state.solver_configs = app_config.default_solver_configs.clone();
                     state.path = Some(path.to_owned());
                     state.fit_camera_to_scene(&Default::default());
+
+                    self.state = Some(state);
                 }
                 _ => bail!("Unsupported file format: {file_format:?}"),
             }
@@ -207,9 +208,10 @@ impl Composer {
         &mut self,
         f: impl FnOnce(&mut ComposerState, Vec<hecs::Entity>) -> R,
     ) -> Option<R> {
-        self.state
-            .as_mut()
-            .map(|state| f(state, state.selected_entities()))
+        self.state.as_mut().map(|state| {
+            let selected = state.selection().entities();
+            f(state, selected)
+        })
     }
 
     pub fn show(&mut self, ctx: &egui::Context) {
@@ -258,16 +260,16 @@ impl Composer {
     pub fn solver_configurations(&self) -> impl Iterator<Item = &SolverConfig> {
         self.state
             .as_ref()
-            .map(|state| state.config.solvers.iter())
+            .map(|state| state.solver_configs.iter())
             .into_iter()
             .flatten()
     }
 
     pub fn run_solver(&self, index: usize) {
         if let Some(state) = &self.state {
-            let solver_configuration = &state.config.solvers[index];
+            let solver_config = &state.solver_configs[index];
 
-            tracing::debug!("todo: run {} solver", solver_configuration.name);
+            tracing::debug!("todo: run {} solver", solver_config.name);
         }
     }
 }
@@ -310,6 +312,8 @@ pub struct ComposerState {
     /// Temporary ECS command buffer
     #[debug("hecs::CommandBuffer {{ ... }}")]
     command_buffer: hecs::CommandBuffer,
+
+    solver_configs: Vec<SolverConfig>,
 }
 
 impl ComposerState {
@@ -317,6 +321,8 @@ impl ComposerState {
         let mut scene = Scene::default();
 
         // the only view we have right now
+        // todo: don't create camera here. for a proper project file it will be
+        // populated by it.
         let view_config = &config.views.view_3d;
         let camera_entity = scene.entities.spawn((
             Transform::look_at(
@@ -345,6 +351,7 @@ impl ComposerState {
             context_menu_object: None,
             undo_buffer,
             command_buffer: Default::default(),
+            solver_configs: vec![],
         }
     }
 }
@@ -371,22 +378,31 @@ impl ComposerState {
         egui::CentralPanel::default().show(ctx, |ui| {
             {
                 // this whole block is just for debugging
-                let selected_entities = self.selected_entities();
-                if selected_entities.is_empty() {
-                    ui.label("Nothing selected");
-                }
-                else {
-                    ui.label(format!(
-                        "Selected: {}{}",
-                        self.scene.entity_debug_label(selected_entities[0]),
-                        if selected_entities.len() > 1 {
-                            format!(" ({} more)", selected_entities.len() - 1)
+                self.selection()
+                    .with_query_iter::<Option<&Label>, _>(|mut selected| {
+                        let num_selected = selected.len();
+                        if num_selected == 0 {
+                            ui.label("Nothing selected");
                         }
                         else {
-                            Default::default()
+                            let (entity, label) = selected.next().unwrap();
+
+                            ui.label(format!(
+                                "Selected: {}{}",
+                                EntityDebugLabel {
+                                    entity,
+                                    label: label.cloned(),
+                                    invalid: false
+                                },
+                                if num_selected > 1 {
+                                    format!(" ({} more)", num_selected - 1)
+                                }
+                                else {
+                                    Default::default()
+                                }
+                            ));
                         }
-                    ));
-                }
+                    });
 
                 if let Some(entity_under_pointer) = &self.scene_pointer.entity_under_pointer {
                     ui.label(format!(
@@ -414,13 +430,27 @@ impl ComposerState {
                 // todo: shift should also remove from selection
 
                 let shift_key = ui.input(|input| input.modifiers.shift);
-                self.set_selected_entities(
-                    self.scene_pointer
-                        .entity_under_pointer
-                        .as_ref()
-                        .map(|entity_under_pointer| entity_under_pointer.entity),
-                    !shift_key,
-                );
+                let entity = self
+                    .scene_pointer
+                    .entity_under_pointer
+                    .as_ref()
+                    .map(|entity_under_pointer| entity_under_pointer.entity);
+
+                let mut selection = self.selection_mut();
+
+                match (entity, shift_key) {
+                    (Some(entity), false) => {
+                        selection.clear();
+                        selection.select(entity);
+                    }
+                    (Some(entity), true) => {
+                        selection.toggle(entity);
+                    }
+                    (None, false) => {
+                        selection.clear();
+                    }
+                    (None, true) => {}
+                }
             }
 
             self.context_menu(&view_response);
@@ -600,44 +630,18 @@ impl ComposerState {
         tracing::debug!("todo: redo");
     }
 
-    pub fn has_selected(&self) -> bool {
-        self.scene
-            .entities
-            .query::<()>()
-            .with::<&Selected>()
-            .iter()
-            .len()
-            != 0
+    pub fn selection(&self) -> Selection<'_> {
+        Selection {
+            world: &self.scene.entities,
+        }
     }
 
-    pub fn selected_entities(&self) -> Vec<hecs::Entity> {
-        self.scene
-            .entities
-            .query::<()>()
-            .with::<&Selected>()
-            .iter()
-            .map(|(entity, ())| entity)
-            .collect()
-    }
-
-    pub fn set_selected_entities(
-        &mut self,
-        entities: impl IntoIterator<Item = hecs::Entity>,
-        clear_previous_selection: bool,
-    ) {
-        if clear_previous_selection {
-            for (entity, ()) in self.scene.entities.query_mut::<()>().with::<&Selected>() {
-                self.command_buffer.remove_one::<Selected>(entity);
-                self.command_buffer.remove_one::<Outline>(entity);
-            }
+    pub fn selection_mut(&mut self) -> SelectionMut<'_> {
+        SelectionMut {
+            world: &mut self.scene.entities,
+            command_buffer: &mut self.command_buffer,
+            outline: &self.config.views.outline,
         }
-
-        for entity in entities {
-            self.command_buffer
-                .insert(entity, (Selected, self.config.views.outline));
-        }
-
-        self.command_buffer.run_on(&mut self.scene.entities);
     }
 
     fn send_to_hades(
@@ -748,4 +752,83 @@ fn entities_to_json(
     };
 
     Ok(serde_json::to_string_pretty(&clipboard)?)
+}
+
+#[derive(Clone, Copy, derive_more::Debug)]
+pub struct Selection<'a> {
+    #[debug("hecs::World {{ ... }}")]
+    world: &'a hecs::World,
+}
+
+impl<'a> Selection<'a> {
+    pub fn is_empty(&self) -> bool {
+        self.world.query::<()>().with::<&Selected>().iter().len() == 0
+    }
+
+    pub fn query<Q>(&self) -> hecs::QueryBorrow<'_, hecs::With<Q, &Selected>>
+    where
+        Q: hecs::Query,
+    {
+        self.world.query::<Q>().with::<&Selected>()
+    }
+
+    pub fn with_query_iter<Q, R>(
+        &self,
+        f: impl FnOnce(hecs::QueryIter<'_, hecs::With<Q, &Selected>>) -> R,
+    ) -> R
+    where
+        Q: hecs::Query,
+    {
+        let mut query = self.query::<Q>();
+        f(query.iter())
+    }
+
+    pub fn entities(&self) -> Vec<hecs::Entity> {
+        self.with_query_iter::<(), _>(|selected| selected.map(|(entity, ())| entity).collect())
+    }
+}
+
+#[derive(derive_more::Debug)]
+pub struct SelectionMut<'a> {
+    #[debug("hecs::World {{ ... }}")]
+    world: &'a mut hecs::World,
+    #[debug("hecs::CommandBuffer {{ ... }}")]
+    command_buffer: &'a mut hecs::CommandBuffer,
+    outline: &'a Outline,
+}
+
+impl<'a> SelectionMut<'a> {
+    pub fn clear(&mut self) {
+        for (entity, ()) in self.world.query_mut::<()>().with::<&Selected>() {
+            self.command_buffer.remove_one::<Selected>(entity);
+            self.command_buffer.remove_one::<Outline>(entity);
+        }
+    }
+
+    pub fn select(&mut self, entity: hecs::Entity) {
+        self.command_buffer
+            .insert(entity, (Selected, self.outline.clone()));
+    }
+
+    pub fn unselect(&mut self, entity: hecs::Entity) {
+        self.command_buffer.remove_one::<Selected>(entity);
+        self.command_buffer.remove_one::<Outline>(entity);
+    }
+
+    pub fn toggle(&mut self, entity: hecs::Entity) {
+        if let Ok(selected) = self.world.satisfies::<&Selected>(entity) {
+            if selected {
+                self.unselect(entity);
+            }
+            else {
+                self.select(entity);
+            }
+        }
+    }
+}
+
+impl<'a> Drop for SelectionMut<'a> {
+    fn drop(&mut self) {
+        self.command_buffer.run_on(self.world);
+    }
 }

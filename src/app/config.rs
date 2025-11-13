@@ -19,6 +19,10 @@ pub struct AppConfig {
 
     #[serde(default)]
     pub composer: ComposerConfig,
+
+    /// Default solver configs
+    #[serde(default)]
+    pub default_solver_configs: Vec<SolverConfig>,
 }
 
 impl Default for AppConfig {
@@ -26,6 +30,7 @@ impl Default for AppConfig {
         Self {
             recently_opened_files_limit: default_recently_opened_files_limit(),
             composer: Default::default(),
+            default_solver_configs: vec![],
         }
     }
 }
@@ -44,10 +49,6 @@ pub struct ComposerConfig {
 
     #[serde(default)]
     pub views: ViewsConfig,
-
-    /// System solver configs
-    #[serde(default)]
-    pub solvers: Vec<SolverConfig>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
