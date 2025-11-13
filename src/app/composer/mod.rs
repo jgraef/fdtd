@@ -50,6 +50,7 @@ use crate::{
                 PopulateScene,
                 Scene,
                 Transform,
+                serialize::DeserializeEntity,
                 undo::{
                     HadesId,
                     UndoAction,
@@ -714,10 +715,7 @@ impl ComposerState {
             .filter_map(|entity| self.scene.serialize(entity))
             .collect();
 
-        let clipboard = SceneClipboard {
-            tag: "scene-entities",
-            entities,
-        };
+        let clipboard = SceneClipboard::Entities { entities };
 
         // serialize to json
         let json = serde_json::to_vec_pretty(&clipboard).unwrap();
@@ -743,8 +741,18 @@ impl ComposerState {
 
             let decompressed = lz4_flex::decompress_size_prepended(&compressed).unwrap();
 
-            let decompressed_str = str::from_utf8(&decompressed).unwrap();
-            tracing::debug!("todo: deserialize: {decompressed_str}");
+            let clipboard: SceneClipboard<DeserializeEntity> =
+                serde_json::from_slice(&decompressed).unwrap();
+
+            match clipboard {
+                SceneClipboard::Entities { entities } => {
+                    // todo: might want to modify them (positions?)
+                    // todo: might want to spawn them in a temporary world to query them
+                    for mut entity in entities {
+                        self.scene.entities.spawn(entity.entity_builder.build());
+                    }
+                }
+            }
         }
     }
 }
@@ -790,12 +798,12 @@ impl PopulateScene for ExampleScene {
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
 pub struct Selected;
 
-#[derive(Clone, Debug, Serialize)]
-struct SceneClipboard<T, E> {
-    // todo: metadata: timestamp, version, ...
-    pub tag: T,
-    //pub time: DateTime<Utc>,
-    pub entities: Vec<E>,
+#[derive(Serialize, Deserialize)]
+enum SceneClipboard<E> {
+    Entities {
+        // todo: metadata: timestamp, version, ...
+        entities: Vec<E>,
+    },
 }
 
 #[derive(Clone, Copy, derive_more::Debug)]

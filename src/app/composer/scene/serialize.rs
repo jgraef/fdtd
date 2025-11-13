@@ -30,6 +30,24 @@ impl<'a> serde::Serialize for SerializeEntity<'a> {
     }
 }
 
+pub struct DeserializeEntity {
+    pub entity: hecs::Entity,
+    pub entity_builder: hecs::EntityBuilder,
+}
+
+impl<'de> serde::Deserialize<'de> for DeserializeEntity {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let (entity, entity_builder) = global().deserialize(deserializer)?;
+        Ok(Self {
+            entity,
+            entity_builder,
+        })
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct EntitySerializer {
     handlers: Vec<Box<dyn Handler + Send + Sync + 'static>>,
@@ -99,17 +117,12 @@ impl EntitySerializer {
 
     pub fn deserialize<'de, D>(
         &self,
-        entity_builder: &mut hecs::EntityBuilder,
         deserializer: D,
-    ) -> Result<(), D::Error>
+    ) -> Result<(hecs::Entity, hecs::EntityBuilder), D::Error>
     where
         D: serde::Deserializer<'de>,
     {
-        deserializer.deserialize_map(EntityVisitor {
-            handlers: self,
-            entity_builder,
-        })?;
-        Ok(())
+        deserializer.deserialize_map(EntityVisitor::new(self))
     }
 }
 
@@ -172,11 +185,16 @@ where
 
 struct EntityVisitor<'a> {
     handlers: &'a EntitySerializer,
-    entity_builder: &'a mut hecs::EntityBuilder,
+}
+
+impl<'a> EntityVisitor<'a> {
+    pub fn new(handlers: &'a EntitySerializer) -> Self {
+        Self { handlers }
+    }
 }
 
 impl<'a, 'de> serde::de::Visitor<'de> for EntityVisitor<'a> {
-    type Value = ();
+    type Value = (hecs::Entity, hecs::EntityBuilder);
 
     fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
         formatter.write_str("an entity")
@@ -186,19 +204,27 @@ impl<'a, 'de> serde::de::Visitor<'de> for EntityVisitor<'a> {
     where
         A: serde::de::MapAccess<'de>,
     {
+        let mut id = None;
+        let mut entity_builder = hecs::EntityBuilder::new();
+
         while let Some(key) = map.next_key::<&str>()? {
             if key == "id" {
+                id = Some(map.next_value::<u64>()?);
             }
             else if let Some(index) = self.handlers.by_key.get(key) {
                 let handler = &self.handlers.handlers[*index];
                 map.next_value_seed(DeserializeSeedComponent {
                     handler: &**handler,
-                    entity_builder: self.entity_builder,
+                    entity_builder: &mut entity_builder,
                 })?;
             }
         }
 
-        Ok(())
+        let id = id.ok_or_else(|| serde::de::Error::custom("Missing `id` field"))?;
+        let id = hecs::Entity::from_bits(id)
+            .ok_or_else(|| serde::de::Error::custom(format!("Invalid entity id: {}", id)))?;
+
+        Ok((id, entity_builder))
     }
 }
 
