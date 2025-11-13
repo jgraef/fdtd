@@ -16,9 +16,9 @@ use crate::app::composer::{
         Label,
         PopulateScene,
         Scene,
-        SharedShape,
-        Transform,
         collisions::Collides,
+        shape::SharedShape,
+        transform::Transform,
     },
 };
 

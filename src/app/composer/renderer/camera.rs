@@ -31,7 +31,7 @@ use crate::app::composer::{
         ClearColor,
         light::CameraLightFilter,
     },
-    scene::Transform,
+    scene::transform::Transform,
 };
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]

@@ -1,5 +1,7 @@
 pub mod collisions;
 pub mod serialize;
+pub mod shape;
+pub mod transform;
 pub mod undo;
 
 use std::{
@@ -9,29 +11,16 @@ use std::{
         Display,
     },
     marker::PhantomData,
-    ops::Deref,
-    sync::Arc,
 };
 
 use nalgebra::{
-    Isometry3,
-    Point3,
-    Translation3,
-    UnitQuaternion,
     Vector2,
     Vector3,
 };
 use parry3d::{
     bounding_volume::Aabb,
-    math::UnitVector,
     query::Ray,
-    shape::{
-        Ball,
-        Cuboid,
-        Cylinder,
-        HalfSpace,
-        TriMesh,
-    },
+    shape::HalfSpace,
 };
 use serde::{
     Deserialize,
@@ -43,10 +32,6 @@ use crate::app::composer::{
         Render,
         grid::GridPlane,
         light::Material,
-        mesh::{
-            SurfaceMesh,
-            WindingOrder,
-        },
     },
     scene::{
         collisions::{
@@ -57,6 +42,8 @@ use crate::app::composer::{
             merge_aabbs,
         },
         serialize::SerializeEntity,
+        shape::SharedShape,
+        transform::Transform,
     },
     tree::ShowInTree,
 };
@@ -180,212 +167,6 @@ impl Scene {
 
     pub fn serialize(&self, entity: hecs::Entity) -> Option<SerializeEntity<'_>> {
         self.entities.entity(entity).ok().map(SerializeEntity::new)
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct SharedShape(pub Arc<dyn Shape>);
-
-impl<S: Shape> From<S> for SharedShape {
-    fn from(value: S) -> Self {
-        Self(Arc::new(value))
-    }
-}
-
-impl Deref for SharedShape {
-    type Target = dyn Shape;
-
-    fn deref(&self) -> &Self::Target {
-        &*self.0
-    }
-}
-
-impl Serialize for SharedShape {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        self.0.as_typed_shape().serialize(serializer)
-    }
-}
-
-// todo: add a method to use parry's to_outline methods. these generate outlines
-// that are probably nicer for our "wiremesh" rendering
-//
-// we also need a way to control parameters for the to_trimesh functions. i
-// think we should put a config with these parameters into the renderer, and
-// it'll pass the whole config to the trait method. the trait impls can then
-// choose what to use.
-pub trait Shape: Debug + Send + Sync + parry3d::shape::Shape + 'static {
-    /// Generate surface mesh.
-    ///
-    /// At the moment this is only used for rendering. If an entity has the
-    /// [`Render`] tag and a [`SharedShape`], the renderer will generate a mesh
-    /// for it and send it to the GPU. If this method returns `None` though, the
-    /// [`Render`] tag will be removed.
-    fn to_surface_mesh(&self) -> Option<SurfaceMesh>;
-}
-
-/// according to the [documentation][1] the tri mesh should be wound
-/// counter-clockwise.
-///
-/// [1]: https://docs.rs/parry3d/latest/parry3d/shape/struct.TriMesh.html#method.new
-pub const PARRY_WINDING_ORDER: WindingOrder = WindingOrder::CounterClockwise;
-
-impl Shape for Ball {
-    fn to_surface_mesh(&self) -> Option<SurfaceMesh> {
-        let (vertices, indices) = self.to_trimesh(20, 20);
-        Some(SurfaceMesh {
-            vertices,
-            indices,
-            winding_order: PARRY_WINDING_ORDER,
-        })
-    }
-}
-
-impl Shape for Cuboid {
-    fn to_surface_mesh(&self) -> Option<SurfaceMesh> {
-        let (vertices, indices) = self.to_trimesh();
-        Some(SurfaceMesh {
-            vertices,
-            indices,
-            winding_order: PARRY_WINDING_ORDER,
-        })
-    }
-}
-
-impl Shape for HalfSpace {
-    fn to_surface_mesh(&self) -> Option<SurfaceMesh> {
-        None
-    }
-}
-
-impl Shape for Cylinder {
-    fn to_surface_mesh(&self) -> Option<SurfaceMesh> {
-        let (vertices, indices) = self.to_trimesh(20);
-        Some(SurfaceMesh {
-            vertices,
-            indices,
-            winding_order: PARRY_WINDING_ORDER,
-        })
-    }
-}
-
-impl Shape for TriMesh {
-    fn to_surface_mesh(&self) -> Option<SurfaceMesh> {
-        Some(SurfaceMesh {
-            vertices: self.vertices().to_owned(),
-            indices: self.indices().to_owned(),
-            winding_order: PARRY_WINDING_ORDER,
-        })
-    }
-}
-
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
-pub struct Transform {
-    /// Rotation followed by translation that transforms points from the
-    /// object's local frame to the global frame.
-    pub transform: Isometry3<f32>,
-}
-
-impl Default for Transform {
-    fn default() -> Self {
-        Self::identity()
-    }
-}
-
-impl Transform {
-    pub fn identity() -> Self {
-        Self {
-            transform: Isometry3::identity(),
-        }
-    }
-
-    pub fn new(
-        translation: impl Into<Translation3<f32>>,
-        rotation: impl Into<UnitQuaternion<f32>>,
-    ) -> Self {
-        Self {
-            transform: Isometry3::from_parts(translation.into(), rotation.into()),
-        }
-    }
-
-    pub fn translate_local(&mut self, translation: &Translation3<f32>) {
-        self.transform.translation.vector += self
-            .transform
-            .rotation
-            .transform_vector(&translation.vector);
-    }
-
-    pub fn translate_global(&mut self, translation: &Translation3<f32>) {
-        self.transform.translation.vector += &translation.vector;
-    }
-
-    pub fn rotate_local(&mut self, rotation: &UnitQuaternion<f32>) {
-        self.transform.rotation *= rotation;
-    }
-
-    pub fn rotate_global(&mut self, rotation: &UnitQuaternion<f32>) {
-        self.transform.append_rotation_mut(rotation);
-    }
-
-    pub fn rotate_around(&mut self, anchor: &Point3<f32>, rotation: &UnitQuaternion<f32>) {
-        self.transform
-            .append_rotation_wrt_point_mut(rotation, anchor);
-    }
-
-    pub fn look_at(eye: &Point3<f32>, target: &Point3<f32>, up: &Vector3<f32>) -> Self {
-        Self {
-            transform: Isometry3::face_towards(eye, target, up),
-        }
-    }
-
-    /// Pan and tilt object (e.g. a camera) with a given `up` vector.
-    ///
-    /// Pan is the horizontal turning. Tilt is the vertical turning.
-    pub fn pan_tilt(&mut self, pan: f32, tilt: f32, up: &Vector3<f32>) {
-        let local_up =
-            UnitVector::new_normalize(self.transform.rotation.inverse_transform_vector(up));
-        let local_right = Vector3::x_axis();
-
-        let rotation = UnitQuaternion::from_axis_angle(&local_up, -pan)
-            * UnitQuaternion::from_axis_angle(&local_right, tilt);
-
-        self.transform.rotation *= rotation;
-    }
-
-    pub fn position(&self) -> Point3<f32> {
-        self.transform.translation.vector.into()
-    }
-}
-
-impl From<Isometry3<f32>> for Transform {
-    fn from(value: Isometry3<f32>) -> Self {
-        Self { transform: value }
-    }
-}
-
-impl From<Translation3<f32>> for Transform {
-    fn from(value: Translation3<f32>) -> Self {
-        Self::from(Isometry3::from(value))
-    }
-}
-
-impl From<Vector3<f32>> for Transform {
-    fn from(value: Vector3<f32>) -> Self {
-        Self::from(Isometry3::from(value))
-    }
-}
-
-impl From<Point3<f32>> for Transform {
-    fn from(value: Point3<f32>) -> Self {
-        Self::from(value.coords)
-    }
-}
-
-impl From<UnitQuaternion<f32>> for Transform {
-    fn from(value: UnitQuaternion<f32>) -> Self {
-        Self::from(Isometry3::from_parts(Default::default(), value))
     }
 }
 

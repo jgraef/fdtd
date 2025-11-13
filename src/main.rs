@@ -26,10 +26,7 @@ use dotenvy::dotenv;
 use tracing_subscriber::EnvFilter;
 
 use crate::{
-    app::{
-        config::AppConfig,
-        start::CreateApp,
-    },
+    app::config::AppConfig,
     file_formats::nec::NecFile,
 };
 
@@ -46,8 +43,12 @@ fn main() -> Result<(), Error> {
         Command::Main(args) => {
             args.run()?;
         }
-        Command::Fdtd(args) => {
-            args.run()?;
+        Command::Fdtd => {
+            eframe::run_native(
+                "fdtd",
+                Default::default(),
+                Box::new(|_cc| Ok(Box::new(crate::fdtd::App::new()))),
+            )?;
         }
         Command::ReadNec { file } => {
             let reader = BufReader::new(File::open(&file)?);
@@ -83,7 +84,7 @@ struct Args {
 enum Command {
     // the main app, the other's are just temporary for testing purposes
     Main(crate::app::args::Args),
-    Fdtd(fdtd::Args),
+    Fdtd,
     ReadNec {
         file: PathBuf,
     },

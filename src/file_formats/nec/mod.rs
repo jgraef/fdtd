@@ -26,7 +26,7 @@ use crate::{
         scene::{
             PopulateScene,
             Scene,
-            Transform,
+            transform::Transform,
         },
     },
     file_formats::nec::{

@@ -277,12 +277,12 @@ mod register_global {
         },
         scene::{
             Label,
-            Transform,
             collisions::{
                 BoundingBox,
                 Collides,
             },
             serialize::EntitySerializer,
+            transform::Transform,
         },
         tree::ShowInTree,
     };

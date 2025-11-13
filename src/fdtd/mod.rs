@@ -39,23 +39,17 @@ use nalgebra::{
     Vector3,
 };
 
-use crate::{
-    app::start::{
-        CreateApp,
-        CreateAppContext,
+use crate::fdtd::{
+    executor::Executor,
+    geometry::Block,
+    material::Material,
+    simulation::{
+        Axis,
+        PhysicalConstants,
+        Resolution,
+        Simulation,
     },
-    fdtd::{
-        executor::Executor,
-        geometry::Block,
-        material::Material,
-        simulation::{
-            Axis,
-            PhysicalConstants,
-            Resolution,
-            Simulation,
-        },
-        source::GaussianPulse,
-    },
+    source::GaussianPulse,
 };
 
 #[derive(Debug)]
@@ -66,7 +60,7 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(_context: CreateAppContext, _args: Args) -> Self {
+    pub fn new() -> Self {
         //let physical_constants = PhysicalConstants::SI;
         let physical_constants = PhysicalConstants::REDUCED;
 
@@ -242,16 +236,5 @@ impl eframe::App for App {
                 ))
             });
         });
-    }
-}
-
-#[derive(Debug, clap::Parser)]
-pub struct Args {}
-
-impl CreateApp for Args {
-    type App = App;
-
-    fn create_app(self, context: CreateAppContext) -> Self::App {
-        App::new(context, self)
     }
 }

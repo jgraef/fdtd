@@ -49,8 +49,8 @@ use crate::{
                 Label,
                 PopulateScene,
                 Scene,
-                Transform,
                 serialize::DeserializeEntity,
+                transform::Transform,
                 undo::{
                     HadesId,
                     UndoAction,

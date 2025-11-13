@@ -3,7 +3,7 @@ use std::ops::Range;
 use nalgebra::Point3;
 use wgpu::util::DeviceExt;
 
-use crate::app::composer::scene::Shape;
+use crate::app::composer::scene::shape::Shape;
 
 #[derive(Clone, Debug)]
 pub struct Mesh {

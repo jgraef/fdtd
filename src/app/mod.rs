@@ -35,7 +35,6 @@ use serde::{
 
 use crate::{
     app::{
-        args::Args,
         composer::{
             Composer,
             ComposerState,
@@ -61,19 +60,10 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(context: CreateAppContext, args: Args) -> Self {
+    pub fn new(context: CreateAppContext) -> Self {
         tracing::info!(?context.app_files);
 
         let mut error_dialog = ErrorDialog::default();
-
-        // read config
-        let config = context
-            .app_files
-            .read_config_or_create::<AppConfig>()
-            .unwrap_or_else(|error| {
-                error_dialog.display_error(error);
-                Default::default()
-            });
 
         // modify egui styles
         context.egui_context.all_styles_mut(|style| {
@@ -90,27 +80,27 @@ impl App {
         // create composer ui
         let mut composer = Composer::new(&context.wgpu_context);
 
-        if args.new_file {
+        if context.args.new_file {
             // command line telling us to directly go to a new file
-            composer.new_file(&config);
+            composer.new_file(&context.config);
         }
-        else if let Some(path) = &args.file {
+        else if let Some(path) = &context.args.file {
             // if a file was passed via command line argument, open it
 
             RecentlyOpenedFiles::insert(
                 &context.egui_context,
                 path,
-                config.recently_opened_files_limit,
+                context.config.recently_opened_files_limit,
             );
 
             composer
-                .open_file(&config, path)
+                .open_file(&context.config, path)
                 .unwrap_or_else(|error| error_dialog.display_error(error));
         }
 
         Self {
             app_files: context.app_files,
-            config,
+            config: context.config,
             composer,
             file_dialog,
             show_about: false,

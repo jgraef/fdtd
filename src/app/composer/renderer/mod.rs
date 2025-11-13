@@ -56,8 +56,8 @@ use crate::app::composer::{
         Changed,
         Label,
         Scene,
-        SharedShape,
-        Transform,
+        shape::SharedShape,
+        transform::Transform,
     },
 };
 
@@ -96,7 +96,7 @@ pub struct WgpuContext {
 pub struct RendererConfig {
     pub target_texture_format: wgpu::TextureFormat,
     pub depth_texture_format: Option<wgpu::TextureFormat>,
-    pub multisample_count: u32,
+    pub multisample_count: NonZero<u32>,
 }
 
 /// # Notes
@@ -656,7 +656,7 @@ impl Pipeline {
                         },
                     ),
                     multisample: wgpu::MultisampleState {
-                        count: wgpu_context.renderer_config.multisample_count,
+                        count: wgpu_context.renderer_config.multisample_count.get(),
                         mask: !0,
                         alpha_to_coverage_enabled: false,
                     },

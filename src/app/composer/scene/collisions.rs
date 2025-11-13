@@ -15,8 +15,8 @@ use serde::{
 
 use crate::app::composer::scene::{
     Changed,
-    SharedShape,
-    Transform,
+    shape::SharedShape,
+    transform::Transform,
 };
 
 #[derive(derive_more::Debug, Default)]

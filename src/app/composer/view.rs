@@ -18,7 +18,7 @@ use crate::app::composer::{
     scene::{
         Changed,
         Scene,
-        Transform,
+        transform::Transform,
     },
 };
 
