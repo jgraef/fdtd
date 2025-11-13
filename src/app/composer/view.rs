@@ -117,6 +117,12 @@ impl<'a> SceneView<'a> {
                                 ));
                             }
                         }
+                        egui::Event::Zoom(zoom) => {
+                            tracing::debug!(?zoom, "todo: scene view zoom event");
+                        }
+                        egui::Event::Rotate(rotation) => {
+                            tracing::debug!(?rotation, "todo: scene view rotation event");
+                        }
                         _ => {}
                     }
                 }

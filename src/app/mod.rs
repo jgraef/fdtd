@@ -1,4 +1,5 @@
 pub mod args;
+pub mod clipboard;
 pub mod composer;
 pub mod config;
 pub mod files;
@@ -480,6 +481,21 @@ impl eframe::App for App {
                         } => {
                             self.save_screenshot(image)
                                 .unwrap_or_else(|error| self.error_dialog.display_error(error));
+                        }
+                        egui::Event::Copy => {
+                            // todo: ctx is probably locked
+                            //self.composer
+                            //    .with_selected(|state, selection|
+                            // state.copy(ctx, selection));
+                        }
+                        egui::Event::Cut => {
+                            //self.composer.with_selected(ComposerState::cut);
+                            // todo
+                        }
+                        egui::Event::Paste(_text) => {
+                            //if let Some(state) = &mut self.composer.state {
+                            //    //state.paste(text);
+                            //}
                         }
                         _ => {}
                     }

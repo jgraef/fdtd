@@ -57,7 +57,7 @@ pub struct ViewsConfig {
     pub view_3d: View3dConfig,
 
     #[serde(default)]
-    pub outline: Outline,
+    pub selection_outline: Outline,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

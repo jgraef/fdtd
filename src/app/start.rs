@@ -14,6 +14,7 @@ use egui_wgpu::{
 };
 
 use crate::app::{
+    clipboard::EguiClipboardPlugin,
     composer::renderer::{
         RendererConfig,
         WgpuContext,
@@ -161,6 +162,9 @@ pub trait CreateApp: Sized {
                 cc.egui_ctx.data_mut(|data| {
                     data.insert_temp(egui::Id::NULL, wgpu_context.clone());
                 });
+
+                // add our custom clipboard extension
+                cc.egui_ctx.add_plugin(EguiClipboardPlugin);
 
                 let create_app_context = CreateAppContext {
                     wgpu_context,

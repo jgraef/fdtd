@@ -640,7 +640,7 @@ impl ComposerState {
         SelectionMut {
             world: &mut self.scene.entities,
             command_buffer: &mut self.command_buffer,
-            outline: &self.config.views.outline,
+            outline: &self.config.views.selection_outline,
         }
     }
 
