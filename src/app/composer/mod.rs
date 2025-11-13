@@ -14,10 +14,7 @@ use std::{
     },
 };
 
-use chrono::{
-    DateTime,
-    Utc,
-};
+use base64::engine::Engine;
 use color_eyre::eyre::bail;
 use egui::RichText;
 use nalgebra::{
@@ -362,6 +359,36 @@ impl ComposerState {
         self.scene.prepare();
         renderer.prepare_world(&mut self.scene);
 
+        {
+            let mut copy = false;
+            let mut cut = false;
+            let mut paste = None;
+
+            ctx.input(|input| {
+                for event in &input.events {
+                    match event {
+                        egui::Event::Copy => copy = true,
+                        egui::Event::Cut => cut = true,
+                        egui::Event::Paste(text) if paste.is_none() => paste = Some(text.clone()),
+                        _ => {}
+                    }
+                }
+            });
+
+            if copy || cut {
+                let selection = self.selection().entities();
+                if !selection.is_empty() {
+                    self.copy(ctx, selection.iter().copied());
+                    if cut {
+                        self.delete(selection);
+                    }
+                }
+            }
+            if let Some(text) = paste {
+                self.paste(&text);
+            }
+        }
+
         // left panel: shows object tree
         egui::SidePanel::left(egui::Id::new("left_panel"))
             .resizable(true)
@@ -480,7 +507,8 @@ impl ComposerState {
             ui.separator();
 
             if ui.button("Cut").clicked() {
-                self.cut([entity]);
+                self.copy(ui.ctx(), [entity]);
+                self.delete([entity]);
             }
 
             if ui.button("Copy").clicked() {
@@ -676,16 +704,48 @@ impl ComposerState {
             .push_undo(UndoAction::DeleteEntity { hades_ids });
     }
 
-    pub fn cut(&mut self, _entities: impl IntoIterator<Item = hecs::Entity>) {
-        // todo: send to handes while serializing into buffer
-        tracing::debug!("todo");
+    pub fn copy(&mut self, ctx: &egui::Context, entities: impl IntoIterator<Item = hecs::Entity>) {
+        // this is rather hacky, doesn't use our local buffer/clipboard extension and
+        // pollutes the OS clipboard.
+        // todo: error handling
+
+        let entities = entities
+            .into_iter()
+            .filter_map(|entity| self.scene.serialize(entity))
+            .collect();
+
+        let clipboard = SceneClipboard {
+            tag: "scene-entities",
+            entities,
+        };
+
+        // serialize to json
+        let json = serde_json::to_vec_pretty(&clipboard).unwrap();
+
+        // compress (lz4)
+        let compressed = lz4_flex::compress_prepend_size(&json);
+
+        // base64 encode into data url
+        let mut encoded = CLIPBOARD_PREFIX.to_owned();
+        base64::engine::general_purpose::URL_SAFE.encode_string(&compressed, &mut encoded);
+
+        // send to OS clipboard
+        tracing::debug!("copying entities to clipboard: {} bytes", encoded.len());
+        ctx.copy_text(encoded);
     }
 
-    pub fn copy(&mut self, _ctx: &egui::Context, entities: impl IntoIterator<Item = hecs::Entity>) {
-        // todo: error handling
-        let json = entities_to_json(&self.scene, entities).unwrap();
-        //ctx.copy
-        println!("{json}");
+    pub fn paste(&mut self, text: &str) {
+        if let Some(encoded) = text.strip_prefix(CLIPBOARD_PREFIX) {
+            let mut compressed = Vec::with_capacity(encoded.len());
+            base64::engine::general_purpose::URL_SAFE
+                .decode_vec(encoded, &mut compressed)
+                .unwrap();
+
+            let decompressed = lz4_flex::decompress_size_prepended(&compressed).unwrap();
+
+            let decompressed_str = str::from_utf8(&decompressed).unwrap();
+            tracing::debug!("todo: deserialize: {decompressed_str}");
+        }
     }
 }
 
@@ -731,27 +791,11 @@ impl PopulateScene for ExampleScene {
 pub struct Selected;
 
 #[derive(Clone, Debug, Serialize)]
-struct SceneClipboard<E> {
+struct SceneClipboard<T, E> {
+    // todo: metadata: timestamp, version, ...
+    pub tag: T,
+    //pub time: DateTime<Utc>,
     pub entities: Vec<E>,
-    pub time: DateTime<Utc>,
-    // todo: other metadata
-}
-
-fn entities_to_json(
-    scene: &Scene,
-    entities: impl IntoIterator<Item = hecs::Entity>,
-) -> Result<String, Error> {
-    let entities = entities
-        .into_iter()
-        .filter_map(|entity| scene.serialize(entity))
-        .collect();
-
-    let clipboard = SceneClipboard {
-        entities,
-        time: Utc::now(),
-    };
-
-    Ok(serde_json::to_string_pretty(&clipboard)?)
 }
 
 #[derive(Clone, Copy, derive_more::Debug)]
@@ -787,6 +831,8 @@ impl<'a> Selection<'a> {
         self.with_query_iter::<(), _>(|selected| selected.map(|(entity, ())| entity).collect())
     }
 }
+
+pub const CLIPBOARD_PREFIX: &'static str = "data:application/x-fdtd;base64,";
 
 #[derive(derive_more::Debug)]
 pub struct SelectionMut<'a> {
