@@ -20,6 +20,10 @@ use parry3d::{
     bounding_volume::Aabb,
     query::Ray,
 };
+use serde::{
+    Deserialize,
+    Serialize,
+};
 use wgpu::util::DeviceExt;
 
 use crate::app::composer::{
@@ -30,7 +34,7 @@ use crate::app::composer::{
     scene::Transform,
 };
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct CameraProjection {
     // note: not public because nalgebra seems to have the z-axis inverted relative to our
     // coordinate systems
@@ -222,7 +226,7 @@ impl CameraData {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct CameraConfig {
     pub show_solid: bool,
     pub show_wireframe: bool,

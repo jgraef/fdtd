@@ -23,6 +23,10 @@ use palette::{
     Srgb,
     Srgba,
 };
+use serde::{
+    Deserialize,
+    Serialize,
+};
 
 use crate::app::composer::{
     renderer::{
@@ -58,12 +62,12 @@ use crate::app::composer::{
 };
 
 /// Tag for entities that should be rendered
-#[derive(Copy, Clone, Debug, Default)]
+#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Render;
 
 // todo: respect eguis theme. we might just pass this in from the view when
 // rendering and remove this component.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct ClearColor {
     pub clear_color: Srgb,
 }
@@ -887,7 +891,7 @@ fn allocate_instance_buffer<T>(
     })
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct Outline {
     pub color: Srgba,
     pub thickness: f32,

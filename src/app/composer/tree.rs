@@ -94,7 +94,7 @@ impl ComposerState {
 }
 
 /// Tag for entities that are to be shown in the object tree
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
 pub struct ShowInTree;
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]

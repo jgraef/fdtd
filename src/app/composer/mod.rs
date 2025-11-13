@@ -14,6 +14,10 @@ use std::{
     },
 };
 
+use chrono::{
+    DateTime,
+    Utc,
+};
 use color_eyre::eyre::bail;
 use egui::RichText;
 use nalgebra::{
@@ -23,6 +27,10 @@ use nalgebra::{
     UnitQuaternion,
     Vector2,
     Vector3,
+};
+use serde::{
+    Deserialize,
+    Serialize,
 };
 
 use crate::{
@@ -371,7 +379,12 @@ impl ComposerState {
     }
 
     pub fn context_menu(&mut self, response: &egui::Response) {
+        // todo: make this context menu work for the tree
+
         if response.secondary_clicked() {
+            // if the clicked entity is in the selection, we might want to treat have to
+            // context menu being about all objects
+
             self.context_menu_object = self
                 .scene_pointer
                 .entity_under_pointer
@@ -388,11 +401,11 @@ impl ComposerState {
             ui.separator();
 
             if ui.button("Cut").clicked() {
-                tracing::debug!("todo: cut");
+                self.cut([entity]);
             }
 
             if ui.button("Copy").clicked() {
-                tracing::debug!("todo: cut");
+                self.copy(ui.ctx(), [entity]);
             }
 
             if ui.button("Paste").clicked() {
@@ -404,6 +417,8 @@ impl ComposerState {
             if ui.button("Delete").clicked() {
                 self.delete([entity]);
             }
+
+            ui.separator();
 
             if ui.button("Properties").clicked() {
                 tracing::debug!("todo: properties");
@@ -584,6 +599,8 @@ impl ComposerState {
         entities
             .into_iter()
             .filter_map(|entity| {
+                // removes selection from to-be-removed entity. thus when the delete/cut is
+                // undone, it isn't auto-selected. not sure what is a good behavior.
                 let _ = self.scene.entities.remove_one::<Outline>(entity);
                 let _ = self.scene.entities.remove_one::<Selected>(entity);
 
@@ -611,9 +628,11 @@ impl ComposerState {
         tracing::debug!("todo");
     }
 
-    pub fn copy(&mut self, _entities: impl IntoIterator<Item = hecs::Entity>) {
-        // just serialize into buffer. no need for undo
-        tracing::debug!("todo");
+    pub fn copy(&mut self, _ctx: &egui::Context, entities: impl IntoIterator<Item = hecs::Entity>) {
+        // todo: error handling
+        let json = entities_to_json(&self.scene, entities).unwrap();
+        //ctx.copy
+        println!("{json}");
     }
 }
 
@@ -655,5 +674,29 @@ impl PopulateScene for ExampleScene {
 }
 
 /// Tag for entities that are selected.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
 pub struct Selected;
+
+#[derive(Clone, Debug, Serialize)]
+struct SceneClipboard<E> {
+    pub entities: Vec<E>,
+    pub time: DateTime<Utc>,
+    // todo: other metadata
+}
+
+fn entities_to_json(
+    scene: &Scene,
+    entities: impl IntoIterator<Item = hecs::Entity>,
+) -> Result<String, Error> {
+    let entities = entities
+        .into_iter()
+        .filter_map(|entity| scene.serialize(entity))
+        .collect();
+
+    let clipboard = SceneClipboard {
+        entities,
+        time: Utc::now(),
+    };
+
+    Ok(serde_json::to_string_pretty(&clipboard)?)
+}

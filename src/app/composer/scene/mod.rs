@@ -1,4 +1,5 @@
 pub mod collisions;
+pub mod serialize;
 pub mod undo;
 
 use std::{
@@ -32,6 +33,10 @@ use parry3d::{
         TriMesh,
     },
 };
+use serde::{
+    Deserialize,
+    Serialize,
+};
 
 use crate::app::composer::{
     renderer::{
@@ -51,12 +56,15 @@ use crate::app::composer::{
             WindingOrder,
         },
     },
-    scene::collisions::{
-        BoundingBox,
-        Collides,
-        OctTree,
-        RayHit,
-        merge_aabbs,
+    scene::{
+        collisions::{
+            BoundingBox,
+            Collides,
+            OctTree,
+            RayHit,
+            merge_aabbs,
+        },
+        serialize::SerializeEntity,
     },
     tree::ShowInTree,
 };
@@ -189,6 +197,10 @@ impl Scene {
         self.octtree.remove(entity, &mut self.entities);
         self.entities.take(entity).ok()
     }
+
+    pub fn serialize(&self, entity: hecs::Entity) -> Option<SerializeEntity<'_>> {
+        self.entities.entity(entity).ok().map(SerializeEntity::new)
+    }
 }
 
 #[derive(Debug)]
@@ -211,6 +223,15 @@ impl Deref for SharedShape {
 
     fn deref(&self) -> &Self::Target {
         &*self.0
+    }
+}
+
+impl Serialize for SharedShape {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        self.0.as_typed_shape().serialize(serializer)
     }
 }
 
@@ -286,7 +307,7 @@ impl Shape for TriMesh {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct Transform {
     /// Rotation followed by translation that transforms points from the
     /// object's local frame to the global frame.
@@ -414,7 +435,7 @@ impl<T> Clone for Changed<T> {
 
 impl<T> Copy for Changed<T> {}
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Label {
     pub label: Cow<'static, str>,
 }

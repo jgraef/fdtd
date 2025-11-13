@@ -8,6 +8,10 @@ use parry3d::{
     partitioning as bvh,
     query::Ray,
 };
+use serde::{
+    Deserialize,
+    Serialize,
+};
 
 use crate::app::composer::scene::{
     Changed,
@@ -118,7 +122,7 @@ struct LeafIndex {
     index: u32,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct BoundingBox {
     pub aabb: Aabb,
 }
@@ -130,7 +134,7 @@ pub struct RayHit {
 }
 
 /// Tag for things that have collisions
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct Collides;
 
 /// Helper to merge an iterator of AABBs

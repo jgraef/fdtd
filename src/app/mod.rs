@@ -235,7 +235,8 @@ impl App {
                 .add_enabled(has_selected, egui::Button::new("Copy"))
                 .clicked()
             {
-                self.composer.with_selected(ComposerState::copy);
+                self.composer
+                    .with_selected(|state, entities| state.copy(ui.ctx(), entities));
             }
 
             if ui.button("Paste").clicked() {
