@@ -1,3 +1,5 @@
+//! TODO: move this. definitely doesn't belong into the composer
+
 use serde::{
     Deserialize,
     Serialize,

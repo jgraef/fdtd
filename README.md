@@ -7,8 +7,6 @@ This app is work-in-progress. It's intended to model electromagnetic behavior. I
  - PRs for `egui_ltreeview`
  - try `egui_probe` for entity/component and settings UI
   - camera (and light) config ui
- - select all, clear selection
- - move menubar into separate module
  - manipulating objects: movement, other properties in window
  - persist settings like `CameraConfig`, `CameraLightFilters` (global or per project?)
  - render wiremesh without the `POLYGON_MODE_LINE` feature. Use `PrimitiveTopology::LineList` instead.
