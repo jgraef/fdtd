@@ -162,13 +162,13 @@ impl<'a> MenuBar<'a> {
                 .add_enabled(can_undo, egui::Button::new("Undo"))
                 .clicked()
             {
-                self.app.composer.expect_state_mut().undo();
+                self.app.composer.state.as_mut().unwrap().undo();
             }
             if ui
                 .add_enabled(can_redo, egui::Button::new("Redo"))
                 .clicked()
             {
-                self.app.composer.expect_state_mut().redo();
+                self.app.composer.state.as_mut().unwrap().redo();
             }
 
             ui.separator();
@@ -253,14 +253,19 @@ impl<'a> MenuBar<'a> {
         ui.menu_button("View", |ui| {
             self.setup_menu(ui);
 
-            let has_file_open = self.app.composer.has_file_open();
-
             // note: right now this could all live directly in the view menu, but we will
             // eventually have multiple views/cameras.
             // todo: can we disable the whole menu
             ui.menu_button("Camera", |ui| {
                 self.setup_menu(ui);
 
+                let mut camera = self
+                    .app
+                    .composer
+                    .state
+                    .as_mut()
+                    .map(|state| state.camera_mut());
+                let has_file_open = camera.is_some();
                 let fit_camera_margin = Vector2::zeros();
 
                 if ui
@@ -268,10 +273,7 @@ impl<'a> MenuBar<'a> {
                     .on_hover_text("Turn camera towards center of scene")
                     .clicked()
                 {
-                    self.app
-                        .composer
-                        .expect_state_mut()
-                        .point_camera_to_scene_center();
+                    camera.as_mut().unwrap().point_to_scene_center();
                 }
 
                 if ui
@@ -279,10 +281,7 @@ impl<'a> MenuBar<'a> {
                     .on_hover_text("Move camera forward/back until it fits the scene.")
                     .clicked()
                 {
-                    self.app
-                        .composer
-                        .expect_state_mut()
-                        .fit_camera_to_scene(&fit_camera_margin);
+                    camera.as_mut().unwrap().fit_to_scene(&fit_camera_margin);
                 }
 
                 let mut fit_camera_along_axis_button = |axis, up, axis_label, tooltip| {
@@ -294,10 +293,11 @@ impl<'a> MenuBar<'a> {
                         .on_hover_text(tooltip)
                         .clicked()
                     {
-                        self.app
-                            .composer
-                            .expect_state_mut()
-                            .fit_camera_to_scene_looking_along_axis(&axis, &up, &fit_camera_margin);
+                        camera.as_mut().unwrap().fit_to_scene_looking_along_axis(
+                            &axis,
+                            &up,
+                            &fit_camera_margin,
+                        );
                     }
                 };
 
@@ -341,10 +341,9 @@ impl<'a> MenuBar<'a> {
                 ui.separator();
 
                 let mut dummy = CameraConfig::default();
-                let camera_config = self
-                    .app
-                    .composer
-                    .camera_mut::<&mut CameraConfig>()
+                let camera_config = camera
+                    .as_mut()
+                    .and_then(|camera| camera.query::<&mut CameraConfig>())
                     .unwrap_or(&mut dummy);
 
                 ui.add_enabled(

@@ -141,7 +141,7 @@ impl Composer {
 
                     state.solver_configs = app_config.default_solver_configs.clone();
                     state.path = Some(path.to_owned());
-                    state.fit_camera_to_scene(&Default::default());
+                    state.camera_mut().fit_to_scene(&Default::default());
 
                     self.state = Some(state);
                 }
@@ -166,41 +166,6 @@ impl Composer {
     /// Check if we need to save and prompt user for it.
     pub fn close_file(&mut self) {
         self.state = None;
-    }
-
-    /// Useful for actions from UI elements outside the compose (e.g. the menu
-    /// bar), and we already checked that a file is open (e.g. for disabling a
-    /// button).
-    pub fn expect_state_mut(&mut self) -> &mut ComposerState {
-        self.state.as_mut().expect("no file open")
-    }
-
-    /// Returns the camera.
-    ///
-    /// This runs an arbitrary query against the camera entity.
-    /// Returns `None` if no file is open, or the camera entity doesn't exist
-    /// anymore (which we maybe should treat as a bug).
-    ///
-    /// This can be used to easily modify the camera from outside of the
-    /// composer (e.g. menu bar).
-    ///
-    /// # TODO
-    ///
-    /// Eventually we'll have multiple views/cameras. We could just use an enum
-    /// describing which view we mean, or pass in the camera entity itself.
-    /// Either way we will need a way to iterate over available cameras to e.g.
-    /// construct the camera menu in the menu bar.
-    pub fn camera_mut<'a, Q>(&'a mut self) -> Option<Q::Item<'a>>
-    where
-        Q: hecs::Query,
-    {
-        self.state.as_mut().and_then(|state| {
-            state
-                .scene
-                .entities
-                .query_one_mut::<Q>(state.camera_entity)
-                .ok()
-        })
     }
 
     pub fn with_selected<R>(
@@ -539,111 +504,6 @@ impl ComposerState {
         }
     }
 
-    /// Moves the camera such that it fits the whole scene.
-    ///
-    /// Specifically this only translates the camera. It will be translated (by
-    /// moving backwards) such that it will fit the AABB of the scene. The
-    /// AABB is calculated relative to the camera orientation. The camera will
-    /// also be translated laterally to its view axis to center to the AABB.
-    pub fn fit_camera_to_scene(&mut self, margin: &Vector2<f32>) {
-        // get camera transform and projection
-        // note: we could use another transform if we want to reposition the camera e.g.
-        // along a coordinate axis.
-        let Ok((camera_transform, camera_projection)) = self
-            .scene
-            .entities
-            .query_one_mut::<(&Transform, &CameraProjection)>(self.camera_entity)
-            .map(|(t, p)| (*t, *p))
-        else {
-            return;
-        };
-
-        // compute scene AABB relative to camera
-        let Some(scene_aabb) = self
-            .scene
-            .compute_aabb_relative_to_observer(&camera_transform, false)
-        else {
-            return;
-        };
-
-        // center camera on aabb
-        let mut translation = scene_aabb.center().coords;
-        translation.z -= camera_projection.distance_to_fit_aabb_into_fov(&scene_aabb, margin);
-
-        // apply translation to camera
-        let camera_transform = self
-            .scene
-            .entities
-            .query_one_mut::<&mut Transform>(self.camera_entity)
-            .expect("camera should still exist");
-        camera_transform.translate_local(&Translation3::from(translation));
-    }
-
-    /// Fit the camera to the scene looking along a specified axis.
-    ///
-    /// This is meant to be used along the canonical axis of the scene. It will
-    /// not calculate the scene's AABB as viewed along the axis, but instead
-    /// just rotate the scene's AABB.
-    pub fn fit_camera_to_scene_looking_along_axis(
-        &mut self,
-        axis: &Vector3<f32>,
-        up: &Vector3<f32>,
-        margin: &Vector2<f32>,
-    ) {
-        let Ok((camera_transform, camera_projection)) =
-            self.scene
-                .entities
-                .query_one_mut::<(&mut Transform, &CameraProjection)>(self.camera_entity)
-        else {
-            return;
-        };
-
-        let rotation = UnitQuaternion::face_towards(axis, up);
-
-        let reference_transform = Isometry3::from_parts(Translation3::identity(), rotation);
-
-        let scene_aabb = self
-            .scene
-            .octtree
-            .root_aabb()
-            .transform_by(&reference_transform);
-
-        let distance = camera_projection.distance_to_fit_aabb_into_fov(&scene_aabb, margin);
-
-        let mut transform = Transform::from(Isometry3::from_parts(
-            Translation3::from(scene_aabb.center().coords),
-            rotation,
-        ));
-        transform.translate_local(&Translation3::from(-Vector3::z() * distance));
-
-        *camera_transform = transform;
-    }
-
-    pub fn point_camera_to_scene_center(&mut self) {
-        if let Ok(camera_transform) = self
-            .scene
-            .entities
-            .query_one_mut::<&mut Transform>(self.camera_entity)
-        {
-            let scene_center = self.scene.octtree.root_aabb().center();
-            let eye = camera_transform.position();
-
-            // normally up is always +Y
-            let mut up = Vector3::y();
-
-            // but we need to take into account when we're directly above the scene center
-            const COLLINEAR_THRESHOLD: f32 = 0.01f32.to_radians();
-            if (eye - scene_center).cross(&up).norm_squared() < COLLINEAR_THRESHOLD {
-                // we would be looking straight up or down, so keep the up vector from the
-                // camera
-                up = camera_transform.transform.rotation.transform_vector(&up);
-                tracing::debug!(?eye, ?scene_center, ?up, "looking straight up or down");
-            }
-
-            *camera_transform = Transform::look_at(&eye, &scene_center, &up);
-        }
-    }
-
     pub fn has_undos(&self) -> bool {
         self.undo_buffer.has_undos()
     }
@@ -671,6 +531,14 @@ impl ComposerState {
             world: &mut self.scene.entities,
             command_buffer: &mut self.command_buffer,
             outline: &self.config.views.selection_outline,
+        }
+    }
+
+    /// TODO: Eventually we want a way to select which camera
+    pub fn camera_mut(&mut self) -> CameraMut<'_> {
+        CameraMut {
+            scene: &mut self.scene,
+            camera_entity: self.camera_entity,
         }
     }
 
@@ -920,5 +788,128 @@ impl<'a> SelectionMut<'a> {
 impl<'a> Drop for SelectionMut<'a> {
     fn drop(&mut self) {
         self.command_buffer.run_on(self.world);
+    }
+}
+
+#[derive(derive_more::Debug)]
+pub struct CameraMut<'a> {
+    scene: &'a mut Scene,
+    camera_entity: hecs::Entity,
+}
+
+impl<'a> CameraMut<'a> {
+    /// Moves the camera such that it fits the whole scene.
+    ///
+    /// Specifically this only translates the camera. It will be translated (by
+    /// moving backwards) such that it will fit the AABB of the scene. The
+    /// AABB is calculated relative to the camera orientation. The camera will
+    /// also be translated laterally to its view axis to center to the AABB.
+    pub fn fit_to_scene(&mut self, margin: &Vector2<f32>) {
+        // get camera transform and projection
+        // note: we could use another transform if we want to reposition the camera e.g.
+        // along a coordinate axis.
+        let Ok((camera_transform, camera_projection)) = self
+            .scene
+            .entities
+            .query_one_mut::<(&Transform, &CameraProjection)>(self.camera_entity)
+            .map(|(t, p)| (*t, *p))
+        else {
+            return;
+        };
+
+        // compute scene AABB relative to camera
+        let Some(scene_aabb) = self
+            .scene
+            .compute_aabb_relative_to_observer(&camera_transform, false)
+        else {
+            return;
+        };
+
+        // center camera on aabb
+        let mut translation = scene_aabb.center().coords;
+        translation.z -= camera_projection.distance_to_fit_aabb_into_fov(&scene_aabb, margin);
+
+        // apply translation to camera
+        let camera_transform = self
+            .scene
+            .entities
+            .query_one_mut::<&mut Transform>(self.camera_entity)
+            .expect("camera should still exist");
+        camera_transform.translate_local(&Translation3::from(translation));
+    }
+
+    /// Fit the camera to the scene looking along a specified axis.
+    ///
+    /// This is meant to be used along the canonical axis of the scene. It will
+    /// not calculate the scene's AABB as viewed along the axis, but instead
+    /// just rotate the scene's AABB.
+    pub fn fit_to_scene_looking_along_axis(
+        &mut self,
+        axis: &Vector3<f32>,
+        up: &Vector3<f32>,
+        margin: &Vector2<f32>,
+    ) {
+        let Ok((camera_transform, camera_projection)) =
+            self.scene
+                .entities
+                .query_one_mut::<(&mut Transform, &CameraProjection)>(self.camera_entity)
+        else {
+            return;
+        };
+
+        let rotation = UnitQuaternion::face_towards(axis, up);
+
+        let reference_transform = Isometry3::from_parts(Translation3::identity(), rotation);
+
+        let scene_aabb = self
+            .scene
+            .octtree
+            .root_aabb()
+            .transform_by(&reference_transform);
+
+        let distance = camera_projection.distance_to_fit_aabb_into_fov(&scene_aabb, margin);
+
+        let mut transform = Transform::from(Isometry3::from_parts(
+            Translation3::from(scene_aabb.center().coords),
+            rotation,
+        ));
+        transform.translate_local(&Translation3::from(-Vector3::z() * distance));
+
+        *camera_transform = transform;
+    }
+
+    pub fn point_to_scene_center(&mut self) {
+        if let Ok(camera_transform) = self
+            .scene
+            .entities
+            .query_one_mut::<&mut Transform>(self.camera_entity)
+        {
+            let scene_center = self.scene.octtree.root_aabb().center();
+            let eye = camera_transform.position();
+
+            // normally up is always +Y
+            let mut up = Vector3::y();
+
+            // but we need to take into account when we're directly above the scene center
+            const COLLINEAR_THRESHOLD: f32 = 0.01f32.to_radians();
+            if (eye - scene_center).cross(&up).norm_squared() < COLLINEAR_THRESHOLD {
+                // we would be looking straight up or down, so keep the up vector from the
+                // camera
+                up = camera_transform.transform.rotation.transform_vector(&up);
+                tracing::debug!(?eye, ?scene_center, ?up, "looking straight up or down");
+            }
+
+            *camera_transform = Transform::look_at(&eye, &scene_center, &up);
+        }
+    }
+
+    pub fn query<Q>(&mut self) -> Option<Q::Item<'_>>
+    where
+        Q: hecs::Query,
+    {
+        self.scene
+            .entities
+            .query_one_mut::<Q>(self.camera_entity)
+            .ok()
     }
 }
