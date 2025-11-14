@@ -49,6 +49,7 @@ use crate::{
                 Label,
                 PopulateScene,
                 Scene,
+                collisions::Collides,
                 serialize::DeserializeEntity,
                 transform::Transform,
                 undo::{
@@ -878,6 +879,41 @@ impl<'a> SelectionMut<'a> {
                 self.select(entity);
             }
         }
+    }
+
+    pub fn select_all(&mut self) {
+        // todo: we should add a tag for selectable entities
+        for (entity, ()) in self.world.query_mut::<()>().with::<&Collides>() {
+            self.command_buffer
+                .insert(entity, (Selected, self.outline.clone()));
+        }
+    }
+
+    // not great to replicate all these. is there a better way?
+    pub fn is_empty(&self) -> bool {
+        self.world.query::<()>().with::<&Selected>().iter().len() == 0
+    }
+
+    pub fn query<Q>(&self) -> hecs::QueryBorrow<'_, hecs::With<Q, &Selected>>
+    where
+        Q: hecs::Query,
+    {
+        self.world.query::<Q>().with::<&Selected>()
+    }
+
+    pub fn with_query_iter<Q, R>(
+        &self,
+        f: impl FnOnce(hecs::QueryIter<'_, hecs::With<Q, &Selected>>) -> R,
+    ) -> R
+    where
+        Q: hecs::Query,
+    {
+        let mut query = self.query::<Q>();
+        f(query.iter())
+    }
+
+    pub fn entities(&self) -> Vec<hecs::Entity> {
+        self.with_query_iter::<(), _>(|selected| selected.map(|(entity, ())| entity).collect())
     }
 }
 

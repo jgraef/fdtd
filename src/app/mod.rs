@@ -27,7 +27,10 @@ use egui::{
 };
 use egui_file_dialog::FileDialog;
 use image::RgbaImage;
-use nalgebra::Vector3;
+use nalgebra::{
+    Vector2,
+    Vector3,
+};
 use serde::{
     Deserialize,
     Serialize,
@@ -249,17 +252,53 @@ impl App {
         });
     }
 
+    fn selection_menu(&mut self, ui: &mut egui::Ui) {
+        ui.menu_button("Selection", |ui| {
+            setup_menu(ui);
+
+            let mut selection = self
+                .composer
+                .state
+                .as_mut()
+                .map(|state| state.selection_mut());
+
+            let has_file_open = selection.is_some();
+            let has_anything_selected = selection
+                .as_ref()
+                .map(|selection| !selection.is_empty())
+                .unwrap_or_default();
+
+            if ui
+                .add_enabled(
+                    has_file_open && has_anything_selected,
+                    Button::new("Clear Selection"),
+                )
+                .clicked()
+            {
+                selection.as_mut().unwrap().clear();
+            }
+
+            if ui
+                .add_enabled(has_file_open, Button::new("Select All"))
+                .clicked()
+            {
+                selection.as_mut().unwrap().select_all();
+            }
+        });
+    }
+
     fn view_menu(&mut self, ui: &mut egui::Ui) {
-        let has_file_open = self.composer.has_file_open();
         ui.menu_button("View", |ui| {
             setup_menu(ui);
+
+            let has_file_open = self.composer.has_file_open();
 
             // note: right now this could all live directly in the view menu, but we will
             // eventually have multiple views/cameras.
             ui.menu_button("Camera", |ui| {
                 setup_menu(ui);
 
-                let fit_camera_margin = Default::default();
+                let fit_camera_margin = Vector2::zeros();
 
                 if ui
                     .add_enabled(has_file_open, Button::new("Point Camera to Center"))
@@ -489,9 +528,7 @@ impl eframe::App for App {
             egui::MenuBar::new().ui(ui, |ui| {
                 self.file_menu(ui);
                 self.edit_menu(ui);
-                ui.menu_button("Selection", |ui| {
-                    todo_label(ui);
-                });
+                self.selection_menu(ui);
                 self.view_menu(ui);
                 self.run_menu(ui);
                 self.help_menu(ui);

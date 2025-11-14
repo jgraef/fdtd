@@ -4,13 +4,12 @@ This app is work-in-progress. It's intended to model electromagnetic behavior. I
 
 # TODO
 
- - do we need deferred deletion? it complicates things a lot. try to remove it.
-  - then delete/cut can take the object out of scene immediately and send it to hades and/or serialize it into clipboard
-  - maybe just allow generic on_delete hooks, so e.g. renderer can remove mesh, outline, etc. octtree can remove entity from bvh.
-
- - clicking objects: left-click selects, right-click opens context menu
+ - PRs for `egui_ltreeview`
+ - try `egui_probe` for entity/component and settings UI
+  - camera (and light) config ui
+ - select all, clear selection
+ - move menubar into separate module
  - manipulating objects: movement, other properties in window
- - camera (and light) config ui
  - persist settings like `CameraConfig`, `CameraLightFilters` (global or per project?)
  - render wiremesh without the `POLYGON_MODE_LINE` feature. Use `PrimitiveTopology::LineList` instead.
    Just need to adjust the number of vertices to `2*n` (2 vertices per line, 3 lines per face, versus just the 3 vertices of a normal triangle), and then pull the right vertices in the shader.
