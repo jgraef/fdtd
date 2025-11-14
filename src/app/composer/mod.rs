@@ -49,7 +49,6 @@ use crate::{
                 Label,
                 PopulateScene,
                 Scene,
-                collisions::Collides,
                 serialize::DeserializeEntity,
                 transform::Transform,
                 undo::{
@@ -729,8 +728,14 @@ impl<'a> SelectionMut<'a> {
     }
 
     pub fn select(&mut self, entity: hecs::Entity) {
-        self.command_buffer
-            .insert(entity, (Selected, self.outline.clone()));
+        if self
+            .world
+            .satisfies::<&Selectable>(entity)
+            .unwrap_or_default()
+        {
+            self.command_buffer
+                .insert(entity, (Selected, self.outline.clone()));
+        }
     }
 
     pub fn unselect(&mut self, entity: hecs::Entity) {
@@ -739,19 +744,21 @@ impl<'a> SelectionMut<'a> {
     }
 
     pub fn toggle(&mut self, entity: hecs::Entity) {
-        if let Ok(selected) = self.world.satisfies::<&Selected>(entity) {
-            if selected {
-                self.unselect(entity);
+        if let Ok(entity_ref) = self.world.entity(entity) {
+            if entity_ref.satisfies::<&Selected>() {
+                self.command_buffer.remove_one::<Selected>(entity);
+                self.command_buffer.remove_one::<Outline>(entity);
             }
-            else {
-                self.select(entity);
+            else if entity_ref.satisfies::<&Selectable>() {
+                self.command_buffer
+                    .insert(entity, (Selected, self.outline.clone()));
             }
         }
     }
 
     pub fn select_all(&mut self) {
         // todo: we should add a tag for selectable entities
-        for (entity, ()) in self.world.query_mut::<()>().with::<&Collides>() {
+        for (entity, ()) in self.world.query_mut::<()>().with::<&Selectable>() {
             self.command_buffer
                 .insert(entity, (Selected, self.outline.clone()));
         }
@@ -790,6 +797,9 @@ impl<'a> Drop for SelectionMut<'a> {
         self.command_buffer.run_on(self.world);
     }
 }
+
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
+pub struct Selectable;
 
 #[derive(derive_more::Debug)]
 pub struct CameraMut<'a> {

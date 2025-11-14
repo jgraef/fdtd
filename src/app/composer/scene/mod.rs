@@ -28,6 +28,7 @@ use serde::{
 };
 
 use crate::app::composer::{
+    Selectable,
     renderer::{
         Render,
         grid::GridPlane,
@@ -78,6 +79,7 @@ impl Scene {
             label,
             Collides,
             ShowInTree,
+            Selectable,
         ))
     }
 
