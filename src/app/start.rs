@@ -3,10 +3,7 @@ use std::{
     sync::Arc,
 };
 
-use color_eyre::eyre::{
-    Error,
-    eyre,
-};
+use color_eyre::eyre::Error;
 use eframe::NativeOptions;
 use egui::ViewportBuilder;
 use egui_wgpu::{
@@ -174,7 +171,6 @@ pub(super) fn run_app(args: Args) -> Result<(), Error> {
 
             Ok(Box::new(App::new(create_app_context)))
         }),
-    )
-    .map_err(|e| eyre!("{e}"))?;
+    )?;
     Ok(())
 }

@@ -52,6 +52,15 @@ use crate::fdtd::{
     source::GaussianPulse,
 };
 
+pub fn run_app() -> Result<(), Error> {
+    eframe::run_native(
+        "fdtd",
+        Default::default(),
+        Box::new(|_cc| Ok(Box::new(crate::fdtd::App::new()))),
+    )?;
+    Ok(())
+}
+
 #[derive(Debug)]
 pub struct App {
     ticks_per_second: u64,

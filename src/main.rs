@@ -44,11 +44,7 @@ fn main() -> Result<(), Error> {
             args.run()?;
         }
         Command::Fdtd => {
-            eframe::run_native(
-                "fdtd",
-                Default::default(),
-                Box::new(|_cc| Ok(Box::new(crate::fdtd::App::new()))),
-            )?;
+            fdtd::run_app()?;
         }
         Command::ReadNec { file } => {
             let reader = BufReader::new(File::open(&file)?);
