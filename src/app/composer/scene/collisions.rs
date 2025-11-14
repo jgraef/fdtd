@@ -27,9 +27,6 @@ pub struct OctTree {
 
     #[debug(skip)]
     bvh_workspace: bvh::BvhWorkspace,
-
-    #[debug(skip)]
-    command_buffer: hecs::CommandBuffer,
 }
 
 impl OctTree {
@@ -45,16 +42,31 @@ impl OctTree {
         }
     }
 
-    pub(super) fn update(&mut self, world: &mut hecs::World) {
+    pub(super) fn update(
+        &mut self,
+        world: &mut hecs::World,
+        command_buffer: &mut hecs::CommandBuffer,
+    ) {
         // update changed entities
-        for (_entity, (transform, shape, leaf_index, bounding_box)) in world
+        for (entity, (transform, shape, leaf_index, bounding_box)) in world
             .query_mut::<(&Transform, &SharedShape, &LeafIndex, &mut BoundingBox)>()
-            .with::<&Collides>()
             .with::<&Changed<Transform>>()
         {
+            tracing::debug!(?entity, "transform changed");
+
             bounding_box.aabb = shape.compute_aabb(&transform.transform);
             self.bvh
                 .insert_or_update_partially(bounding_box.aabb, leaf_index.index, 0.0);
+        }
+
+        // remove tracked entities that have no transform or shape anymore
+        for (entity, ()) in world
+            .query_mut::<()>()
+            .with::<&LeafIndex>()
+            .without::<hecs::Or<&Transform, &SharedShape>>()
+        {
+            command_buffer.remove_one::<LeafIndex>(entity);
+            command_buffer.remove_one::<BoundingBox>(entity);
         }
 
         // insert shapes that don't have a leaf ID yet
@@ -72,14 +84,13 @@ impl OctTree {
             self.bvh.insert_or_update_partially(aabb, index, 0.0);
 
             self.stored_entities.insert(index, entity);
-            self.command_buffer
-                .insert(entity, (LeafIndex { index }, BoundingBox { aabb }));
+            command_buffer.insert(entity, (LeafIndex { index }, BoundingBox { aabb }));
         }
 
         // refit bvh
         self.bvh.refit(&mut self.bvh_workspace);
 
-        self.command_buffer.run_on(world);
+        command_buffer.run_on(world);
     }
 
     pub fn cast_ray(
@@ -170,10 +181,11 @@ mod tests {
     #[test]
     fn it_adds_entities() {
         let mut world = hecs::World::new();
+        let mut command_buffer = hecs::CommandBuffer::new();
         let mut octtree = OctTree::default();
 
         let entity = world.spawn(test_bundle());
-        octtree.update(&mut world);
+        octtree.update(&mut world, &mut command_buffer);
 
         octtree.bvh.assert_well_formed();
         let leaves = octtree.bvh.leaves(|_| true).collect::<Vec<_>>();
@@ -187,17 +199,18 @@ mod tests {
     #[test]
     fn it_removes_entities() {
         let mut world = hecs::World::new();
+        let mut command_buffer = hecs::CommandBuffer::new();
         let mut octtree = OctTree::default();
 
         let entity = world.spawn(test_bundle());
-        octtree.update(&mut world);
+        octtree.update(&mut world, &mut command_buffer);
 
         octtree.remove(entity, &mut world);
         octtree.bvh.assert_well_formed(); // ?
 
         world.despawn(entity).unwrap();
 
-        octtree.update(&mut world);
+        octtree.update(&mut world, &mut command_buffer);
         octtree.bvh.assert_well_formed();
         assert!(octtree.bvh.is_empty());
         assert!(octtree.stored_entities.is_empty());

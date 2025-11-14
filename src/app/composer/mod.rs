@@ -1,3 +1,4 @@
+pub mod properties;
 pub mod renderer;
 pub mod scene;
 pub mod solver;
@@ -34,6 +35,7 @@ use crate::{
     Error,
     app::{
         composer::{
+            properties::entities::EntityPropertiesWindow,
             renderer::{
                 ClearColor,
                 Outline,
@@ -272,11 +274,10 @@ pub struct ComposerState {
     /// Buffer storing undo and redo commands
     undo_buffer: UndoBuffer,
 
-    /// Temporary ECS command buffer
-    #[debug("hecs::CommandBuffer {{ ... }}")]
-    command_buffer: hecs::CommandBuffer,
-
     solver_configs: Vec<SolverConfig>,
+
+    /// For which entity the properties window is open
+    properties_window_entity: Option<hecs::Entity>,
 }
 
 impl ComposerState {
@@ -313,8 +314,8 @@ impl ComposerState {
             object_tree: Default::default(),
             context_menu_object: None,
             undo_buffer,
-            command_buffer: Default::default(),
             solver_configs: vec![],
+            properties_window_entity: None,
         }
     }
 }
@@ -412,41 +413,49 @@ impl ComposerState {
                 }
             }
 
-            // actually render the scene
-            let view_response = ui.add(
-                SceneView::new(&mut self.scene, renderer)
-                    .with_camera(self.camera_entity)
-                    .with_scene_pointer(&mut self.scene_pointer),
-            );
+            {
+                // actually render the scene
+                let view_response = ui.add(
+                    SceneView::new(&mut self.scene, renderer)
+                        .with_camera(self.camera_entity)
+                        .with_scene_pointer(&mut self.scene_pointer),
+                );
 
-            if view_response.clicked() {
-                // todo: shift should also remove from selection
+                if view_response.clicked() {
+                    // todo: shift should also remove from selection
 
-                let shift_key = ui.input(|input| input.modifiers.shift);
-                let entity = self
-                    .scene_pointer
-                    .entity_under_pointer
-                    .as_ref()
-                    .map(|entity_under_pointer| entity_under_pointer.entity);
+                    let shift_key = ui.input(|input| input.modifiers.shift);
+                    let entity = self
+                        .scene_pointer
+                        .entity_under_pointer
+                        .as_ref()
+                        .map(|entity_under_pointer| entity_under_pointer.entity);
 
-                let mut selection = self.selection_mut();
+                    let mut selection = self.selection_mut();
 
-                match (entity, shift_key) {
-                    (Some(entity), false) => {
-                        selection.clear();
-                        selection.select(entity);
+                    match (entity, shift_key) {
+                        (Some(entity), false) => {
+                            selection.clear();
+                            selection.select(entity);
+                        }
+                        (Some(entity), true) => {
+                            selection.toggle(entity);
+                        }
+                        (None, false) => {
+                            selection.clear();
+                        }
+                        (None, true) => {}
                     }
-                    (Some(entity), true) => {
-                        selection.toggle(entity);
-                    }
-                    (None, false) => {
-                        selection.clear();
-                    }
-                    (None, true) => {}
                 }
+
+                self.context_menu(&view_response);
             }
 
-            self.context_menu(&view_response);
+            EntityPropertiesWindow::new(&mut self.scene, &mut self.properties_window_entity).show(
+                ctx,
+                properties::entities::default_title,
+                properties::entities::debug(true),
+            );
         });
     }
 
@@ -454,8 +463,8 @@ impl ComposerState {
         // todo: make this context menu work for the tree
 
         if response.secondary_clicked() {
-            // if the clicked entity is in the selection, we might want to treat have to
-            // context menu being about all objects
+            // todo: if the clicked entity is in the selection, we might want to have the
+            // context menu be about the whole selection
 
             self.context_menu_object = self
                 .scene_pointer
@@ -494,7 +503,7 @@ impl ComposerState {
             ui.separator();
 
             if ui.button("Properties").clicked() {
-                tracing::debug!("todo: properties");
+                self.properties_window_entity = Some(entity);
             }
         });
 
@@ -527,8 +536,7 @@ impl ComposerState {
 
     pub fn selection_mut(&mut self) -> SelectionMut<'_> {
         SelectionMut {
-            world: &mut self.scene.entities,
-            command_buffer: &mut self.command_buffer,
+            scene: &mut self.scene,
             outline: &self.config.views.selection_outline,
         }
     }
@@ -712,45 +720,45 @@ pub const CLIPBOARD_PREFIX: &'static str = "data:application/x-fdtd;base64,";
 
 #[derive(derive_more::Debug)]
 pub struct SelectionMut<'a> {
-    #[debug("hecs::World {{ ... }}")]
-    world: &'a mut hecs::World,
-    #[debug("hecs::CommandBuffer {{ ... }}")]
-    command_buffer: &'a mut hecs::CommandBuffer,
+    scene: &'a mut Scene,
     outline: &'a Outline,
 }
 
 impl<'a> SelectionMut<'a> {
     pub fn clear(&mut self) {
-        for (entity, ()) in self.world.query_mut::<()>().with::<&Selected>() {
-            self.command_buffer.remove_one::<Selected>(entity);
-            self.command_buffer.remove_one::<Outline>(entity);
+        for (entity, ()) in self.scene.entities.query_mut::<()>().with::<&Selected>() {
+            self.scene.command_buffer.remove_one::<Selected>(entity);
+            self.scene.command_buffer.remove_one::<Outline>(entity);
         }
     }
 
     pub fn select(&mut self, entity: hecs::Entity) {
         if self
-            .world
+            .scene
+            .entities
             .satisfies::<&Selectable>(entity)
             .unwrap_or_default()
         {
-            self.command_buffer
+            self.scene
+                .command_buffer
                 .insert(entity, (Selected, self.outline.clone()));
         }
     }
 
     pub fn unselect(&mut self, entity: hecs::Entity) {
-        self.command_buffer.remove_one::<Selected>(entity);
-        self.command_buffer.remove_one::<Outline>(entity);
+        self.scene.command_buffer.remove_one::<Selected>(entity);
+        self.scene.command_buffer.remove_one::<Outline>(entity);
     }
 
     pub fn toggle(&mut self, entity: hecs::Entity) {
-        if let Ok(entity_ref) = self.world.entity(entity) {
+        if let Ok(entity_ref) = self.scene.entities.entity(entity) {
             if entity_ref.satisfies::<&Selected>() {
-                self.command_buffer.remove_one::<Selected>(entity);
-                self.command_buffer.remove_one::<Outline>(entity);
+                self.scene.command_buffer.remove_one::<Selected>(entity);
+                self.scene.command_buffer.remove_one::<Outline>(entity);
             }
             else if entity_ref.satisfies::<&Selectable>() {
-                self.command_buffer
+                self.scene
+                    .command_buffer
                     .insert(entity, (Selected, self.outline.clone()));
             }
         }
@@ -758,22 +766,29 @@ impl<'a> SelectionMut<'a> {
 
     pub fn select_all(&mut self) {
         // todo: we should add a tag for selectable entities
-        for (entity, ()) in self.world.query_mut::<()>().with::<&Selectable>() {
-            self.command_buffer
+        for (entity, ()) in self.scene.entities.query_mut::<()>().with::<&Selectable>() {
+            self.scene
+                .command_buffer
                 .insert(entity, (Selected, self.outline.clone()));
         }
     }
 
     // not great to replicate all these. is there a better way?
     pub fn is_empty(&self) -> bool {
-        self.world.query::<()>().with::<&Selected>().iter().len() == 0
+        self.scene
+            .entities
+            .query::<()>()
+            .with::<&Selected>()
+            .iter()
+            .len()
+            == 0
     }
 
     pub fn query<Q>(&self) -> hecs::QueryBorrow<'_, hecs::With<Q, &Selected>>
     where
         Q: hecs::Query,
     {
-        self.world.query::<Q>().with::<&Selected>()
+        self.scene.entities.query::<Q>().with::<&Selected>()
     }
 
     pub fn with_query_iter<Q, R>(
@@ -794,7 +809,7 @@ impl<'a> SelectionMut<'a> {
 
 impl<'a> Drop for SelectionMut<'a> {
     fn drop(&mut self) {
-        self.command_buffer.run_on(self.world);
+        self.scene.command_buffer.run_on(&mut self.scene.entities);
     }
 }
 

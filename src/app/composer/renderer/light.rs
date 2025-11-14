@@ -159,10 +159,10 @@ impl Default for CameraLightFilter {
         // the ratios
         let rgb1 = |x| LinSrgba::new(x, x, x, 1.0);
         Self {
-            ambient: rgb1(0.1),
+            ambient: rgb1(0.3),
             diffuse: rgb1(0.7),
             specular: rgb1(0.5),
-            emissive: rgb1(0.0),
+            emissive: rgb1(1.0),
         }
     }
 }

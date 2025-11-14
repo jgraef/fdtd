@@ -55,8 +55,7 @@ impl<'a> SceneView<'a> {
 
     /// Handle widget's inputs
     fn handle_input(&mut self, response: &egui::Response) {
-        // note
-        // we could insert Changed<_> for camera movement and then only update the
+        // note: we could insert Changed<_> for camera movement and then only update the
         // camera buffer when it actually changes
 
         let camera_pan_tilt_speed = Vector2::repeat(1.0);

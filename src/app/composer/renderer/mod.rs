@@ -895,6 +895,7 @@ fn allocate_instance_buffer<T>(
 pub struct Outline {
     #[serde(with = "crate::util::serde::palette")]
     pub color: Srgba,
+
     pub thickness: f32,
 }
 

@@ -60,6 +60,16 @@ pub struct Scene {
     pub entities: hecs::World,
 
     pub octtree: OctTree,
+
+    /// General-purpose command buffer.
+    ///
+    /// This can be used to defer modifications temporarily, wihout the need to
+    /// allocate your own command buffer.
+    ///
+    /// You should run the command buffer on the world yourself when you want
+    /// the changes become visible. Otherwise it's run in [`Self::prepare`].
+    #[debug("hecs::CommandBuffer {{ ... }}")]
+    pub command_buffer: hecs::CommandBuffer,
 }
 
 impl Scene {
@@ -109,7 +119,22 @@ impl Scene {
     ///
     /// E.g. this updates the internal octtree used for spatial queries
     pub fn prepare(&mut self) {
-        self.octtree.update(&mut self.entities);
+        self.command_buffer.run_on(&mut self.entities);
+        self.octtree
+            .update(&mut self.entities, &mut self.command_buffer);
+
+        // todo: who is responsible for this?
+        // the octtree is definitely interested in these, but maybe other's as well?
+        // there are definitely other things that are marked with `Changed<_>` (i think
+        // in the renderer, but they clean that up).
+        for (entity, ()) in self
+            .entities
+            .query_mut::<()>()
+            .with::<&Changed<Transform>>()
+        {
+            self.command_buffer.remove_one::<Changed<Transform>>(entity);
+        }
+        self.command_buffer.run_on(&mut self.entities);
     }
 
     /// Computes the scene's AABB relative to an observer.
