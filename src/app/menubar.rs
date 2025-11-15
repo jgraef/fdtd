@@ -360,10 +360,15 @@ impl<'a> MenuBar<'a> {
                 );
 
                 if ui
-                    .add_enabled(has_file_open, egui::Button::new("Configure Lights"))
+                    .add_enabled(has_file_open, egui::Button::new("Configure"))
                     .clicked()
                 {
-                    tracing::debug!("todo: configure camera lights")
+                    self.app
+                        .composer
+                        .state
+                        .as_mut()
+                        .unwrap()
+                        .open_camera_window();
                 }
             });
         });

@@ -28,8 +28,6 @@ pub struct SceneView<'a> {
     renderer: &'a mut Renderer,
     camera_entity: Option<hecs::Entity>,
     scene_pointer: Option<&'a mut ScenePointer>,
-    #[debug(ignore)]
-    command_buffer: hecs::CommandBuffer,
 }
 
 impl<'a> SceneView<'a> {
@@ -39,7 +37,6 @@ impl<'a> SceneView<'a> {
             renderer,
             camera_entity: None,
             scene_pointer: None,
-            command_buffer: hecs::CommandBuffer::new(),
         }
     }
 
@@ -75,12 +72,13 @@ impl<'a> SceneView<'a> {
             if viewport.viewport != response.rect {
                 tracing::debug!(viewport = ?response.rect, "viewport changed");
                 viewport.viewport = response.rect;
-                self.command_buffer
+                self.scene
+                    .command_buffer
                     .insert_one(camera_entity, Changed::<Viewport>::default());
             }
         }
         else {
-            self.command_buffer.insert(
+            self.scene.command_buffer.insert(
                 camera_entity,
                 (
                     Viewport {
@@ -222,6 +220,9 @@ impl<'a> SceneView<'a> {
                 scene_pointer.ray = Some(ray);
             }
         }
+
+        // apply any buffered commands to scene
+        self.scene.command_buffer.run_on(&mut self.scene.entities);
     }
 
     pub fn shoot_ray_from_camera(&mut self, pointer_position: Point2<f32>) -> Option<Ray> {
@@ -259,13 +260,13 @@ impl<'a> egui::Widget for SceneView<'a> {
         // handle inputs (and resizing)
         self.handle_input(&response);
 
-        // apply any buffered commands to scene
-        self.command_buffer.run_on(&mut self.scene.entities);
-
         if !ui.is_sizing_pass() && ui.is_rect_visible(response.rect) {
             // draw frame
-            if let Some(draw_command) = self.renderer.prepare_frame(self.scene, self.camera_entity)
-            {
+
+            if let Some(draw_command) = self.renderer.prepare_frame(
+                self.camera_entity
+                    .and_then(|camera_entity| self.scene.entities.entity(camera_entity).ok()),
+            ) {
                 let painter = ui.painter();
                 painter.add(egui_wgpu::Callback::new_paint_callback(
                     response.rect,

@@ -16,11 +16,12 @@ use crate::app::composer::{
 pub struct EntityPropertiesWindow<'a> {
     scene: &'a mut Scene,
     entity: &'a mut Option<hecs::Entity>,
+    id: egui::Id,
 }
 
 impl<'a> EntityPropertiesWindow<'a> {
-    pub fn new(scene: &'a mut Scene, entity: &'a mut Option<hecs::Entity>) -> Self {
-        Self { scene, entity }
+    pub fn new(id: egui::Id, scene: &'a mut Scene, entity: &'a mut Option<hecs::Entity>) -> Self {
+        Self { scene, entity, id }
     }
 
     pub fn show<R>(
@@ -44,7 +45,7 @@ impl<'a> EntityPropertiesWindow<'a> {
         let mut is_open = true;
 
         let response = egui::Window::new(title(entity_ref))
-            .id(egui::Id::new("entity_properties_window"))
+            .id(self.id)
             .movable(true)
             .collapsible(true)
             .open(&mut is_open)

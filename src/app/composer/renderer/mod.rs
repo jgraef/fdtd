@@ -150,10 +150,6 @@ pub struct Renderer {
     /// Its `finish` method returns the finalized draw command (aggregate) for a
     /// specific camera.
     draw_command_buffer: DrawCommandBuffer,
-
-    /// Scratch buffer for ECS commands
-    #[debug(ignore)]
-    command_buffer: hecs::CommandBuffer,
 }
 
 impl Renderer {
@@ -339,7 +335,6 @@ impl Renderer {
             instance_bind_group,
             instance_data: vec![],
             draw_command_buffer: Default::default(),
-            command_buffer: hecs::CommandBuffer::new(),
         }
     }
 
@@ -368,13 +363,13 @@ impl Renderer {
                 &self.wgpu_context.device,
                 &self.mesh_bind_group_layout,
             ) {
-                self.command_buffer.insert_one(entity, mesh);
+                scene.command_buffer.insert_one(entity, mesh);
             }
             else {
                 tracing::warn!(
                     "Entity {entity:?} (label {label:?}) was marked for rendering, but a mesh could not be constructed."
                 );
-                self.command_buffer.remove::<(Render,)>(entity);
+                scene.command_buffer.remove::<(Render,)>(entity);
             }
         }
 
@@ -385,7 +380,7 @@ impl Renderer {
             .with::<&Changed<Viewport>>()
         {
             camera_projection.set_viewport(viewport);
-            self.command_buffer.remove_one::<Changed<Viewport>>(entity);
+            scene.command_buffer.remove_one::<Changed<Viewport>>(entity);
         }
 
         // create uniforms for cameras
@@ -418,11 +413,25 @@ impl Renderer {
                 &self.wgpu_context.device,
                 &camera_data,
             );
-            self.command_buffer.insert_one(entity, camera_resources);
+            scene.command_buffer.insert_one(entity, camera_resources);
+        }
+
+        // remove camera resources for anything that isn't a valid camera anymore
+        for (entity, ()) in scene
+            .entities
+            .query_mut::<()>()
+            .with::<&CameraResources>()
+            .without::<hecs::Or<&Transform, &CameraProjection>>()
+        {
+            tracing::warn!(
+                ?entity,
+                "not a valid camera anymore. removing `CameraResources`"
+            );
+            scene.command_buffer.remove_one::<CameraResources>(entity);
         }
 
         // apply buffered commands to world
-        self.command_buffer.run_on(&mut scene.entities);
+        scene.command_buffer.run_on(&mut scene.entities);
 
         // update uniforms for cameras
         for (
@@ -521,30 +530,25 @@ impl Renderer {
     /// widgets.
     pub fn prepare_frame(
         &mut self,
-        scene: &Scene,
-        camera_entity: Option<hecs::Entity>,
+        camera_entity: Option<hecs::EntityRef<'_>>,
     ) -> Option<DrawCommand> {
         // get bind group and config for our camera
         let Some((camera_bind_group, camera_config, has_clear_color)) =
             camera_entity.and_then(|camera_entity| {
-                scene
-                    .entities
-                    .query_one::<(
-                        &CameraResources,
-                        Option<&CameraConfig>,
-                        hecs::Satisfies<&ClearColor>,
-                    )>(camera_entity)
-                    .ok()
-                    .and_then(|mut query| {
-                        query
-                            .get()
-                            .map(|(camera_resources, camera_config, has_clear_color)| {
-                                (
-                                    camera_resources.bind_group.clone(),
-                                    camera_config.cloned().unwrap_or_default(),
-                                    has_clear_color,
-                                )
-                            })
+                let mut query = camera_entity.query::<(
+                    &CameraResources,
+                    Option<&CameraConfig>,
+                    hecs::Satisfies<&ClearColor>,
+                )>();
+
+                query
+                    .get()
+                    .map(|(camera_resources, camera_config, has_clear_color)| {
+                        (
+                            camera_resources.bind_group.clone(),
+                            camera_config.cloned().unwrap_or_default(),
+                            has_clear_color,
+                        )
                     })
             })
         else {

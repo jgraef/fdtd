@@ -451,7 +451,12 @@ impl ComposerState {
                 self.context_menu(&view_response);
             }
 
-            EntityPropertiesWindow::new(&mut self.scene, &mut self.properties_window_entity).show(
+            EntityPropertiesWindow::new(
+                egui::Id::new("entity_properties"),
+                &mut self.scene,
+                &mut self.properties_window_entity,
+            )
+            .show(
                 ctx,
                 properties::entities::default_title,
                 properties::entities::debug(true),
@@ -547,6 +552,11 @@ impl ComposerState {
             scene: &mut self.scene,
             camera_entity: self.camera_entity,
         }
+    }
+
+    pub fn open_camera_window(&mut self) {
+        // todo: we probably want to show this in a separate window
+        self.properties_window_entity = Some(self.camera_entity);
     }
 
     fn send_to_hades(
