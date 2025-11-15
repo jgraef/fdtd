@@ -6,7 +6,11 @@ This app is work-in-progress. It's intended to model electromagnetic behavior. I
 
  - PRs for `egui_ltreeview`
  - manipulating objects's isometry in scene view
+ - pass more config to properties_ui for floats for proper formatting
  - persist settings like `CameraConfig`, `CameraLightFilters` (global or per project?)
+ - refactor fdtd to integrate into app better.
+  - remove some old stuff which will be used app-wide (like geometry)
+  - hide submodules and re-export stuff that should be exposed in the fdtd module namespace.
  - render wiremesh without the `POLYGON_MODE_LINE` feature. Use `PrimitiveTopology::LineList` instead.
    Just need to adjust the number of vertices to `2*n` (2 vertices per line, 3 lines per face, versus just the 3 vertices of a normal triangle), and then pull the right vertices in the shader.
  - transform hierarchy: `GlobalTransform`, `Parent`, propagate.

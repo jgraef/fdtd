@@ -53,3 +53,4 @@ eframe = { git = "https://github.com/jgraef/egui.git", branch = "switch/wgpu-ste
 egui = { git = "https://github.com/jgraef/egui.git", branch = "switch/wgpu-stencil-buffer" }
 egui-wgpu = { git = "https://github.com/jgraef/egui.git", branch = "switch/wgpu-stencil-buffer" }
 egui-winit = { git = "https://github.com/jgraef/egui.git", branch = "switch/wgpu-stencil-buffer" }
+emath = { git = "https://github.com/jgraef/egui.git", branch = "switch/wgpu-stencil-buffer" }

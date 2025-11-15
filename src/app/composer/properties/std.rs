@@ -1,60 +1,83 @@
 use std::ops::RangeInclusive;
 
+use egui::emath;
+
 use crate::{
     app::composer::properties::PropertiesUi,
     util::Moo,
 };
 
 #[derive(Clone, Debug)]
-pub enum NumericPropertyUiConfig {
-    DragValue { speed: f32 },
-    Slider { range: RangeInclusive<f32> },
+pub enum NumericPropertyUiConfig<T> {
+    DragValue { speed: T },
+    Slider { range: RangeInclusive<T> },
 }
 
-impl Default for NumericPropertyUiConfig {
-    fn default() -> Self {
-        Self::DragValue { speed: 0.1 }
-    }
-}
-
-impl PropertiesUi for f32 {
-    type Config = NumericPropertyUiConfig;
-
-    fn properties_ui(&mut self, ui: &mut egui::Ui, config: &Self::Config) -> egui::Response {
-        match config {
-            NumericPropertyUiConfig::DragValue { speed } => {
-                ui.add(egui::DragValue::new(self).speed(*speed))
-            }
-            NumericPropertyUiConfig::Slider { range } => {
-                ui.add(egui::Slider::new(self, range.clone()))
+macro_rules! impl_numeric_properties_ui {
+    ($ty:ty, $default_speed:expr) => {
+        impl Default for NumericPropertyUiConfig<$ty> {
+            fn default() -> Self {
+                Self::DragValue {
+                    speed: $default_speed,
+                }
             }
         }
-    }
+
+        impl PropertiesUi for $ty {
+            type Config = NumericPropertyUiConfig<Self>;
+
+            fn properties_ui(
+                &mut self,
+                ui: &mut egui::Ui,
+                config: &Self::Config,
+            ) -> egui::Response {
+                match config {
+                    NumericPropertyUiConfig::DragValue { speed } => {
+                        ui.add(egui::DragValue::new(self).speed(*speed))
+                    }
+                    NumericPropertyUiConfig::Slider { range } => {
+                        ui.add(egui::Slider::new(self, range.clone()))
+                    }
+                }
+            }
+        }
+    };
 }
+
+impl_numeric_properties_ui!(f32, 0.1);
+impl_numeric_properties_ui!(f64, 0.1);
 
 #[derive(Debug)]
-pub struct DragAngle<'a> {
-    pub radians: &'a mut f32,
-    pub speed: f32,
+pub struct DragAngle<'a, T> {
+    pub radians: &'a mut T,
+    pub speed: f64,
 }
 
-impl<'a> DragAngle<'a> {
-    pub fn new(radians: &'a mut f32) -> Self {
+impl<'a, T> DragAngle<'a, T> {
+    pub fn new(radians: &'a mut T) -> Self {
         Self {
             radians,
             speed: 1.0,
         }
     }
+}
 
-    pub fn speed(mut self, speed: f32) -> Self {
-        self.speed = speed;
+impl<'a, T> DragAngle<'a, T>
+where
+    f64: From<T>,
+{
+    pub fn speed(mut self, speed: T) -> Self {
+        self.speed = speed.into();
         self
     }
 }
 
-impl<'a> egui::Widget for DragAngle<'a> {
+impl<'a, T> egui::Widget for DragAngle<'a, T>
+where
+    T: emath::Numeric,
+{
     fn ui(self, ui: &mut egui::Ui) -> egui::Response {
-        let mut degrees = self.radians.to_degrees();
+        let mut degrees = self.radians.to_f64().to_degrees();
         let response = ui.add(
             egui::DragValue::new(&mut degrees)
                 .speed(self.speed)
@@ -62,7 +85,7 @@ impl<'a> egui::Widget for DragAngle<'a> {
         );
 
         if response.changed() {
-            *self.radians = degrees.to_radians();
+            *self.radians = T::from_f64(degrees.to_radians());
         }
 
         response

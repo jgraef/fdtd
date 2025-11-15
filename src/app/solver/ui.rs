@@ -3,44 +3,45 @@ use nalgebra::Vector3;
 use crate::{
     app::{
         composer::properties::{
+            HasChangeValue,
             PropertiesUi,
             PropertiesUiExt,
             TrackChanges,
             label_and_value,
         },
         solver::config::{
+            FixedVolume,
+            SceneAabbVolume,
             SolverConfig,
             SolverConfigSpecifics,
             Volume,
         },
     },
-    fdtd,
+    fdtd::{
+        self,
+        PhysicalConstants,
+    },
 };
 
 impl PropertiesUi for SolverConfig {
-    type Config = SolverConfigUiConfig;
+    type Config = ();
 
-    fn properties_ui(&mut self, ui: &mut egui::Ui, config: &Self::Config) -> egui::Response {
+    fn properties_ui(&mut self, ui: &mut egui::Ui, _config: &Self::Config) -> egui::Response {
         let mut changes = TrackChanges::default();
 
         egui::Frame::new()
             .show(ui, |ui| {
                 label_and_value(ui, "Label", &mut changes, &mut self.label);
 
-                let mut volume_used = self.volume.is_some();
-                ui.checkbox(&mut volume_used, "Volume");
-                if volume_used && self.volume.is_none() {
-                    self.volume = Some(config.default_volume);
-                }
-                if let Some(volume) = &mut self.volume {
-                    label_and_value(ui, "Volume Isometry", &mut changes, &mut volume.isometry);
-                    label_and_value(
-                        ui,
-                        "Volume Half Extents",
-                        &mut changes,
-                        &mut volume.half_extents,
-                    );
-                }
+                ui.label("Volume");
+                ui.indent("volume_ui", |ui| {
+                    ui.properties(&mut self.volume);
+                });
+
+                ui.label("Physical Constants");
+                ui.indent("volume_ui", |ui| {
+                    ui.properties(&mut self.physical_constants);
+                });
 
                 // todo
                 match self.specifics {
@@ -52,9 +53,134 @@ impl PropertiesUi for SolverConfig {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default)]
-pub struct SolverConfigUiConfig {
-    pub default_volume: Volume,
+impl PropertiesUi for Volume {
+    type Config = ();
+
+    fn properties_ui(&mut self, ui: &mut egui::Ui, _config: &Self::Config) -> egui::Response {
+        let mut changes = TrackChanges::default();
+
+        let response = egui::Frame::new()
+            .show(ui, |ui| {
+                let id = egui::Id::new("volume_ui");
+
+                let mut volume_type = VolumeType::from(&*self);
+                ui.horizontal(|ui| {
+                    changes.track(ui.selectable_value(
+                        &mut volume_type,
+                        VolumeType::Fixed,
+                        "Fixed",
+                    ));
+                    changes.track(ui.selectable_value(
+                        &mut volume_type,
+                        VolumeType::SceneAabb,
+                        "AABB",
+                    ));
+                });
+
+                // if volume type changed, load in stored specifics
+                if changes.changed() {
+                    *self = match volume_type {
+                        VolumeType::Fixed => {
+                            Volume::Fixed(
+                                ui.data(|data| data.get_temp::<FixedVolume>(id))
+                                    .unwrap_or_default(),
+                            )
+                        }
+                        VolumeType::SceneAabb => {
+                            Volume::SceneAabb(
+                                ui.data(|data| data.get_temp::<SceneAabbVolume>(id))
+                                    .unwrap_or_default(),
+                            )
+                        }
+                    }
+                }
+
+                // render specific ui
+                match self {
+                    Volume::Fixed(fixed_volume) => {
+                        label_and_value(
+                            ui,
+                            "Volume Isometry",
+                            &mut changes,
+                            &mut fixed_volume.isometry,
+                        );
+                        label_and_value(
+                            ui,
+                            "Volume Half Extents",
+                            &mut changes,
+                            &mut fixed_volume.half_extents,
+                        );
+                    }
+                    Volume::SceneAabb(scene_aabb_volume) => {
+                        label_and_value(
+                            ui,
+                            "Orientation",
+                            &mut changes,
+                            &mut scene_aabb_volume.orientation,
+                        );
+                        label_and_value(ui, "Margin", &mut changes, &mut scene_aabb_volume.margin);
+                    }
+                }
+
+                // if anything changed, store current specifics
+                if changes.changed() {
+                    ui.data_mut(|data| {
+                        match self {
+                            Volume::Fixed(fixed_volume) => data.insert_temp(id, *fixed_volume),
+                            Volume::SceneAabb(scene_aabb_volume) => {
+                                data.insert_temp(id, *scene_aabb_volume)
+                            }
+                        }
+                    });
+                }
+            })
+            .response;
+
+        changes.propagated(response)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum VolumeType {
+    Fixed,
+    SceneAabb,
+}
+
+impl From<&Volume> for VolumeType {
+    fn from(value: &Volume) -> Self {
+        match value {
+            Volume::Fixed(_) => Self::Fixed,
+            Volume::SceneAabb(_) => Self::SceneAabb,
+        }
+    }
+}
+
+impl PropertiesUi for PhysicalConstants {
+    type Config = ();
+
+    fn properties_ui(&mut self, ui: &mut egui::Ui, _config: &Self::Config) -> egui::Response {
+        // todo: combo box with predefined defaults (e.g. REDUCED, SI)
+        let mut changes = TrackChanges::default();
+
+        let response = egui::Frame::new()
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    if ui.small_button("SI").clicked() {
+                        *self = Self::SI;
+                    }
+                    if ui.small_button("Reduced").clicked() {
+                        *self = Self::REDUCED;
+                    }
+                });
+
+                label_and_value(ui, "eps_0", &mut changes, &mut self.vacuum_permittivity);
+                label_and_value(ui, "mu_0", &mut changes, &mut self.vacuum_permeability);
+                ui.label(format!("c: {:e}", self.speed_of_light()));
+            })
+            .response;
+
+        changes.propagated(response)
+    }
 }
 
 #[derive(Debug)]
@@ -72,7 +198,7 @@ impl Default for SolverConfigUiWindow {
             is_open: false,
             default_solver_config: SolverConfig {
                 label: "New solver".to_owned(),
-                volume: None,
+                volume: Default::default(),
                 physical_constants: fdtd::PhysicalConstants::REDUCED,
                 specifics: SolverConfigSpecifics::Fdtd {
                     resolution: fdtd::Resolution {
@@ -113,20 +239,25 @@ impl SolverConfigUiWindow {
                 }
 
                 // dropdown menu for solver selection, and add/delete buttons
+                // combine with label edit?
                 ui.horizontal(|ui| {
                     let id = id.with("selection");
 
                     // fixme: doesn't show label for selection
-                    let combo_box = self.selection.map_or_else(
-                        || egui::ComboBox::from_id_salt(id),
-                        |selection| egui::ComboBox::new(id, &solver_configs[selection].label),
-                    );
-
-                    combo_box.show_ui(ui, |ui| {
-                        for (i, solver_config) in solver_configs.iter().enumerate() {
-                            ui.selectable_value(&mut self.selection, Some(i), &solver_config.label);
-                        }
-                    });
+                    self.selection
+                        .map_or_else(
+                            || egui::ComboBox::from_id_salt(id),
+                            |selection| egui::ComboBox::new(id, &solver_configs[selection].label),
+                        )
+                        .show_ui(ui, |ui| {
+                            for (i, solver_config) in solver_configs.iter().enumerate() {
+                                ui.selectable_value(
+                                    &mut self.selection,
+                                    Some(i),
+                                    &solver_config.label,
+                                );
+                            }
+                        });
 
                     let has_selection = self.selection.is_some();
 

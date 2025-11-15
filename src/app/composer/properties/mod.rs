@@ -4,6 +4,7 @@ pub mod std;
 
 use crate::util::Boo;
 
+/// TODO: should pass in IDs?
 pub trait PropertiesUi {
     type Config: Default;
 

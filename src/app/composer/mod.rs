@@ -312,7 +312,7 @@ impl ComposerState {
         // some test solver configs
         let solver_configs = vec![SolverConfig {
             label: "Test FDTD".to_owned(),
-            volume: None,
+            volume: Default::default(),
             physical_constants: fdtd::PhysicalConstants::REDUCED,
             specifics: SolverConfigSpecifics::Fdtd {
                 resolution: fdtd::Resolution {

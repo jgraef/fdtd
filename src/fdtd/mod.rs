@@ -42,15 +42,13 @@ use nalgebra::{
 pub use crate::fdtd::simulation::{
     PhysicalConstants,
     Resolution,
+    Simulation,
 };
 use crate::fdtd::{
     executor::Executor,
     geometry::Block,
     material::Material,
-    simulation::{
-        Axis,
-        Simulation,
-    },
+    simulation::Axis,
     source::GaussianPulse,
 };
 

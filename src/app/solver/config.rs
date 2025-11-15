@@ -2,6 +2,7 @@
 
 use nalgebra::{
     Isometry3,
+    UnitQuaternion,
     Vector3,
 };
 use serde::{
@@ -15,7 +16,7 @@ use crate::fdtd;
 pub struct SolverConfig {
     pub label: String,
 
-    pub volume: Option<Volume>,
+    pub volume: Volume,
 
     pub physical_constants: fdtd::PhysicalConstants,
 
@@ -55,16 +56,34 @@ pub enum SolverType {
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
-pub struct Volume {
-    pub isometry: Isometry3<f32>,
-    pub half_extents: Vector3<f32>,
+pub enum Volume {
+    Fixed(FixedVolume),
+    SceneAabb(SceneAabbVolume),
 }
 
 impl Default for Volume {
     fn default() -> Self {
-        Volume {
+        Self::SceneAabb(Default::default())
+    }
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub struct FixedVolume {
+    pub isometry: Isometry3<f32>,
+    pub half_extents: Vector3<f32>,
+}
+
+impl Default for FixedVolume {
+    fn default() -> Self {
+        Self {
             isometry: Isometry3::identity(),
             half_extents: Vector3::repeat(1.0),
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
+pub struct SceneAabbVolume {
+    pub orientation: UnitQuaternion<f32>,
+    pub margin: Vector3<f32>,
 }
