@@ -1,3 +1,4 @@
+pub mod menubar;
 pub mod properties;
 pub mod renderer;
 pub mod scene;
@@ -34,10 +35,7 @@ use crate::{
     Error,
     app::{
         composer::{
-            properties::{
-                entities::EntityPropertiesWindow,
-                solver::SolverConfigUiWindow,
-            },
+            menubar::ComposerMenuElements,
             renderer::{
                 ClearColor,
                 Outline,
@@ -55,6 +53,10 @@ use crate::{
                 Scene,
                 serialize::DeserializeEntity,
                 transform::Transform,
+                ui::{
+                    self as scene_ui,
+                    EntityPropertiesWindow,
+                },
                 undo::{
                     HadesId,
                     UndoAction,
@@ -71,8 +73,16 @@ use crate::{
             AppConfig,
             ComposerConfig,
         },
-        solver::SolverConfig,
+        solver::{
+            config::{
+                SolverConfig,
+                SolverConfigSpecifics,
+            },
+            runner::SolverRunner,
+            ui::SolverConfigUiWindow,
+        },
     },
+    fdtd,
     file_formats::{
         FileFormat,
         guess_file_format_from_path,
@@ -91,19 +101,23 @@ use crate::{
 #[derive(Debug)]
 pub struct Composer {
     /// The state of an open file
-    pub state: Option<ComposerState>,
+    state: Option<ComposerState>,
 
     /// The renderer used to render a scene (if a file is open)
     renderer: Renderer,
+
+    solver_runner: SolverRunner,
 }
 
 impl Composer {
     pub fn new(wgpu_context: &WgpuContext) -> Self {
         let renderer = Renderer::new(wgpu_context);
+        let solver_runner = SolverRunner::new(wgpu_context);
 
         Self {
             state: None,
             renderer,
+            solver_runner,
         }
     }
 
@@ -169,7 +183,9 @@ impl Composer {
         self.state = None;
     }
 
-    pub fn with_selected<R>(
+    /// todo: do we want to move this into ComposerMenuElements? It's only used
+    /// there at the moment
+    fn with_selected<R>(
         &mut self,
         f: impl FnOnce(&mut ComposerState, Vec<hecs::Entity>) -> R,
     ) -> Option<R> {
@@ -222,26 +238,14 @@ impl Composer {
         }
     }
 
-    pub fn solver_configurations(&self) -> impl Iterator<Item = &SolverConfig> {
-        self.state
-            .as_ref()
-            .map(|state| state.solver_configs.iter())
-            .into_iter()
-            .flatten()
-    }
-
-    pub fn run_solver(&self, index: usize) {
-        if let Some(state) = &self.state {
-            let solver_config = &state.solver_configs[index];
-
-            tracing::debug!("todo: run {:?} solver", solver_config.label);
-        }
+    pub fn menu_elements(&mut self) -> ComposerMenuElements<'_> {
+        ComposerMenuElements::new(self)
     }
 }
 
 /// State for an open file
 #[derive(derive_more::Debug)]
-pub struct ComposerState {
+struct ComposerState {
     config: ComposerConfig,
 
     /// The path of the file. This will be where it's saved to.
@@ -305,6 +309,19 @@ impl ComposerState {
 
         let undo_buffer = UndoBuffer::new(config.undo_limit, config.redo_limit);
 
+        // some test solver configs
+        let solver_configs = vec![SolverConfig {
+            label: "Test FDTD".to_owned(),
+            volume: None,
+            physical_constants: fdtd::PhysicalConstants::REDUCED,
+            specifics: SolverConfigSpecifics::Fdtd {
+                resolution: fdtd::Resolution {
+                    spatial: Vector3::repeat(1.0),
+                    temporal: 0.25,
+                },
+            },
+        }];
+
         Self {
             config,
             path: None,
@@ -315,7 +332,7 @@ impl ComposerState {
             object_tree: Default::default(),
             context_menu_object: None,
             undo_buffer,
-            solver_configs: vec![],
+            solver_configs,
             solver_config_window: SolverConfigUiWindow::default(),
             properties_window_entity: None,
         }
@@ -458,11 +475,7 @@ impl ComposerState {
                 &mut self.scene,
                 &mut self.properties_window_entity,
             )
-            .show(
-                ctx,
-                properties::entities::default_title,
-                properties::entities::debug(true),
-            );
+            .show(ctx, scene_ui::default_title, scene_ui::debug(true));
 
             self.solver_config_window
                 .show(ctx, &mut self.solver_configs);
@@ -566,6 +579,10 @@ impl ComposerState {
 
     pub fn open_solver_config_window(&mut self) {
         self.solver_config_window.open();
+    }
+
+    pub fn solver_configs(&self) -> std::slice::Iter<'_, SolverConfig> {
+        self.solver_configs.iter()
     }
 
     fn send_to_hades(

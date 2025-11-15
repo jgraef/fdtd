@@ -29,6 +29,11 @@ use serde::{
 };
 
 use crate::app::composer::{
+    properties::{
+        PropertiesUi,
+        TrackChanges,
+        label_and_value,
+    },
     renderer::{
         camera::{
             CameraConfig,
@@ -909,6 +914,23 @@ impl Default for Outline {
             color: Srgba::new(1.0, 1.0, 1.0, 0.75),
             thickness: 0.1,
         }
+    }
+}
+
+impl PropertiesUi for Outline {
+    type Config = ();
+
+    fn properties_ui(&mut self, ui: &mut egui::Ui, _config: &Self::Config) -> egui::Response {
+        let mut changes = TrackChanges::default();
+
+        let response = egui::Frame::new()
+            .show(ui, |ui| {
+                label_and_value(ui, "Color", &mut changes, &mut self.color);
+                label_and_value(ui, "Thickness", &mut changes, &mut self.thickness);
+            })
+            .response;
+
+        changes.propagated(response)
     }
 }
 

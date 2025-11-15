@@ -17,6 +17,8 @@ pub struct SolverConfig {
 
     pub volume: Option<Volume>,
 
+    pub physical_constants: fdtd::PhysicalConstants,
+
     pub specifics: SolverConfigSpecifics,
 }
 
@@ -29,8 +31,7 @@ impl SolverConfig {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum SolverConfigSpecifics {
     Fdtd {
-        resolution: fdtd::simulation::Resolution,
-        physical_constants: fdtd::simulation::PhysicalConstants,
+        resolution: fdtd::Resolution,
         // todo
     },
     Feec {

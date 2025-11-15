@@ -13,7 +13,14 @@ use serde::{
     Serialize,
 };
 
-use crate::app::composer::renderer::Outline;
+use crate::app::composer::{
+    properties::{
+        PropertiesUi,
+        TrackChanges,
+        label_and_value,
+    },
+    renderer::Outline,
+};
 
 /// Material properties that define how an object looks in the scene.
 ///
@@ -76,6 +83,27 @@ impl From<Srgb<u8>> for Material {
     }
 }
 
+impl PropertiesUi for Material {
+    type Config = ();
+
+    fn properties_ui(&mut self, ui: &mut egui::Ui, _config: &Self::Config) -> egui::Response {
+        let mut changes = TrackChanges::default();
+
+        let response = egui::Frame::new()
+            .show(ui, |ui| {
+                label_and_value(ui, "Ambient", &mut changes, &mut self.ambient);
+                label_and_value(ui, "Diffuse", &mut changes, &mut self.diffuse);
+                label_and_value(ui, "Specular", &mut changes, &mut self.specular);
+                label_and_value(ui, "Emissive", &mut changes, &mut self.emissive);
+                label_and_value(ui, "Shininess", &mut changes, &mut self.shininess);
+                label_and_value(ui, "Wireframe", &mut changes, &mut self.wireframe);
+            })
+            .response;
+
+        changes.propagated(response)
+    }
+}
+
 /// A point light source.
 ///
 /// This defines the color of the light that can be reflected diffusely or
@@ -129,6 +157,23 @@ impl From<Srgb<u8>> for PointLight {
     }
 }
 
+impl PropertiesUi for PointLight {
+    type Config = ();
+
+    fn properties_ui(&mut self, ui: &mut egui::Ui, _config: &Self::Config) -> egui::Response {
+        let mut changes = TrackChanges::default();
+
+        let response = egui::Frame::new()
+            .show(ui, |ui| {
+                label_and_value(ui, "Diffuse", &mut changes, &mut self.diffuse);
+                label_and_value(ui, "Specular", &mut changes, &mut self.specular);
+            })
+            .response;
+
+        changes.propagated(response)
+    }
+}
+
 /// Defines filters for lighting components per camera.
 ///
 /// Notably this is the only place to specify ambient lighting. Ambient light is
@@ -164,6 +209,25 @@ impl Default for CameraLightFilter {
             specular: rgb1(0.5),
             emissive: rgb1(1.0),
         }
+    }
+}
+
+impl PropertiesUi for CameraLightFilter {
+    type Config = ();
+
+    fn properties_ui(&mut self, ui: &mut egui::Ui, _config: &Self::Config) -> egui::Response {
+        let mut changes = TrackChanges::default();
+
+        let response = egui::Frame::new()
+            .show(ui, |ui| {
+                label_and_value(ui, "Ambient", &mut changes, &mut self.ambient);
+                label_and_value(ui, "Diffuse", &mut changes, &mut self.diffuse);
+                label_and_value(ui, "Specular", &mut changes, &mut self.specular);
+                label_and_value(ui, "Emissive", &mut changes, &mut self.emissive);
+            })
+            .response;
+
+        changes.propagated(response)
     }
 }
 

@@ -2,6 +2,7 @@ pub mod collisions;
 pub mod serialize;
 pub mod shape;
 pub mod transform;
+pub mod ui;
 pub mod undo;
 
 use std::{

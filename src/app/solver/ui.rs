@@ -8,7 +8,7 @@ use crate::{
             TrackChanges,
             label_and_value,
         },
-        solver::{
+        solver::config::{
             SolverConfig,
             SolverConfigSpecifics,
             Volume,
@@ -73,12 +73,12 @@ impl Default for SolverConfigUiWindow {
             default_solver_config: SolverConfig {
                 label: "New solver".to_owned(),
                 volume: None,
+                physical_constants: fdtd::PhysicalConstants::REDUCED,
                 specifics: SolverConfigSpecifics::Fdtd {
-                    resolution: fdtd::simulation::Resolution {
+                    resolution: fdtd::Resolution {
                         spatial: Vector3::repeat(1.0),
                         temporal: 0.25,
                     },
-                    physical_constants: fdtd::simulation::PhysicalConstants::REDUCED,
                 },
             },
         }

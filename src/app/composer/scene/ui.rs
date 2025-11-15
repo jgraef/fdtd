@@ -190,16 +190,16 @@ pub fn default_title(entity_ref: hecs::EntityRef) -> egui::WidgetText {
 
 mod show_all {
     use crate::app::composer::{
-        properties::{
-            PropertiesUi,
-            entities::ComponentUi,
-        },
+        properties::PropertiesUi,
         renderer::light::{
             CameraLightFilter,
             Material,
             PointLight,
         },
-        scene::transform::Transform,
+        scene::{
+            transform::Transform,
+            ui::ComponentUi,
+        },
     };
 
     pub fn show_all(
@@ -264,107 +264,5 @@ mod show_all {
                 Transform,
             };
         };
-    }
-}
-
-mod component_impls {
-    use crate::app::composer::{
-        properties::{
-            PropertiesUi,
-            TrackChanges,
-            label_and_value,
-            nalgebra::Isometry3UiConfig,
-        },
-        renderer::{
-            Outline,
-            light::{
-                CameraLightFilter,
-                Material,
-                PointLight,
-            },
-        },
-        scene::transform::Transform,
-    };
-
-    impl PropertiesUi for Material {
-        type Config = ();
-
-        fn properties_ui(&mut self, ui: &mut egui::Ui, _config: &Self::Config) -> egui::Response {
-            let mut changes = TrackChanges::default();
-
-            let response = egui::Frame::new()
-                .show(ui, |ui| {
-                    label_and_value(ui, "Ambient", &mut changes, &mut self.ambient);
-                    label_and_value(ui, "Diffuse", &mut changes, &mut self.diffuse);
-                    label_and_value(ui, "Specular", &mut changes, &mut self.specular);
-                    label_and_value(ui, "Emissive", &mut changes, &mut self.emissive);
-                    label_and_value(ui, "Shininess", &mut changes, &mut self.shininess);
-                    label_and_value(ui, "Wireframe", &mut changes, &mut self.wireframe);
-                })
-                .response;
-
-            changes.propagated(response)
-        }
-    }
-
-    impl PropertiesUi for PointLight {
-        type Config = ();
-
-        fn properties_ui(&mut self, ui: &mut egui::Ui, _config: &Self::Config) -> egui::Response {
-            let mut changes = TrackChanges::default();
-
-            let response = egui::Frame::new()
-                .show(ui, |ui| {
-                    label_and_value(ui, "Diffuse", &mut changes, &mut self.diffuse);
-                    label_and_value(ui, "Specular", &mut changes, &mut self.specular);
-                })
-                .response;
-
-            changes.propagated(response)
-        }
-    }
-
-    impl PropertiesUi for CameraLightFilter {
-        type Config = ();
-
-        fn properties_ui(&mut self, ui: &mut egui::Ui, _config: &Self::Config) -> egui::Response {
-            let mut changes = TrackChanges::default();
-
-            let response = egui::Frame::new()
-                .show(ui, |ui| {
-                    label_and_value(ui, "Ambient", &mut changes, &mut self.ambient);
-                    label_and_value(ui, "Diffuse", &mut changes, &mut self.diffuse);
-                    label_and_value(ui, "Specular", &mut changes, &mut self.specular);
-                    label_and_value(ui, "Emissive", &mut changes, &mut self.emissive);
-                })
-                .response;
-
-            changes.propagated(response)
-        }
-    }
-
-    impl PropertiesUi for Outline {
-        type Config = ();
-
-        fn properties_ui(&mut self, ui: &mut egui::Ui, _config: &Self::Config) -> egui::Response {
-            let mut changes = TrackChanges::default();
-
-            let response = egui::Frame::new()
-                .show(ui, |ui| {
-                    label_and_value(ui, "Color", &mut changes, &mut self.color);
-                    label_and_value(ui, "Thickness", &mut changes, &mut self.thickness);
-                })
-                .response;
-
-            changes.propagated(response)
-        }
-    }
-
-    impl PropertiesUi for Transform {
-        type Config = Isometry3UiConfig;
-
-        fn properties_ui(&mut self, ui: &mut egui::Ui, config: &Self::Config) -> egui::Response {
-            self.transform.properties_ui(ui, config)
-        }
     }
 }

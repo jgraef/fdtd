@@ -39,14 +39,16 @@ use nalgebra::{
     Vector3,
 };
 
+pub use crate::fdtd::simulation::{
+    PhysicalConstants,
+    Resolution,
+};
 use crate::fdtd::{
     executor::Executor,
     geometry::Block,
     material::Material,
     simulation::{
         Axis,
-        PhysicalConstants,
-        Resolution,
         Simulation,
     },
     source::GaussianPulse,

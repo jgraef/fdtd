@@ -1,7 +1,5 @@
-pub mod entities;
 pub mod nalgebra;
 pub mod palette;
-pub mod solver;
 pub mod std;
 
 use crate::util::Boo;

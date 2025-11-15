@@ -5,9 +5,7 @@ This app is work-in-progress. It's intended to model electromagnetic behavior. I
 # TODO
 
  - PRs for `egui_ltreeview`
- - try `egui_probe` for entity/component and settings UI
-  - camera (and light) config ui
- - manipulating objects: movement, other properties in window
+ - manipulating objects's isometry in scene view
  - persist settings like `CameraConfig`, `CameraLightFilters` (global or per project?)
  - render wiremesh without the `POLYGON_MODE_LINE` feature. Use `PrimitiveTopology::LineList` instead.
    Just need to adjust the number of vertices to `2*n` (2 vertices per line, 3 lines per face, versus just the 3 vertices of a normal triangle), and then pull the right vertices in the shader.

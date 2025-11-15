@@ -11,6 +11,11 @@ use serde::{
     Serialize,
 };
 
+use crate::app::composer::properties::{
+    PropertiesUi,
+    nalgebra::Isometry3UiConfig,
+};
+
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct Transform {
     /// Rotation followed by translation that transforms points from the
@@ -116,5 +121,13 @@ impl From<Point3<f32>> for Transform {
 impl From<UnitQuaternion<f32>> for Transform {
     fn from(value: UnitQuaternion<f32>) -> Self {
         Self::from(Isometry3::from_parts(Default::default(), value))
+    }
+}
+
+impl PropertiesUi for Transform {
+    type Config = Isometry3UiConfig;
+
+    fn properties_ui(&mut self, ui: &mut egui::Ui, config: &Self::Config) -> egui::Response {
+        self.transform.properties_ui(ui, config)
     }
 }
