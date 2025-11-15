@@ -228,3 +228,10 @@ where
         Self::Owned(Default::default())
     }
 }
+
+pub fn format_size<T>(value: T) -> humansize::SizeFormatter<T, humansize::FormatSizeOptions>
+where
+    T: humansize::ToF64 + humansize::Unsigned,
+{
+    humansize::SizeFormatter::new(value, humansize::BINARY)
+}

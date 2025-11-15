@@ -1,12 +1,20 @@
 use std::collections::HashMap;
 
+use nalgebra::{
+    Isometry3,
+    Point3,
+};
 use parry3d::{
     bounding_volume::{
         Aabb,
         BoundingVolume,
     },
     partitioning as bvh,
-    query::Ray,
+    query::{
+        Contact,
+        Ray,
+    },
+    shape::Shape,
 };
 use serde::{
     Deserialize,
@@ -101,17 +109,14 @@ impl OctTree {
     ) -> Option<RayHit> {
         let max_time_of_impact = max_time_of_impact.into().unwrap_or(f32::MAX);
 
+        let view = world.view::<(&Transform, &SharedShape)>();
+
         self.bvh
             .cast_ray(ray, max_time_of_impact, |leaf_index, best_hit| {
                 self.stored_entities.get(&leaf_index).and_then(|entity| {
-                    world
-                        .query_one::<(&SharedShape, &Transform)>(*entity)
-                        .ok()
-                        .and_then(|mut query| {
-                            query.get().and_then(|(shape, transform)| {
-                                shape.cast_ray(&transform.transform, ray, best_hit, true)
-                            })
-                        })
+                    view.get(*entity).and_then(|(transform, shape)| {
+                        shape.cast_ray(&transform.transform, ray, best_hit, true)
+                    })
                 })
             })
             .map(|(leaf_index, time_of_impact)| {
@@ -121,6 +126,67 @@ impl OctTree {
                     entity,
                 }
             })
+    }
+
+    fn intersect_aabb<'a>(&'a self, aabb: Aabb) -> impl Iterator<Item = hecs::Entity> + 'a {
+        // note: this is slightly more convenient than the builtin aabb-intersection
+        // query as we can move the aabb into the closure
+
+        // note: the leaves iterator doesn't implement
+        // any other useful iteration traits, so it's fine to just return an impl here.
+        // it would be nice to be able to name the type, but we can't import parry's
+        // Leaves iterator anyway.
+
+        self.bvh
+            .leaves(move |node| node.aabb().intersects(&aabb))
+            .filter_map(|leaf_index| self.stored_entities.get(&leaf_index).copied())
+    }
+
+    pub fn point_query<'a>(
+        &'a self,
+        point: Point3<f32>,
+        entities: &'a hecs::World,
+    ) -> impl Iterator<Item = hecs::Entity> + 'a {
+        let aabb = Aabb {
+            mins: point,
+            maxs: point,
+        };
+
+        let view = entities.view::<(&Transform, &SharedShape)>();
+
+        self.intersect_aabb(aabb).filter_map(move |entity| {
+            let (transform, shape) = view.get(entity)?;
+
+            shape
+                .contains_point(&transform.transform, &point)
+                .then_some(entity)
+        })
+    }
+
+    pub fn contact_query<'a>(
+        &'a self,
+        shape: &dyn Shape,
+        transform: &Isometry3<f32>,
+        entities: &'a hecs::World,
+    ) -> impl Iterator<Item = (hecs::Entity, Contact)> {
+        let aabb = shape.compute_aabb(&transform);
+
+        let view = entities.view::<(&Transform, &SharedShape)>();
+
+        self.intersect_aabb(aabb).filter_map(move |entity| {
+            let (other_transform, other_shape) = view.get(entity)?;
+
+            parry3d::query::contact(
+                transform,
+                shape,
+                &other_transform.transform,
+                &*other_shape.0,
+                0.0,
+            )
+            .ok()
+            .flatten()
+            .map(|contact| (entity, contact))
+        })
     }
 
     pub fn root_aabb(&self) -> Aabb {

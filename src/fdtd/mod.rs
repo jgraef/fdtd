@@ -39,17 +39,20 @@ use nalgebra::{
     Vector3,
 };
 
-pub use crate::fdtd::simulation::{
-    PhysicalConstants,
-    Resolution,
-    Simulation,
-};
 use crate::fdtd::{
     executor::Executor,
     geometry::Block,
-    material::Material,
     simulation::Axis,
     source::GaussianPulse,
+};
+pub use crate::fdtd::{
+    material::Material,
+    simulation::{
+        PhysicalConstants,
+        Resolution,
+        Simulation,
+        SimulationConfig,
+    },
 };
 
 pub fn run_app() -> Result<(), Error> {
@@ -84,13 +87,15 @@ impl App {
         println!("{physical_constants:#?}");
         println!("{resolution:#?}");
 
-        let mut simulation = Simulation::new(
-            Vector3::new(500.0, 0.0, 0.0),
-            physical_constants,
+        let config = SimulationConfig {
             resolution,
-        );
+            physical_constants,
+            origin: None,
+            size: Vector3::new(500.0, 0.0, 0.0),
+        };
+        println!("Memory usage: {}", config.memory_usage_estimate());
 
-        println!("Memory usage: {}", simulation.memory_usage_estimate());
+        let mut simulation = Simulation::new(&config);
 
         simulation.add_material(
             Block {

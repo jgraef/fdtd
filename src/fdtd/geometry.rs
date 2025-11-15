@@ -45,7 +45,11 @@ pub trait BoundingBox {
 
 impl Rasterize for Point3<f64> {
     fn rasterize(&self, simulation: &Simulation) -> impl Iterator<Item = Point3<usize>> + '_ {
-        let x = round_to_grid(self, simulation.origin(), &simulation.resolution().spatial);
+        let x = round_to_grid(
+            self,
+            &simulation.origin().coords,
+            &simulation.resolution().spatial,
+        );
         [x].into_iter()
     }
 }
@@ -71,12 +75,12 @@ impl Rasterize for Block {
 
         let x0 = round_to_grid(
             &(center - 0.5 * self.dimensions),
-            simulation.origin(),
+            &simulation.origin().coords,
             &simulation.resolution().spatial,
         );
         let x1 = round_to_grid(
             &(center + 0.5 * self.dimensions),
-            simulation.origin(),
+            &simulation.origin().coords,
             &simulation.resolution().spatial,
         );
 

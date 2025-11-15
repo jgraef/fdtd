@@ -316,7 +316,7 @@ impl ComposerState {
             physical_constants: fdtd::PhysicalConstants::REDUCED,
             specifics: SolverConfigSpecifics::Fdtd {
                 resolution: fdtd::Resolution {
-                    spatial: Vector3::repeat(1.0),
+                    spatial: Vector3::repeat(0.1),
                     temporal: 0.25,
                 },
             },

@@ -220,6 +220,30 @@ impl SwapBufferIndex {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct SimulationConfig {
+    pub resolution: Resolution,
+    pub physical_constants: PhysicalConstants,
+    pub origin: Option<Point3<f64>>,
+    pub size: Vector3<f64>,
+}
+
+impl SimulationConfig {
+    pub fn lattice_size(&self) -> Vector3<usize> {
+        self.size
+            .component_div(&self.resolution.spatial)
+            .map(|x| (x.ceil() as usize).max(1))
+    }
+
+    pub fn origin(&self) -> Point3<f64> {
+        self.origin.unwrap_or_else(|| (0.5 * self.size).into())
+    }
+
+    pub fn memory_usage_estimate(&self) -> usize {
+        size_of::<Cell>() * self.lattice_size().product()
+    }
+}
+
 #[derive(derive_more::Debug)]
 pub struct Simulation {
     resolution: Resolution,
@@ -227,7 +251,7 @@ pub struct Simulation {
 
     tick: usize,
     time: f64,
-    origin: Vector3<f64>,
+    origin: Point3<f64>,
     total_energy: f64,
 
     lattice: Lattice<Cell>,
@@ -238,25 +262,17 @@ pub struct Simulation {
 }
 
 impl Simulation {
-    pub fn new(
-        size: Vector3<f64>,
-        physical_constants: PhysicalConstants,
-        resolution: Resolution,
-    ) -> Self {
-        let lattice_size = size
-            .component_div(&resolution.spatial)
-            .map(|x| (x.ceil() as usize).max(1));
-        let origin = 0.5 * size;
-
+    pub fn new(config: &SimulationConfig) -> Self {
+        let lattice_size = config.lattice_size();
         let lattice = Lattice::new(lattice_size, |_| Cell::default());
         let boundary_conditions = default_boundary_conditions(&lattice_size);
 
         Self {
-            physical_constants,
-            resolution,
+            physical_constants: config.physical_constants,
+            resolution: config.resolution,
             tick: 0,
             time: 0.0,
-            origin,
+            origin: config.origin(),
             total_energy: 0.0,
             lattice,
             boundary_conditions,
@@ -410,7 +426,7 @@ impl Simulation {
         &self.resolution
     }
 
-    pub(crate) fn origin(&self) -> &Vector3<f64> {
+    pub fn origin(&self) -> &Point3<f64> {
         &self.origin
     }
 
@@ -418,10 +434,6 @@ impl Simulation {
         self.lattice
             .dimensions()
             .zip_map(&self.resolution.spatial, |x, dx| x as f64 * dx)
-    }
-
-    pub fn memory_usage_estimate(&self) -> usize {
-        size_of::<Cell>() * self.lattice.num_cells()
     }
 
     pub fn total_energy(&self) -> f64 {
@@ -441,6 +453,14 @@ impl Simulation {
             if let Some(cell) = self.lattice.get_mut(&point) {
                 cell.material = material;
             }
+        }
+    }
+
+    pub fn fill_with(&mut self, mut material_at: impl FnMut(Point3<f64>) -> Material) {
+        for (point, cell) in self.lattice.iter_mut() {
+            let point_float =
+                self.origin + point.coords.cast().component_mul(&self.resolution.spatial);
+            cell.material = material_at(point_float);
         }
     }
 
@@ -471,7 +491,7 @@ impl Simulation {
         let n = *axis.vector_component(&self.lattice.dimensions());
         let e = axis.basis().into_inner();
         let resolution = *axis.vector_component(&self.resolution.spatial);
-        let origin = *axis.vector_component(&self.origin);
+        let origin = *axis.vector_component(&self.origin.coords);
         let swap_buffer_index = self.swap_buffer_index();
 
         (0..n).map(move |i| {

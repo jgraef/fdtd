@@ -15,39 +15,50 @@ use std::{
 };
 
 use nalgebra::{
+    Isometry3,
+    Point3,
     Vector2,
     Vector3,
 };
 use parry3d::{
     bounding_volume::Aabb,
-    query::Ray,
-    shape::HalfSpace,
+    query::{
+        Contact,
+        Ray,
+    },
+    shape::{
+        HalfSpace,
+        Shape,
+    },
 };
 use serde::{
     Deserialize,
     Serialize,
 };
 
-use crate::app::composer::{
-    Selectable,
-    renderer::{
-        Render,
-        grid::GridPlane,
-        light::Material,
-    },
-    scene::{
-        collisions::{
-            BoundingBox,
-            Collides,
-            OctTree,
-            RayHit,
-            merge_aabbs,
+use crate::{
+    app::composer::{
+        Selectable,
+        renderer::{
+            Render,
+            grid::GridPlane,
+            light::Material,
         },
-        serialize::SerializeEntity,
-        shape::SharedShape,
-        transform::Transform,
+        scene::{
+            collisions::{
+                BoundingBox,
+                Collides,
+                OctTree,
+                RayHit,
+                merge_aabbs,
+            },
+            serialize::SerializeEntity,
+            shape::SharedShape,
+            transform::Transform,
+        },
+        tree::ShowInTree,
     },
-    tree::ShowInTree,
+    fdtd,
 };
 
 /// # TODO
@@ -91,6 +102,11 @@ impl Scene {
             Collides,
             ShowInTree,
             Selectable,
+            // todo: added for testing for now.
+            fdtd::Material {
+                relative_permittivity: 3.9,
+                ..fdtd::Material::VACUUM
+            },
         ))
     }
 
@@ -114,6 +130,18 @@ impl Scene {
     ) -> Option<RayHit> {
         self.octtree
             .cast_ray(ray, max_time_of_impact, &self.entities)
+    }
+
+    pub fn point_query(&self, point: &Point3<f32>) -> impl Iterator<Item = hecs::Entity> {
+        self.octtree.point_query(*point, &self.entities)
+    }
+
+    pub fn contact_query(
+        &self,
+        shape: &dyn Shape,
+        transform: &Isometry3<f32>,
+    ) -> impl Iterator<Item = (hecs::Entity, Contact)> {
+        self.octtree.contact_query(shape, transform, &self.entities)
     }
 
     /// This needs to be called every frame to update internal state.

@@ -5,12 +5,19 @@ use nalgebra::{
     UnitQuaternion,
     Vector3,
 };
+use parry3d::bounding_volume::Aabb;
 use serde::{
     Deserialize,
     Serialize,
 };
 
-use crate::fdtd;
+use crate::{
+    app::composer::scene::{
+        Scene,
+        transform::Transform,
+    },
+    fdtd,
+};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SolverConfig {
@@ -67,6 +74,37 @@ impl Default for Volume {
     }
 }
 
+impl Volume {
+    pub fn aabb(&self, scene: &Scene) -> Aabb {
+        match self {
+            Volume::Fixed(fixed_volume) => {
+                Aabb::from_half_extents(
+                    fixed_volume.isometry.translation.vector.into(),
+                    fixed_volume.half_extents,
+                )
+            }
+            Volume::SceneAabb(scene_aabb_volume) => {
+                scene
+                    .compute_aabb_relative_to_observer(
+                        &Transform::from(scene_aabb_volume.rotation),
+                        false,
+                    )
+                    .unwrap_or_else(|| {
+                        // todo: or should we return None instead?
+                        Aabb::new_invalid()
+                    })
+            }
+        }
+    }
+
+    pub fn rotation(&self) -> UnitQuaternion<f32> {
+        match self {
+            Volume::Fixed(fixed_volume) => fixed_volume.isometry.rotation,
+            Volume::SceneAabb(scene_aabb_volume) => scene_aabb_volume.rotation,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct FixedVolume {
     pub isometry: Isometry3<f32>,
@@ -84,6 +122,6 @@ impl Default for FixedVolume {
 
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
 pub struct SceneAabbVolume {
-    pub orientation: UnitQuaternion<f32>,
+    pub rotation: UnitQuaternion<f32>,
     pub margin: Vector3<f32>,
 }

@@ -13,13 +13,17 @@ pub struct Material {
     pub eletrical_conductivity: f64,
 }
 
+impl Material {
+    pub const VACUUM: Self = Self {
+        relative_permeability: 1.0,
+        magnetic_conductivity: 0.0,
+        relative_permittivity: 1.0,
+        eletrical_conductivity: 0.0,
+    };
+}
+
 impl Default for Material {
     fn default() -> Self {
-        Self {
-            relative_permeability: 1.0,
-            magnetic_conductivity: 0.0,
-            relative_permittivity: 1.0,
-            eletrical_conductivity: 0.0,
-        }
+        Self::VACUUM
     }
 }

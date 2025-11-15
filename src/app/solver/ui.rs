@@ -116,7 +116,7 @@ impl PropertiesUi for Volume {
                             ui,
                             "Orientation",
                             &mut changes,
-                            &mut scene_aabb_volume.orientation,
+                            &mut scene_aabb_volume.rotation,
                         );
                         label_and_value(ui, "Margin", &mut changes, &mut scene_aabb_volume.margin);
                     }
