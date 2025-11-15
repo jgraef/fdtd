@@ -1,9 +1,10 @@
 pub mod entities;
 pub mod nalgebra;
 pub mod palette;
+pub mod solver;
 pub mod std;
 
-use crate::util::arena::Boo;
+use crate::util::Boo;
 
 pub trait PropertiesUi {
     type Config: Default;
@@ -176,4 +177,20 @@ impl PropertiesUiExt for egui::Ui {
     {
         properties.properties_ui(self, &Default::default())
     }
+}
+
+pub fn label_and_value<P>(
+    ui: &mut egui::Ui,
+    label: &str,
+    changes: &mut TrackChanges,
+    field: &mut P,
+) -> egui::Response
+where
+    P: PropertiesUi,
+{
+    ui.horizontal(|ui| {
+        ui.label(label);
+        changes.track(field.properties_ui(ui, &Default::default()))
+    })
+    .inner
 }

@@ -6,12 +6,9 @@ use serde::{
     Serialize,
 };
 
-use crate::app::composer::{
-    renderer::{
-        Outline,
-        light::CameraLightFilter,
-    },
-    solver::SolverConfig,
+use crate::app::composer::renderer::{
+    Outline,
+    light::CameraLightFilter,
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -22,10 +19,6 @@ pub struct AppConfig {
     #[serde(default)]
     pub composer: ComposerConfig,
 
-    /// Default solver configs
-    #[serde(default)]
-    pub default_solver_configs: Vec<SolverConfig>,
-
     pub graphics: GraphicsConfig,
 }
 
@@ -34,7 +27,6 @@ impl Default for AppConfig {
         Self {
             recently_opened_files_limit: default_recently_opened_files_limit(),
             composer: Default::default(),
-            default_solver_configs: vec![],
             graphics: Default::default(),
         }
     }

@@ -1,7 +1,6 @@
 pub mod properties;
 pub mod renderer;
 pub mod scene;
-pub mod solver;
 pub mod tree;
 pub mod view;
 
@@ -35,7 +34,10 @@ use crate::{
     Error,
     app::{
         composer::{
-            properties::entities::EntityPropertiesWindow,
+            properties::{
+                entities::EntityPropertiesWindow,
+                solver::SolverConfigUiWindow,
+            },
             renderer::{
                 ClearColor,
                 Outline,
@@ -59,7 +61,6 @@ use crate::{
                     UndoBuffer,
                 },
             },
-            solver::SolverConfig,
             tree::ObjectTreeState,
             view::{
                 ScenePointer,
@@ -70,6 +71,7 @@ use crate::{
             AppConfig,
             ComposerConfig,
         },
+        solver::SolverConfig,
     },
     file_formats::{
         FileFormat,
@@ -111,7 +113,6 @@ impl Composer {
         ExampleScene
             .populate_scene(&mut state.scene)
             .expect("populating example scene failed");
-        state.solver_configs = app_config.default_solver_configs.clone();
         self.state = Some(state);
     }
 
@@ -140,7 +141,6 @@ impl Composer {
                     }
                     .populate_scene(&mut state.scene)?;
 
-                    state.solver_configs = app_config.default_solver_configs.clone();
                     state.path = Some(path.to_owned());
                     state.camera_mut().fit_to_scene(&Default::default());
 
@@ -234,7 +234,7 @@ impl Composer {
         if let Some(state) = &self.state {
             let solver_config = &state.solver_configs[index];
 
-            tracing::debug!("todo: run {} solver", solver_config.name);
+            tracing::debug!("todo: run {:?} solver", solver_config.label);
         }
     }
 }
@@ -275,6 +275,7 @@ pub struct ComposerState {
     undo_buffer: UndoBuffer,
 
     solver_configs: Vec<SolverConfig>,
+    solver_config_window: SolverConfigUiWindow,
 
     /// For which entity the properties window is open
     properties_window_entity: Option<hecs::Entity>,
@@ -315,6 +316,7 @@ impl ComposerState {
             context_menu_object: None,
             undo_buffer,
             solver_configs: vec![],
+            solver_config_window: SolverConfigUiWindow::default(),
             properties_window_entity: None,
         }
     }
@@ -461,6 +463,9 @@ impl ComposerState {
                 properties::entities::default_title,
                 properties::entities::debug(true),
             );
+
+            self.solver_config_window
+                .show(ctx, &mut self.solver_configs);
         });
     }
 
@@ -557,6 +562,10 @@ impl ComposerState {
     pub fn open_camera_window(&mut self) {
         // todo: we probably want to show this in a separate window
         self.properties_window_entity = Some(self.camera_entity);
+    }
+
+    pub fn open_solver_config_window(&mut self) {
+        self.solver_config_window.open();
     }
 
     fn send_to_hades(

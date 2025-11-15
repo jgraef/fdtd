@@ -1,6 +1,9 @@
 use std::ops::RangeInclusive;
 
-use crate::app::composer::properties::PropertiesUi;
+use crate::{
+    app::composer::properties::PropertiesUi,
+    util::Moo,
+};
 
 #[derive(Clone, Debug)]
 pub enum NumericPropertyUiConfig {
@@ -60,6 +63,45 @@ impl<'a> egui::Widget for DragAngle<'a> {
 
         if response.changed() {
             *self.radians = degrees.to_radians();
+        }
+
+        response
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct TextPropertiesUiConfig {
+    pub multiline: bool,
+}
+
+impl PropertiesUi for String {
+    type Config = TextPropertiesUiConfig;
+
+    fn properties_ui(&mut self, ui: &mut egui::Ui, config: &Self::Config) -> egui::Response {
+        if config.multiline {
+            ui.text_edit_multiline(self)
+        }
+        else {
+            ui.text_edit_singleline(self)
+        }
+    }
+}
+
+impl PropertiesUi for Option<String> {
+    type Config = TextPropertiesUiConfig;
+
+    fn properties_ui(&mut self, ui: &mut egui::Ui, config: &Self::Config) -> egui::Response {
+        let mut moo_string: Moo<String> = self
+            .as_mut()
+            .map_or_else(|| String::new().into(), Into::into);
+
+        let response = moo_string.properties_ui(ui, config);
+
+        if moo_string.is_empty() {
+            *self = None;
+        }
+        else if let Moo::Owned(string) = moo_string {
+            *self = Some(string);
         }
 
         response

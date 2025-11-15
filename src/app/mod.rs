@@ -4,6 +4,7 @@ pub mod composer;
 pub mod config;
 pub mod files;
 pub mod menubar;
+pub mod solver;
 pub mod start;
 
 use std::borrow::Cow;

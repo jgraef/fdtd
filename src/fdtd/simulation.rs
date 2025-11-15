@@ -16,6 +16,10 @@ use num::{
     One,
     Zero,
 };
+use serde::{
+    Deserialize,
+    Serialize,
+};
 
 use crate::fdtd::{
     boundary_condition::{
@@ -479,7 +483,7 @@ impl Simulation {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Serialize, Deserialize)]
 pub struct PhysicalConstants {
     pub vacuum_permittivity: f64,
     pub vacuum_permeability: f64,
@@ -562,7 +566,7 @@ impl PhysicalConstants {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct Resolution {
     pub spatial: Vector3<f64>,
     pub temporal: f64,

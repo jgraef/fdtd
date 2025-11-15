@@ -272,6 +272,7 @@ mod component_impls {
         properties::{
             PropertiesUi,
             TrackChanges,
+            label_and_value,
             nalgebra::Isometry3UiConfig,
         },
         renderer::{
@@ -285,22 +286,6 @@ mod component_impls {
         scene::transform::Transform,
     };
 
-    fn show_field<P>(
-        ui: &mut egui::Ui,
-        label: &str,
-        changes: &mut TrackChanges,
-        field: &mut P,
-    ) -> egui::Response
-    where
-        P: PropertiesUi,
-    {
-        ui.horizontal(|ui| {
-            ui.label(label);
-            changes.track(field.properties_ui(ui, &Default::default()))
-        })
-        .inner
-    }
-
     impl PropertiesUi for Material {
         type Config = ();
 
@@ -309,12 +294,12 @@ mod component_impls {
 
             let response = egui::Frame::new()
                 .show(ui, |ui| {
-                    show_field(ui, "Ambient", &mut changes, &mut self.ambient);
-                    show_field(ui, "Diffuse", &mut changes, &mut self.diffuse);
-                    show_field(ui, "Specular", &mut changes, &mut self.specular);
-                    show_field(ui, "Emissive", &mut changes, &mut self.emissive);
-                    show_field(ui, "Shininess", &mut changes, &mut self.shininess);
-                    show_field(ui, "Wireframe", &mut changes, &mut self.wireframe);
+                    label_and_value(ui, "Ambient", &mut changes, &mut self.ambient);
+                    label_and_value(ui, "Diffuse", &mut changes, &mut self.diffuse);
+                    label_and_value(ui, "Specular", &mut changes, &mut self.specular);
+                    label_and_value(ui, "Emissive", &mut changes, &mut self.emissive);
+                    label_and_value(ui, "Shininess", &mut changes, &mut self.shininess);
+                    label_and_value(ui, "Wireframe", &mut changes, &mut self.wireframe);
                 })
                 .response;
 
@@ -330,8 +315,8 @@ mod component_impls {
 
             let response = egui::Frame::new()
                 .show(ui, |ui| {
-                    show_field(ui, "Diffuse", &mut changes, &mut self.diffuse);
-                    show_field(ui, "Specular", &mut changes, &mut self.specular);
+                    label_and_value(ui, "Diffuse", &mut changes, &mut self.diffuse);
+                    label_and_value(ui, "Specular", &mut changes, &mut self.specular);
                 })
                 .response;
 
@@ -347,10 +332,10 @@ mod component_impls {
 
             let response = egui::Frame::new()
                 .show(ui, |ui| {
-                    show_field(ui, "Ambient", &mut changes, &mut self.ambient);
-                    show_field(ui, "Diffuse", &mut changes, &mut self.diffuse);
-                    show_field(ui, "Specular", &mut changes, &mut self.specular);
-                    show_field(ui, "Emissive", &mut changes, &mut self.emissive);
+                    label_and_value(ui, "Ambient", &mut changes, &mut self.ambient);
+                    label_and_value(ui, "Diffuse", &mut changes, &mut self.diffuse);
+                    label_and_value(ui, "Specular", &mut changes, &mut self.specular);
+                    label_and_value(ui, "Emissive", &mut changes, &mut self.emissive);
                 })
                 .response;
 
@@ -366,8 +351,8 @@ mod component_impls {
 
             let response = egui::Frame::new()
                 .show(ui, |ui| {
-                    show_field(ui, "Color", &mut changes, &mut self.color);
-                    show_field(ui, "Thickness", &mut changes, &mut self.thickness);
+                    label_and_value(ui, "Color", &mut changes, &mut self.color);
+                    label_and_value(ui, "Thickness", &mut changes, &mut self.thickness);
                 })
                 .response;
 

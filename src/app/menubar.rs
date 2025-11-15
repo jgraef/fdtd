@@ -23,8 +23,8 @@ use crate::{
         composer::{
             ComposerState,
             renderer::camera::CameraConfig,
-            solver::SolverConfig,
         },
+        solver::SolverConfig,
     },
     util::format_path,
 };
@@ -380,15 +380,22 @@ impl<'a> MenuBar<'a> {
 
             let has_file_open = self.app.composer.has_file_open();
 
-            if ui.button("Configure Solvers").clicked() {
-                //self.solver_config_window.open();
-                todo!();
+            if ui
+                .add_enabled(has_file_open, egui::Button::new("Configure Solvers"))
+                .clicked()
+            {
+                self.app
+                    .composer
+                    .state
+                    .as_mut()
+                    .unwrap()
+                    .open_solver_config_window();
             }
 
             ui.separator();
 
             let solver_button =
-                |solver: &SolverConfig| egui::Button::new(("Run ", &solver.name, " Solver"));
+                |solver: &SolverConfig| egui::Button::new(("Run ", &solver.label, " Solver"));
 
             let mut i = 0;
             if has_file_open {
@@ -398,12 +405,6 @@ impl<'a> MenuBar<'a> {
                         self.app.composer.run_solver(i);
                     }
                     i += 1;
-                }
-            }
-            else {
-                // show default solver configs as disabled buttons if no file is open
-                for solver in &self.app.config.default_solver_configs {
-                    ui.add_enabled(false, solver_button(solver));
                 }
             }
 
