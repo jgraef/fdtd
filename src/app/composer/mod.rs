@@ -39,6 +39,8 @@ use crate::{
             renderer::{
                 ClearColor,
                 Outline,
+                Quad,
+                Render,
                 Renderer,
                 WgpuContext,
                 camera::{
@@ -81,6 +83,7 @@ use crate::{
                 SolverConfigSpecifics,
                 StopCondition,
             },
+            observer::Observer,
             runner::SolverRunner,
             ui::SolverConfigUiWindow,
         },
@@ -330,7 +333,7 @@ impl ComposerState {
                     spatial: Vector3::repeat(0.01),
                     temporal: 0.25,
                 },
-                stop_condition: StopCondition::StepLimit { limit: 200 },
+                stop_condition: StopCondition::StepLimit { limit: 5 },
             }),
         }];
 
@@ -593,10 +596,6 @@ impl ComposerState {
         self.solver_config_window.open();
     }
 
-    pub fn solver_configs(&self) -> std::slice::Iter<'_, SolverConfig> {
-        self.solver_configs.iter()
-    }
-
     fn send_to_hades(
         &mut self,
         entities: impl IntoIterator<Item = hecs::Entity>,
@@ -713,6 +712,20 @@ impl PopulateScene for ExampleScene {
             shape(0.05),
             palette::named::CYAN,
         );
+
+        scene.entities.spawn((
+            // todo
+            Observer {
+                write_to_gif: None,
+                display_as_texture: true,
+            },
+            //Transform::from(UnitQuaternion::from_axis_angle(&Vector3::y_axis(), 0.0)),
+            Transform::identity(),
+            Quad {
+                half_extents: Vector2::new(1.0, 1.0),
+            },
+            Render,
+        ));
 
         Ok(())
     }
@@ -857,7 +870,7 @@ impl<'a> SelectionMut<'a> {
 
 impl<'a> Drop for SelectionMut<'a> {
     fn drop(&mut self) {
-        self.scene.command_buffer.run_on(&mut self.scene.entities);
+        self.scene.apply_deferred();
     }
 }
 

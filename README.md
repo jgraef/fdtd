@@ -8,6 +8,8 @@ This app is work-in-progress. It's intended to model electromagnetic behavior. I
  - manipulating objects's isometry in scene view
  - pass more config to properties_ui for floats for proper formatting
  - persist settings like `CameraConfig`, `CameraLightFilters` (global or per project?)
+ - keybindings
+ - rename one outline (selection, shape edges). maybe to "contour"?
  - refactor fdtd to integrate into app better.
   - remove some old stuff which will be used app-wide (like geometry)
   - hide submodules and re-export stuff that should be exposed in the fdtd module namespace.

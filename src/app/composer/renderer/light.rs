@@ -231,7 +231,7 @@ impl PropertiesUi for CameraLightFilter {
     }
 }
 
-#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+#[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]
 #[repr(C)]
 pub struct MaterialData {
     wireframe: LinSrgba,

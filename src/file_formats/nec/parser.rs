@@ -362,6 +362,11 @@ impl<'a> TokenReader<'a> {
     where
         T: FromStr,
     {
+        // todo: can be done with std::array::try_from_fn when it is stabilized. or
+        // could be done with MaybeUninit, but I didn't manage. well, it can be done
+        // with std::array::from_fn to initialize a [MaybeUninit<T>; N], but you'd need
+        // to handle failure case and drop all already initialized values, so it's much
+        // easier with ArrayVec. Also MaybeUninit::array_assume_init is not stable.
         let mut buf: ArrayVec<T, N> = ArrayVec::new_const();
 
         for _ in 0..N {

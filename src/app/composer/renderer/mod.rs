@@ -3,6 +3,7 @@ pub mod draw_commands;
 pub mod grid;
 pub mod light;
 pub mod mesh;
+pub mod texture;
 
 use std::{
     marker::PhantomData,
@@ -11,6 +12,7 @@ use std::{
         Deref,
         DerefMut,
     },
+    sync::Arc,
 };
 
 use bitflags::bitflags;
@@ -18,7 +20,11 @@ use bytemuck::{
     Pod,
     Zeroable,
 };
-use nalgebra::Matrix4;
+use nalgebra::{
+    Matrix4,
+    Vector2,
+    Vector3,
+};
 use palette::{
     Srgb,
     Srgba,
@@ -37,18 +43,15 @@ use crate::app::composer::{
     renderer::{
         camera::{
             CameraConfig,
-            CameraData,
-            CameraProjection,
             CameraResources,
-            Viewport,
         },
         draw_commands::{
             DrawCommand,
             DrawCommandBuffer,
+            DrawCommandEnablePipelineFlags,
             DrawCommandOptions,
         },
         light::{
-            CameraLightFilter,
             Material,
             MaterialData,
         },
@@ -56,12 +59,10 @@ use crate::app::composer::{
             Mesh,
             WindingOrder,
         },
+        texture::Texture,
     },
     scene::{
-        Changed,
-        Label,
         Scene,
-        shape::SharedShape,
         transform::Transform,
     },
 };
@@ -95,6 +96,11 @@ pub struct WgpuContext {
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
     pub renderer_config: RendererConfig,
+
+    /// should this go in here? we need it to get egui texture handles for
+    /// textures if we want to render them in widgets, and the other way if we
+    /// want to get a wgpu texture from a egui texture id
+    pub egui_wgpu_renderer: EguiWgpuRenderer,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -102,6 +108,18 @@ pub struct RendererConfig {
     pub target_texture_format: wgpu::TextureFormat,
     pub depth_texture_format: Option<wgpu::TextureFormat>,
     pub multisample_count: NonZero<u32>,
+}
+
+#[derive(Clone, derive_more::Debug)]
+pub struct EguiWgpuRenderer {
+    #[debug(skip)]
+    inner: Arc<egui::mutex::RwLock<egui_wgpu::Renderer>>,
+}
+
+impl From<Arc<egui::mutex::RwLock<egui_wgpu::Renderer>>> for EguiWgpuRenderer {
+    fn from(value: Arc<egui::mutex::RwLock<egui_wgpu::Renderer>>) -> Self {
+        Self { inner: value }
+    }
 }
 
 /// # Notes
@@ -129,11 +147,17 @@ pub struct Renderer {
     camera_bind_group_layout: wgpu::BindGroupLayout,
     instance_bind_group_layout: wgpu::BindGroupLayout,
     mesh_bind_group_layout: wgpu::BindGroupLayout,
+    texture_bind_group_layout: wgpu::BindGroupLayout,
+
+    // this is actually used for everything, not just meshes. but we might split it into clear,
+    // mesh, quad_with_texture
+    mesh_shader_module: wgpu::ShaderModule,
 
     clear_pipeline: Pipeline,
     solid_pipeline: Pipeline,
     wireframe_pipeline: Pipeline,
     outline_pipeline: Pipeline,
+    quad_with_texture_pipeline: Pipeline,
 
     /// Scratch buffer for instance data (in GPU format)
     instance_data: Vec<InstanceData>,
@@ -155,6 +179,9 @@ pub struct Renderer {
     /// Its `finish` method returns the finalized draw command (aggregate) for a
     /// specific camera.
     draw_command_buffer: DrawCommandBuffer,
+
+    /// The same sampler is used for all textures
+    texture_sampler: wgpu::Sampler,
 }
 
 impl Renderer {
@@ -236,10 +263,40 @@ impl Renderer {
                     ],
                 });
 
+        let texture_bind_group_layout =
+            wgpu_context
+                .device
+                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("texture_bind_group_layout"),
+                    entries: &[
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 0,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Texture {
+                                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                                view_dimension: wgpu::TextureViewDimension::D2,
+                                multisampled: false,
+                            },
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 1,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                            count: None,
+                        },
+                    ],
+                });
+
+        // should we store this in the struct?
+        let mesh_shader_module = wgpu_context
+            .device
+            .create_shader_module(Self::MESH_SHADER_MODULE);
+
         let clear_pipeline = Pipeline::new(
             wgpu_context,
             "render/clear",
-            Self::MESH_SHADER_MODULE,
+            &mesh_shader_module,
             &[&camera_bind_group_layout],
             DepthState {
                 // egui clears the depth buffer with a value of 1.0 when starting the render pass.
@@ -276,16 +333,17 @@ impl Renderer {
             false,
         );
 
-        let render_bind_group_layouts = [
+        let render_mesh_bind_group_layouts = [
             &camera_bind_group_layout,
             &instance_bind_group_layout,
             &mesh_bind_group_layout,
         ];
 
-        let solid_pipeline = Pipeline::new_objects(
+        let solid_pipeline = Pipeline::new_mesh_render_pipeline(
             wgpu_context,
             "render/object/solid",
-            &render_bind_group_layouts,
+            &mesh_shader_module,
+            &render_mesh_bind_group_layouts,
             wgpu::CompareFunction::Less,
             Some(Stencil::OUTLINE),
             None,
@@ -294,10 +352,11 @@ impl Renderer {
             Some("fs_main_solid"),
         );
 
-        let wireframe_pipeline = Pipeline::new_objects(
+        let wireframe_pipeline = Pipeline::new_mesh_render_pipeline(
             wgpu_context,
             "render/object/wireframe",
-            &render_bind_group_layouts,
+            &mesh_shader_module,
+            &render_mesh_bind_group_layouts,
             wgpu::CompareFunction::LessEqual,
             None,
             None,
@@ -306,10 +365,11 @@ impl Renderer {
             Some("fs_main_single_color"),
         );
 
-        let outline_pipeline = Pipeline::new_objects(
+        let outline_pipeline = Pipeline::new_mesh_render_pipeline(
             wgpu_context,
             "render/object/outline",
-            &render_bind_group_layouts,
+            &mesh_shader_module,
+            &render_mesh_bind_group_layouts,
             wgpu::CompareFunction::Always,
             None,
             // mask used, todo: don't hardcode values like this :D
@@ -317,6 +377,27 @@ impl Renderer {
             wgpu::PolygonMode::Fill,
             Some("vs_main_outline"),
             Some("fs_main_single_color"),
+        );
+
+        let quad_with_texture_pipeline = Pipeline::new(
+            wgpu_context,
+            "render/quad_with_texture",
+            &mesh_shader_module,
+            &[
+                &camera_bind_group_layout,
+                &instance_bind_group_layout,
+                &texture_bind_group_layout,
+            ],
+            DepthState {
+                write_enable: true,
+                compare: wgpu::CompareFunction::Less,
+                bias: Default::default(),
+            },
+            Default::default(),
+            wgpu::PolygonMode::Fill,
+            Some("vs_main_quad_with_texture"),
+            Some("fs_main_quad_with_texture"),
+            false,
         );
 
         let instance_buffer =
@@ -327,19 +408,32 @@ impl Renderer {
             instance_buffer.buffer(),
         );
 
+        let texture_sampler = wgpu_context
+            .device
+            .create_sampler(&wgpu::SamplerDescriptor {
+                label: Some("texture_sampler"),
+                mag_filter: wgpu::FilterMode::Linear,
+                min_filter: wgpu::FilterMode::Linear,
+                ..Default::default()
+            });
+
         Self {
             wgpu_context: wgpu_context.clone(),
             camera_bind_group_layout,
             instance_bind_group_layout,
             mesh_bind_group_layout,
+            texture_bind_group_layout,
+            mesh_shader_module,
             clear_pipeline,
             solid_pipeline,
             wireframe_pipeline,
             outline_pipeline,
+            quad_with_texture_pipeline,
             instance_buffer,
             instance_bind_group,
             instance_data: vec![],
             draw_command_buffer: Default::default(),
+            texture_sampler,
         }
     }
 
@@ -357,130 +451,62 @@ impl Renderer {
     /// [`Self::prepare_frame`]).
     pub fn prepare_world(&mut self, scene: &mut Scene) {
         // generate meshes (for rendering) for objects that don't have them yet.
-        for (entity, (shape, label)) in scene
-            .entities
-            .query_mut::<(&SharedShape, Option<&Label>)>()
-            .with::<&Render>()
-            .without::<&Mesh>()
-        {
-            if let Some(mesh) = Mesh::from_shape(
-                &*shape.0,
-                &self.wgpu_context.device,
-                &self.mesh_bind_group_layout,
-            ) {
-                scene.command_buffer.insert_one(entity, mesh);
-            }
-            else {
-                tracing::warn!(
-                    "Entity {entity:?} (label {label:?}) was marked for rendering, but a mesh could not be constructed."
-                );
-                scene.command_buffer.remove::<(Render,)>(entity);
-            }
-        }
+        mesh::generate_meshes_for_shapes(
+            &mut scene.entities,
+            &mut scene.command_buffer,
+            &self.wgpu_context.device,
+            &self.mesh_bind_group_layout,
+        );
 
-        // update cameras whose viewports changed
-        for (entity, (camera_projection, viewport)) in scene
-            .entities
-            .query_mut::<(&mut CameraProjection, &Viewport)>()
-            .with::<&Changed<Viewport>>()
-        {
-            camera_projection.set_viewport(viewport);
-            scene.command_buffer.remove_one::<Changed<Viewport>>(entity);
-        }
+        // update cameras
+        camera::update_cameras(
+            &mut scene.entities,
+            &mut scene.command_buffer,
+            &self.wgpu_context.device,
+            &self.camera_bind_group_layout,
+        );
 
-        // create uniforms for cameras
-        for (entity, (camera_projection, camera_transform, clear_color, camera_light_filter)) in
-            scene
-                .entities
-                .query_mut::<(
-                    &CameraProjection,
-                    &Transform,
-                    Option<&ClearColor>,
-                    Option<&CameraLightFilter>,
-                )>()
-                .without::<&CameraResources>()
-        {
-            tracing::debug!(
-                ?entity,
-                ?camera_projection,
-                ?camera_transform,
-                ?clear_color,
-                "creating camera"
-            );
-            let camera_data = CameraData::new(
-                camera_projection,
-                camera_transform,
-                clear_color,
-                camera_light_filter,
-            );
-            let camera_resources = CameraResources::new(
-                &self.camera_bind_group_layout,
-                &self.wgpu_context.device,
-                &camera_data,
-            );
-            scene.command_buffer.insert_one(entity, camera_resources);
-        }
-
-        // remove camera resources for anything that isn't a valid camera anymore
-        for (entity, ()) in scene
-            .entities
-            .query_mut::<()>()
-            .with::<&CameraResources>()
-            .without::<hecs::Or<&Transform, &CameraProjection>>()
-        {
-            tracing::warn!(
-                ?entity,
-                "not a valid camera anymore. removing `CameraResources`"
-            );
-            scene.command_buffer.remove_one::<CameraResources>(entity);
-        }
+        texture::update_textures(
+            &mut scene.entities,
+            &mut scene.command_buffer,
+            &self.wgpu_context.device,
+            &self.wgpu_context.queue,
+            &self.texture_sampler,
+            &self.texture_bind_group_layout,
+        );
 
         // apply buffered commands to world
-        scene.command_buffer.run_on(&mut scene.entities);
+        scene.apply_deferred();
 
         // update uniforms for cameras
-        for (
-            _,
-            (
-                camera_resources,
-                camera_projection,
-                camera_transform,
-                clear_color,
-                camera_light_filter,
-            ),
-        ) in scene.entities.query_mut::<(
-            &mut CameraResources,
-            &CameraProjection,
-            &Transform,
-            Option<&ClearColor>,
-            Option<&CameraLightFilter>,
-        )>() {
-            let camera_data = CameraData::new(
-                camera_projection,
-                camera_transform,
-                clear_color,
-                camera_light_filter,
-            );
-            camera_resources.update(&self.wgpu_context.queue, &camera_data);
-        }
+        camera::update_camera_buffers(&mut scene.entities, &self.wgpu_context.queue);
 
         // next we prepare the draw commands.
         // this is done once in prepare, so multiple view widgets can then use the draw
         // commands to render their scenes from different cameras.
         // the draw commands are stored in an `Arc<Vec<_>>`, so they can be easily sent
         // via paint callbacks.
+        self.update_instance_buffer_and_draw_command(&mut scene.entities);
+    }
 
-        // clear instance data buffer
-        self.instance_data.clear();
+    fn update_instance_buffer_and_draw_command(&mut self, world: &mut hecs::World) {
+        // for now every draw call will only draw one instance, but we could do
+        // instancing for real later.
         let mut first_instance = 0;
+        let mut instances = || {
+            let instances = first_instance..(first_instance + 1);
+            first_instance += 1;
+            instances
+        };
+        assert!(self.instance_data.is_empty());
 
         // prepare the actual draw commands
         let mut draw_command_builder = self.draw_command_buffer.builder();
-        for (_, (transform, mesh, material, outline)) in scene
-            .entities
-            .query::<(&Transform, &Mesh, &Material, Option<&Outline>)>()
+
+        // draw meshes (solid, wireframe, outlines)
+        for (_, (transform, mesh, material, outline)) in world
+            .query_mut::<(&Transform, &Mesh, &Material, Option<&Outline>)>()
             .with::<&Render>()
-            .iter()
         {
             // instance flags
             let mut flags = InstanceFlags::SHOW_SOLID | InstanceFlags::SHOW_WIREFRAME;
@@ -489,7 +515,7 @@ impl Renderer {
             }
 
             // write per-instance data into a buffer
-            self.instance_data.push(InstanceData::new(
+            self.instance_data.push(InstanceData::new_mesh(
                 transform,
                 material,
                 flags,
@@ -497,14 +523,22 @@ impl Renderer {
                 outline,
             ));
 
-            // for now every draw call will only draw one instance, but we could do
-            // instancing for real later.
-            let instances = first_instance..(first_instance + 1);
-            first_instance += 1;
-
             // prepare draw commands
-            draw_command_builder.draw_mesh(instances, mesh, outline.is_some());
+            draw_command_builder.draw_mesh(instances(), mesh, outline.is_some());
         }
+
+        // draw textured quads
+        for (_, (transform, quad, texture)) in world
+            .query_mut::<(&Transform, &Quad, &Texture)>()
+            .with::<&Render>()
+        {
+            self.instance_data
+                .push(InstanceData::new_quad(transform, &quad.half_extents));
+
+            draw_command_builder.draw_quad_with_texture(instances(), texture);
+        }
+
+        assert_eq!(first_instance as usize, self.instance_data.len());
 
         // send instance data to gpu
         self.instance_buffer.write(
@@ -519,6 +553,8 @@ impl Renderer {
                 )
             },
         );
+
+        // clear instance data buffer
         self.instance_data.clear();
     }
 
@@ -566,14 +602,18 @@ impl Renderer {
             return None;
         };
 
+        // default to all, then apply configuration, so by default stuff will render and
+        // we don't have to debug for 15 minutes to find that we don't enable the
+        // pipeline
+        let mut pipeline_enable_flags = DrawCommandEnablePipelineFlags::all();
+        pipeline_enable_flags.set(DrawCommandEnablePipelineFlags::CLEAR, has_clear_color);
+        camera_config.apply_to_pipeline_enable_flags(&mut pipeline_enable_flags);
+
         Some(self.draw_command_buffer.finish(
             self,
             camera_bind_group,
             DrawCommandOptions {
-                enable_clear: has_clear_color,
-                enable_solid: camera_config.show_solid,
-                enable_wireframe: camera_config.show_wireframe,
-                enable_outline: camera_config.show_outline,
+                pipeline_enable_flags,
             },
         ))
     }
@@ -596,7 +636,6 @@ fn create_instance_bind_group(
 
 #[derive(Debug)]
 struct Pipeline {
-    shader_module: wgpu::ShaderModule,
     pipeline_layout: wgpu::PipelineLayout,
     pipeline: wgpu::RenderPipeline,
 }
@@ -606,7 +645,7 @@ impl Pipeline {
     fn new(
         wgpu_context: &WgpuContext,
         label: &str,
-        shader_module_desc: wgpu::ShaderModuleDescriptor,
+        shader_module: &wgpu::ShaderModule,
         bind_group_layouts: &[&wgpu::BindGroupLayout],
         depth_state: DepthState,
         stencil_state: wgpu::StencilState,
@@ -620,8 +659,6 @@ impl Pipeline {
         // We need to flip the interpretation of the winding order here, because this
         // actually depends on the orientation of our Z axis.
         let front_face = Renderer::WINDING_ORDER.flipped().front_face();
-
-        let shader_module = wgpu_context.device.create_shader_module(shader_module_desc);
 
         let pipeline_layout =
             wgpu_context
@@ -684,16 +721,16 @@ impl Pipeline {
                 });
 
         Self {
-            shader_module,
             pipeline_layout,
             pipeline,
         }
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn new_objects(
+    fn new_mesh_render_pipeline(
         wgpu_context: &WgpuContext,
         label: &str,
+        shader_module: &wgpu::ShaderModule,
         bind_group_layouts: &[&wgpu::BindGroupLayout],
         depth_compare: wgpu::CompareFunction,
         write_to_stencil_buffer: Option<Stencil>,
@@ -731,7 +768,7 @@ impl Pipeline {
         Self::new(
             wgpu_context,
             label,
-            Renderer::MESH_SHADER_MODULE,
+            shader_module,
             bind_group_layouts,
             DepthState {
                 write_enable: true,
@@ -762,7 +799,8 @@ struct InstanceData {
 }
 
 impl InstanceData {
-    pub fn new(
+    /// Creates instance data for mesh rendering
+    pub fn new_mesh(
         transform: &Transform,
         material: &Material,
         flags: InstanceFlags,
@@ -777,10 +815,28 @@ impl InstanceData {
             material: MaterialData::new(material, outline),
         }
     }
+
+    /// Creates instance data for quads
+    pub fn new_quad(transform: &Transform, half_extents: &Vector2<f32>) -> Self {
+        let mut transform = transform.transform.to_homogeneous();
+        transform.prepend_nonuniform_scaling_mut(&Vector3::new(
+            half_extents.x,
+            half_extents.y,
+            1.0,
+        ));
+
+        Self {
+            transform,
+            flags: Default::default(),
+            base_vertex: 0,
+            _padding: [0; _],
+            material: Default::default(),
+        }
+    }
 }
 
 bitflags! {
-    #[derive(Clone, Copy, Debug, Pod, Zeroable)]
+    #[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]
     #[repr(C)]
     struct InstanceFlags: u32 {
         const REVERSE_WINDING = 0b0001;
@@ -952,4 +1008,9 @@ impl From<Stencil> for u32 {
     fn from(value: Stencil) -> Self {
         value.bits().into()
     }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct Quad {
+    pub half_extents: Vector2<f32>,
 }

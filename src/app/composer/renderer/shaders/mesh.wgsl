@@ -59,13 +59,23 @@ struct VertexOutputSingleColor {
     @location(0) color: vec4f,
 }
 
+struct VertexOutputTexture {
+    @builtin(position) fragment_position: vec4f,
+    @location(0) texture_position: vec2f,
+}
+
 struct FragmentOutput {
     @location(0) color: vec4f,
 }
 
 
+// camera
+
 @group(0) @binding(0)
 var<uniform> camera: Camera;
+
+
+// instance data
 
 @group(1) @binding(0)
 var<storage, read> instance_buffer: array<Instance>;
@@ -74,12 +84,24 @@ var<storage, read> instance_buffer: array<Instance>;
 //@group(1) @binding(1)
 //var<uniform> point_light: PointLight;
 
+
+// mesh bindings - used by mesh renderers (solid, wireframe)
+
 @group(2) @binding(0)
 var<storage, read> index_buffer: array<u32>;
 
 // note: we interpret this as an array of f32's, otherwise we'll have to pad the vertices in the buffer.
 @group(2) @binding(1)
 var<storage, read> vertex_buffer: array<f32>;
+
+
+// texture bindings - used by quad_with_textue pipeline
+
+@group(2) @binding(0)
+var texture_texture: texture_2d<f32>;
+
+@group(2) @binding(1)
+var texture_sampler: sampler;
 
 
 @vertex
@@ -102,7 +124,7 @@ fn vs_main_solid(input: VertexInput) -> VertexOutputSolid {
     output.world_position = instance.transform * vec4f(vertex, 1.0);
     output.world_normal = instance.transform * vec4f(normal, 0.0);
     output.fragment_position = camera.projection * camera.transform * output.world_position;
-    
+
     return output;
 }
 
@@ -112,7 +134,7 @@ fn fs_main_solid(input: VertexOutputSolid, @builtin(front_facing) front_face: bo
 
     if front_face {
         let instance = instance_buffer[input.instance_index];
-        
+
         // light definition
         // todo: move into buffer
         let point_light = PointLight(
@@ -170,7 +192,7 @@ fn vs_main_outline(input: VertexInput) -> VertexOutputSingleColor {
     let instance = instance_buffer[input.instance_index];
 
     let vertex = get_vertex(input.vertex_index);
-    let scaling = 1.0 + instance.material.outline_thickness;    
+    let scaling = 1.0 + instance.material.outline_thickness;
 
     var output: VertexOutputSingleColor;
     output.color = instance.material.outline;
@@ -203,6 +225,38 @@ fn vs_main_clear(input: VertexInput) -> VertexOutputSingleColor {
     return output;
 }
 
+const quad_vertices: array<vec2f, 6> = array<vec2f, 6>(
+    // first tri
+    vec2f(0.0, 0.0),
+    vec2f(1.0, 0.0),
+    vec2f(0.0, 1.0),
+    // second tri
+    vec2f(1.0, 0.0),
+    vec2f(1.0, 1.0),
+    vec2f(0.0, 1.0),
+);
+
+@vertex
+fn vs_main_quad_with_texture(input: VertexInput) -> VertexOutputTexture {
+    let instance = instance_buffer[input.instance_index];
+
+    let vertex = quad_vertices[input.vertex_index];
+    let vertex_centered = 2.0 * vertex - vec2f(1.0);
+
+    var output: VertexOutputTexture;
+    output.fragment_position = camera.projection * camera.transform * instance.transform * vec4f(vertex_centered, 0.0, 1.0);
+    output.texture_position = vertex;
+
+    return output;
+}
+
+@fragment
+fn fs_main_quad_with_texture(input: VertexOutputTexture) -> FragmentOutput {
+    var output: FragmentOutput;
+    output.color = textureSample(texture_texture, texture_sampler, input.texture_position);
+    return output;
+}
+
 fn get_vertex(index: u32) -> vec3f {
     let i = index_buffer[index] * 3;
     return vec3f(
@@ -223,6 +277,6 @@ fn fix_vertex_index(index: u32, flags: u32, base_vertex: u32) -> u32 {
         // fix vertex order if mesh is wound in opposite order
         output = index -2 * (index % 3 - 1);
     }
-    
+
     return output;
 }

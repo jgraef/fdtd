@@ -13,9 +13,13 @@ use nalgebra::{
 };
 
 use crate::{
+    Error,
     app::{
         composer::{
-            renderer::WgpuContext,
+            renderer::{
+                WgpuContext,
+                texture::TextureWriter,
+            },
             scene::Scene,
         },
         solver::{
@@ -26,7 +30,11 @@ use crate::{
                 SolverConfigSpecifics,
                 StopCondition,
             },
-            util::GifOutput,
+            observer::Observer,
+            util::{
+                WriteImage,
+                gif::GifOutput,
+            },
         },
     },
     fdtd,
@@ -50,7 +58,7 @@ impl SolverRunner {
     /// TODO: We probably just want one parameter that impls some trait. That
     /// trait defines how a solver_config and scene is turned into the problem
     /// description for the runner (e.g. a `fdtd::Simulation`).
-    pub fn run(&mut self, solver_config: &SolverConfig, scene: &Scene) {
+    pub fn run(&mut self, solver_config: &SolverConfig, scene: &mut Scene) {
         match &solver_config.specifics {
             SolverConfigSpecifics::Fdtd(fdtd_config) => {
                 self.run_fdtd(scene, &solver_config.common, fdtd_config);
@@ -61,7 +69,7 @@ impl SolverRunner {
 
     fn run_fdtd(
         &mut self,
-        scene: &Scene,
+        scene: &mut Scene,
         common_config: &SolverConfigCommon,
         fdtd_config: &SolverConfigFdtd,
     ) {
@@ -95,36 +103,38 @@ impl SolverRunner {
 
         let mut simulation = fdtd::Simulation::new(&config);
 
-        // access to the material properties
-        //
-        // todo: move this out of the fdtd module
-        let entity_materials = scene.entities.view::<&Material>();
-
-        // todo: would be nice if we could do the rasterization in a thread, since this
-        // might block the UI for a moment. maybe we can used a scoped thread?
-        //
-        // otherwise we might want to copy the relevant data into a buffer:
-        //  - entities with: Transform, SharedShape, fdtd::Material
-        //  - bvh
-        // we could then also crop/transform by selected volume at this step.
-        simulation.fill_with(|point, cell| {
-            let point = point.cast::<f32>();
-
-            // this produces an iterator of materials present at this point
+        {
+            // access to the material properties
             //
-            // todo: ideally we would use a contact query here (against the whole cell
-            // cuboid) and use the contact information to smooth edges
-            let mut point_materials = scene
-                .point_query(&point)
-                .filter_map(|entity| entity_materials.get(entity))
-                .copied();
+            // todo: move this out of the fdtd module
+            let entity_materials = scene.entities.view::<&Material>();
 
-            // for now we'll just use the first material we find.
-            // if nothing is found, use the default (vacuum)
-            let material = point_materials.next().unwrap_or_default();
+            // todo: would be nice if we could do the rasterization in a thread, since this
+            // might block the UI for a moment. maybe we can used a scoped thread?
+            //
+            // otherwise we might want to copy the relevant data into a buffer:
+            //  - entities with: Transform, SharedShape, fdtd::Material
+            //  - bvh
+            // we could then also crop/transform by selected volume at this step.
+            simulation.fill_with(|point, cell| {
+                let point = point.cast::<f32>();
 
-            cell.set_material(material)
-        });
+                // this produces an iterator of materials present at this point
+                //
+                // todo: ideally we would use a contact query here (against the whole cell
+                // cuboid) and use the contact information to smooth edges
+                let mut point_materials = scene
+                    .point_query(&point)
+                    .filter_map(|entity| entity_materials.get(entity))
+                    .copied();
+
+                // for now we'll just use the first material we find.
+                // if nothing is found, use the default (vacuum)
+                let material = point_materials.next().unwrap_or_default();
+
+                cell.set_material(material)
+            });
+        }
 
         {
             // for testing we'll add a source at the origin
@@ -142,36 +152,88 @@ impl SolverRunner {
             );
         }
 
-        tracing::debug!("time to create simulation: {:?}", time_start.elapsed());
-
-        // for testing we'll write some observations to a GIF file
-        let mut write_field_slice_to_gif = {
+        let mut run_observers = {
             let lattice_size = simulation.lattice().dimensions();
-            let mut gif_output = GifOutput::new(
-                BufWriter::new(File::create("tmp/test.gif").unwrap()),
-                lattice_size.xy(),
-                Duration::from_millis(10),
-                colorgrad::preset::rd_bu(),
-            )
-            .unwrap();
 
-            // wrap gif output into closure that takes the field values from the simulation
-            // and writes a frame with it everytime it's called
+            // create an "observer". later we want this to be defined by the user and just
+            // attach our TextureOutput to it. We need to create the texture output since
+            // only we know the texture size. write to wgpu texture
+
+            // for now we'll grab just one, since we can't define what to render anyway
+
+            let mut observers = vec![];
+
+            for (entity, observer) in scene.entities.query_mut::<&Observer>() {
+                // todo: use observer extents
+
+                if observer.display_as_texture {
+                    // todo: check if this already exists
+                    let texture_output = TextureWriter::new(lattice_size.xy().cast());
+                    scene
+                        .command_buffer
+                        .insert_one(entity, texture_output.clone());
+                    observers.push(texture_output);
+                }
+
+                if let Some(path) = &observer.write_to_gif {
+                    let create_gif_output = || {
+                        Ok::<_, Error>(GifOutput::new(
+                            BufWriter::new(File::create(path)?),
+                            lattice_size.xy().cast(),
+                            Duration::from_millis(10),
+                        )?)
+                    };
+
+                    match create_gif_output() {
+                        Ok(_output) => {
+                            // todo: add to observers. will need `Box<dyn _>`
+                        }
+                        Err(error) => {
+                            tracing::error!(path = %path.display(), "failed to create GIF output: {}", error);
+                        }
+                    }
+                }
+
+                // for now only one
+                break;
+            }
+
+            // apply deferred commands
+            scene.apply_deferred();
+
+            let gradient = colorgrad::preset::rd_bu();
+
+            // wrap image output into closure that takes the field values from the
+            // simulation and writes a frame with it everytime it's called
             move |simulation: &fdtd::Simulation| {
                 let swap_buffer_index = simulation.swap_buffer_index();
-                gif_output
-                    .write_frame(|point| {
-                        let cell = simulation
-                            .lattice()
-                            .get(&Point3::new(point.x, point.y, lattice_size.z))
-                            .unwrap();
+                let z = lattice_size.z / 2;
 
-                        let e_field = cell.electric_field(swap_buffer_index);
-                        (0.5 + 0.5 * e_field.y).clamp(0.0, 1.0) as f32
-                    })
+                // only one for now
+                let Some(image_output) = observers.first_mut()
+                else {
+                    return;
+                };
+
+                image_output
+                    .write_field_values(
+                        |point| {
+                            let point = point.cast();
+                            let cell = simulation
+                                .lattice()
+                                .get(&Point3::new(point.x, point.y, z))
+                                .unwrap();
+
+                            let e_field = cell.electric_field(swap_buffer_index);
+                            (0.5 + 0.5 * e_field.y).clamp(0.0, 1.0) as f32
+                        },
+                        &gradient,
+                    )
                     .unwrap();
             }
         };
+
+        tracing::debug!("time to create simulation: {:?}", time_start.elapsed());
 
         let _join_handle = std::thread::spawn({
             let stop_condition = fdtd_config.stop_condition;
@@ -193,7 +255,7 @@ impl SolverRunner {
                     simulation.step();
 
                     // testing: write some slice of field values to GIF
-                    write_field_slice_to_gif(&simulation);
+                    run_observers(&simulation);
                 }
             }
         });

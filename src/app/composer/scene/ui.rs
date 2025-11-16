@@ -53,7 +53,7 @@ impl<'a> EntityPropertiesWindow<'a> {
                 add_contents(ui, entity_ref, &mut self.scene.command_buffer)
             });
 
-        self.scene.command_buffer.run_on(&mut self.scene.entities);
+        self.scene.apply_deferred();
 
         if !is_open {
             *self.entity = None;

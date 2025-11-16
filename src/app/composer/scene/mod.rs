@@ -146,7 +146,7 @@ impl Scene {
     ///
     /// E.g. this updates the internal octtree used for spatial queries
     pub fn prepare(&mut self) {
-        self.command_buffer.run_on(&mut self.entities);
+        self.apply_deferred();
         self.octtree
             .update(&mut self.entities, &mut self.command_buffer);
 
@@ -161,7 +161,7 @@ impl Scene {
         {
             self.command_buffer.remove_one::<Changed<Transform>>(entity);
         }
-        self.command_buffer.run_on(&mut self.entities);
+        self.apply_deferred();
     }
 
     /// Computes the scene's AABB relative to an observer.
@@ -221,6 +221,10 @@ impl Scene {
 
     pub fn serialize(&self, entity: hecs::Entity) -> Option<SerializeEntity<'_>> {
         self.entities.entity(entity).ok().map(SerializeEntity::new)
+    }
+
+    pub fn apply_deferred(&mut self) {
+        self.command_buffer.run_on(&mut self.entities);
     }
 }
 

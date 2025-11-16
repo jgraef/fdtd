@@ -151,6 +151,7 @@ pub(super) fn run_app(args: Args) -> Result<(), Error> {
                 device: render_state.device.clone(),
                 queue: render_state.queue.clone(),
                 renderer_config,
+                egui_wgpu_renderer: render_state.renderer.clone().into(),
             };
 
             // store wgpu context in egui context

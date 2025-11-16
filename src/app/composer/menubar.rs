@@ -257,9 +257,8 @@ impl<'a> ComposerMenuElements<'a> {
 
         let mut i = 0;
         if let Some(state) = &mut self.composer.state {
-            for solver in state.solver_configs() {
-                if ui.add(solver_button(solver)).clicked() {
-                    let solver_config = &state.solver_configs[i];
+            for solver_config in state.solver_configs.iter() {
+                if ui.add(solver_button(solver_config)).clicked() {
                     tracing::debug!(
                         index = i,
                         label = solver_config.label,
@@ -268,7 +267,9 @@ impl<'a> ComposerMenuElements<'a> {
                     );
                     // for now we'll just send the config and scene to the runner to run it. but
                     // we'll need an intermediate step to rasterize/tesselate the scene
-                    self.composer.solver_runner.run(solver_config, &state.scene);
+                    self.composer
+                        .solver_runner
+                        .run(solver_config, &mut state.scene);
                 }
                 i += 1;
             }

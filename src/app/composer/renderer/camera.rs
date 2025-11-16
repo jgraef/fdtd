@@ -29,9 +29,13 @@ use wgpu::util::DeviceExt;
 use crate::app::composer::{
     renderer::{
         ClearColor,
+        draw_commands::DrawCommandEnablePipelineFlags,
         light::CameraLightFilter,
     },
-    scene::transform::Transform,
+    scene::{
+        Changed,
+        transform::Transform,
+    },
 };
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
@@ -228,9 +232,24 @@ impl CameraData {
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct CameraConfig {
+    // todo: should this just contain the DrawCommandPipelineEnableFlags?
     pub show_solid: bool,
     pub show_wireframe: bool,
     pub show_outline: bool,
+}
+
+impl CameraConfig {
+    pub fn apply_to_pipeline_enable_flags(
+        &self,
+        pipeline_enable_flags: &mut DrawCommandEnablePipelineFlags,
+    ) {
+        pipeline_enable_flags.set(DrawCommandEnablePipelineFlags::SOLID, self.show_solid);
+        pipeline_enable_flags.set(
+            DrawCommandEnablePipelineFlags::WIREFRAME,
+            self.show_wireframe,
+        );
+        pipeline_enable_flags.set(DrawCommandEnablePipelineFlags::OUTLINE, self.show_outline);
+    }
 }
 
 impl Default for CameraConfig {
@@ -240,5 +259,85 @@ impl Default for CameraConfig {
             show_wireframe: false,
             show_outline: true,
         }
+    }
+}
+
+pub(super) fn update_cameras(
+    world: &mut hecs::World,
+    command_buffer: &mut hecs::CommandBuffer,
+    device: &wgpu::Device,
+    camera_bind_group_layout: &wgpu::BindGroupLayout,
+) {
+    // update cameras whose viewports changed
+    for (entity, (camera_projection, viewport)) in world
+        .query_mut::<(&mut CameraProjection, &Viewport)>()
+        .with::<&Changed<Viewport>>()
+    {
+        camera_projection.set_viewport(viewport);
+        command_buffer.remove_one::<Changed<Viewport>>(entity);
+    }
+
+    // create uniforms for cameras that don't have them yet
+    for (entity, (camera_projection, camera_transform, clear_color, camera_light_filter)) in world
+        .query_mut::<(
+            &CameraProjection,
+            &Transform,
+            Option<&ClearColor>,
+            Option<&CameraLightFilter>,
+        )>()
+        .without::<&CameraResources>()
+    {
+        tracing::debug!(
+            ?entity,
+            ?camera_projection,
+            ?camera_transform,
+            ?clear_color,
+            "creating camera"
+        );
+        let camera_data = CameraData::new(
+            camera_projection,
+            camera_transform,
+            clear_color,
+            camera_light_filter,
+        );
+        let camera_resources = CameraResources::new(camera_bind_group_layout, device, &camera_data);
+        command_buffer.insert_one(entity, camera_resources);
+    }
+
+    // remove camera resources for anything that isn't a valid camera anymore
+    for (entity, ()) in world
+        .query_mut::<()>()
+        .with::<&CameraResources>()
+        .without::<hecs::Or<&Transform, &CameraProjection>>()
+    {
+        tracing::warn!(
+            ?entity,
+            "not a valid camera anymore. removing `CameraResources`"
+        );
+        command_buffer.remove_one::<CameraResources>(entity);
+    }
+}
+
+/// Updates camera buffers
+///
+/// Run this after the changes made by [`update_camera`] have been applied.
+pub(super) fn update_camera_buffers(world: &mut hecs::World, queue: &wgpu::Queue) {
+    for (
+        _,
+        (camera_resources, camera_projection, camera_transform, clear_color, camera_light_filter),
+    ) in world.query_mut::<(
+        &mut CameraResources,
+        &CameraProjection,
+        &Transform,
+        Option<&ClearColor>,
+        Option<&CameraLightFilter>,
+    )>() {
+        let camera_data = CameraData::new(
+            camera_projection,
+            camera_transform,
+            clear_color,
+            camera_light_filter,
+        );
+        camera_resources.update(queue, &camera_data);
     }
 }

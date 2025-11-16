@@ -226,7 +226,7 @@ impl<'a> SceneView<'a> {
         }
 
         // apply any buffered commands to scene
-        self.scene.command_buffer.run_on(&mut self.scene.entities);
+        self.scene.apply_deferred();
     }
 
     pub fn shoot_ray_from_camera(&self, pointer_position: Point2<f32>) -> Option<Ray> {
