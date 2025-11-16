@@ -1,6 +1,16 @@
-use std::time::Instant;
+use std::{
+    fs::File,
+    io::BufWriter,
+    time::{
+        Duration,
+        Instant,
+    },
+};
 
-use nalgebra::Vector3;
+use nalgebra::{
+    Point3,
+    Vector3,
+};
 
 use crate::{
     app::{
@@ -8,11 +18,15 @@ use crate::{
             renderer::WgpuContext,
             scene::Scene,
         },
-        solver::config::{
-            SolverConfig,
-            SolverConfigCommon,
-            SolverConfigFdtd,
-            SolverConfigSpecifics,
+        solver::{
+            config::{
+                SolverConfig,
+                SolverConfigCommon,
+                SolverConfigFdtd,
+                SolverConfigSpecifics,
+                StopCondition,
+            },
+            util::GifOutput,
         },
     },
     fdtd,
@@ -55,7 +69,8 @@ impl SolverRunner {
         let _rotation = common_config.volume.rotation(); // ignored for now
 
         let origin = aabb.mins;
-        let size = aabb.extents();
+        let mut size = aabb.extents();
+        size.z = 0.0;
 
         // todo: make fdtd generic over float, remove casts
         let config = fdtd::SimulationConfig {
@@ -129,11 +144,70 @@ impl SolverRunner {
 
         tracing::debug!("time to create simulation: {:?}", time_start.elapsed());
 
-        let _join_handle = std::thread::spawn(move || {
-            // todo
-        });
+        // for testing we'll write some observations to a GIF file
+        let mut write_field_slice_to_gif = {
+            let lattice_size = simulation.lattice().dimensions();
+            let mut gif_output = GifOutput::new(
+                BufWriter::new(File::create("tmp/test.gif").unwrap()),
+                lattice_size.xy(),
+                Duration::from_millis(10),
+                colorgrad::preset::rd_bu(),
+            )
+            .unwrap();
 
-        //
-        //todo!();
+            // wrap gif output into closure that takes the field values from the simulation
+            // and writes a frame with it everytime it's called
+            move |simulation: &fdtd::Simulation| {
+                let swap_buffer_index = simulation.swap_buffer_index();
+                gif_output
+                    .write_frame(|point| {
+                        let cell = simulation
+                            .lattice()
+                            .get(&Point3::new(point.x, point.y, lattice_size.z))
+                            .unwrap();
+
+                        let e_field = cell.electric_field(swap_buffer_index);
+                        (0.5 + 0.5 * e_field.y).clamp(0.0, 1.0) as f32
+                    })
+                    .unwrap();
+            }
+        };
+
+        let _join_handle = std::thread::spawn({
+            let stop_condition = fdtd_config.stop_condition;
+
+            move || {
+                let time_start = Instant::now();
+
+                loop {
+                    let time_elapsed = time_start.elapsed();
+
+                    if evaluate_stop_condition_for_fdtd(&stop_condition, &simulation, time_elapsed)
+                    {
+                        tracing::debug!("stop condition reached");
+                        break;
+                    }
+
+                    tracing::debug!(tick = simulation.tick(), elapsed = ?time_elapsed);
+
+                    simulation.step();
+
+                    // testing: write some slice of field values to GIF
+                    write_field_slice_to_gif(&simulation);
+                }
+            }
+        });
+    }
+}
+
+fn evaluate_stop_condition_for_fdtd(
+    stop_condition: &StopCondition,
+    simulation: &fdtd::Simulation,
+    time_elapsed: Duration,
+) -> bool {
+    match stop_condition {
+        StopCondition::StepLimit { limit } => simulation.tick() >= *limit,
+        StopCondition::SimulatedTimeLimit { limit } => simulation.time() as f32 >= *limit,
+        StopCondition::RealtimeLimit { limit } => time_elapsed >= *limit,
     }
 }

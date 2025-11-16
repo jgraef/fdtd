@@ -124,9 +124,10 @@ impl Scene {
         &self,
         ray: &Ray,
         max_time_of_impact: impl Into<Option<f32>>,
+        filter: impl Fn(hecs::Entity) -> bool,
     ) -> Option<RayHit> {
         self.octtree
-            .cast_ray(ray, max_time_of_impact, &self.entities)
+            .cast_ray(ray, max_time_of_impact, &self.entities, filter)
     }
 
     pub fn point_query(&self, point: &Point3<f32>) -> impl Iterator<Item = hecs::Entity> {

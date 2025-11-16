@@ -79,6 +79,7 @@ use crate::{
                 SolverConfigCommon,
                 SolverConfigFdtd,
                 SolverConfigSpecifics,
+                StopCondition,
             },
             runner::SolverRunner,
             ui::SolverConfigUiWindow,
@@ -329,6 +330,7 @@ impl ComposerState {
                     spatial: Vector3::repeat(0.01),
                     temporal: 0.25,
                 },
+                stop_condition: StopCondition::StepLimit { limit: 200 },
             }),
         }];
 

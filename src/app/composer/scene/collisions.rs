@@ -106,6 +106,7 @@ impl OctTree {
         ray: &Ray,
         max_time_of_impact: impl Into<Option<f32>>,
         world: &hecs::World,
+        filter: impl Fn(hecs::Entity) -> bool,
     ) -> Option<RayHit> {
         let max_time_of_impact = max_time_of_impact.into().unwrap_or(f32::MAX);
 
@@ -113,11 +114,14 @@ impl OctTree {
 
         self.bvh
             .cast_ray(ray, max_time_of_impact, |leaf_index, best_hit| {
-                self.stored_entities.get(&leaf_index).and_then(|entity| {
-                    view.get(*entity).and_then(|(transform, shape)| {
-                        shape.cast_ray(&transform.transform, ray, best_hit, true)
-                    })
-                })
+                let entity = self.stored_entities.get(&leaf_index)?;
+                if filter(*entity) {
+                    let (transform, shape) = view.get(*entity)?;
+                    shape.cast_ray(&transform.transform, ray, best_hit, true)
+                }
+                else {
+                    None
+                }
             })
             .map(|(leaf_index, time_of_impact)| {
                 let entity = self.stored_entities[&leaf_index];

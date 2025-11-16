@@ -202,12 +202,16 @@ impl<'a> SceneView<'a> {
 
         if let Some(scene_pointer) = &mut self.scene_pointer {
             scene_pointer.entity_under_pointer = None;
+            scene_pointer.ray = None;
 
             if let Some(pointer_position) = pointer_position()
                 && let Some(ray) =
                     shoot_ray_from_camera(self.scene, camera_entity, pointer_position)
             {
-                if let Some(ray_hit) = self.scene.cast_ray(&ray, None) {
+                // todo: move this code out into the composer? the view certainly doesn't know
+                // what is selectable and what not. then we can test for the Selectable tag in
+                // the filter closure.
+                if let Some(ray_hit) = self.scene.cast_ray(&ray, None, |_entity| true) {
                     let point_hovered = ray.point_at(ray_hit.time_of_impact);
 
                     scene_pointer.entity_under_pointer = Some(EntityUnderPointer {
@@ -225,7 +229,7 @@ impl<'a> SceneView<'a> {
         self.scene.command_buffer.run_on(&mut self.scene.entities);
     }
 
-    pub fn shoot_ray_from_camera(&mut self, pointer_position: Point2<f32>) -> Option<Ray> {
+    pub fn shoot_ray_from_camera(&self, pointer_position: Point2<f32>) -> Option<Ray> {
         self.camera_entity.and_then(|camera_entity| {
             shoot_ray_from_camera(self.scene, camera_entity, pointer_position)
         })

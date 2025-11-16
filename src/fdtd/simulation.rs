@@ -481,7 +481,7 @@ impl Simulation {
     }
 
     /// Returns field values along an axis-aligned line.
-    pub fn field_values<'a, T, F>(
+    pub(super) fn field_values<'a, T, F>(
         &'a self,
         mut x0: Point3<usize>,
         axis: Axis,

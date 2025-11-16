@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use nalgebra::{
     Isometry3,
     UnitQuaternion,
@@ -60,12 +62,20 @@ impl SolverConfigSpecifics {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct SolverConfigFdtd {
     pub resolution: fdtd::Resolution,
+    pub stop_condition: StopCondition,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub enum StopCondition {
+    StepLimit { limit: usize },
+    SimulatedTimeLimit { limit: f32 },
+    RealtimeLimit { limit: Duration },
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct SolverConfigFeec {}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

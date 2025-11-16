@@ -16,6 +16,7 @@ use crate::{
             SolverConfigCommon,
             SolverConfigFdtd,
             SolverConfigSpecifics,
+            StopCondition,
             Volume,
         },
     },
@@ -208,6 +209,7 @@ impl Default for SolverConfigUiWindow {
                         spatial: Vector3::repeat(1.0),
                         temporal: 0.25,
                     },
+                    stop_condition: StopCondition::StepLimit { limit: 1000 },
                 }),
             },
         }
