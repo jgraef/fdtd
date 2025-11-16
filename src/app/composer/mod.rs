@@ -76,6 +76,8 @@ use crate::{
         solver::{
             config::{
                 SolverConfig,
+                SolverConfigCommon,
+                SolverConfigFdtd,
                 SolverConfigSpecifics,
             },
             runner::SolverRunner,
@@ -92,6 +94,10 @@ use crate::{
         },
     },
     lipsum,
+    physics::{
+        PhysicalConstants,
+        material::Material,
+    },
 };
 
 /// Scene composer widget.
@@ -312,14 +318,18 @@ impl ComposerState {
         // some test solver configs
         let solver_configs = vec![SolverConfig {
             label: "Test FDTD".to_owned(),
-            volume: Default::default(),
-            physical_constants: fdtd::PhysicalConstants::REDUCED,
-            specifics: SolverConfigSpecifics::Fdtd {
+            common: SolverConfigCommon {
+                volume: Default::default(),
+                physical_constants: PhysicalConstants::REDUCED,
+                default_material: Material::VACUUM,
+            },
+
+            specifics: SolverConfigSpecifics::Fdtd(SolverConfigFdtd {
                 resolution: fdtd::Resolution {
-                    spatial: Vector3::repeat(0.1),
+                    spatial: Vector3::repeat(0.01),
                     temporal: 0.25,
                 },
-            },
+            }),
         }];
 
         Self {

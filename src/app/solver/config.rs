@@ -1,5 +1,3 @@
-//! TODO: still not sure where this belongs
-
 use nalgebra::{
     Isometry3,
     UnitQuaternion,
@@ -17,15 +15,17 @@ use crate::{
         transform::Transform,
     },
     fdtd,
+    physics::{
+        PhysicalConstants,
+        material::Material,
+    },
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SolverConfig {
     pub label: String,
 
-    pub volume: Volume,
-
-    pub physical_constants: fdtd::PhysicalConstants,
+    pub common: SolverConfigCommon,
 
     pub specifics: SolverConfigSpecifics,
 }
@@ -37,24 +37,36 @@ impl SolverConfig {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SolverConfigCommon {
+    pub volume: Volume,
+
+    pub physical_constants: PhysicalConstants,
+
+    pub default_material: Material,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum SolverConfigSpecifics {
-    Fdtd {
-        resolution: fdtd::Resolution,
-        // todo
-    },
-    Feec {
-        // todo
-    },
+    Fdtd(SolverConfigFdtd),
+    Feec(SolverConfigFeec),
 }
 
 impl SolverConfigSpecifics {
     pub fn solver_type(&self) -> SolverType {
         match self {
-            Self::Fdtd { .. } => SolverType::Fdtd,
-            Self::Feec { .. } => SolverType::Feec,
+            Self::Fdtd(_) => SolverType::Fdtd,
+            Self::Feec(_) => SolverType::Feec,
         }
     }
 }
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SolverConfigFdtd {
+    pub resolution: fdtd::Resolution,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SolverConfigFeec {}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum SolverType {

@@ -1,6 +1,11 @@
 // todo: good cc-0 database: https://github.com/polyanskiy/refractiveindex.info-database/
 
-#[derive(Clone, Copy, Debug)]
+use serde::{
+    Deserialize,
+    Serialize,
+};
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct Material {
     /// mu_r
     pub relative_permeability: f64,

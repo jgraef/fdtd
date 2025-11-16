@@ -21,17 +21,22 @@ use serde::{
     Serialize,
 };
 
-use crate::fdtd::{
-    boundary_condition::{
-        AnyBoundaryCondition,
-        default_boundary_conditions,
+use crate::{
+    fdtd::{
+        boundary_condition::{
+            AnyBoundaryCondition,
+            default_boundary_conditions,
+        },
+        geometry::Rasterize,
+        lattice::Lattice,
+        pml::PmlCell,
+        source::Source,
+        util::jacobian,
     },
-    geometry::Rasterize,
-    lattice::Lattice,
-    material::Material,
-    pml::PmlCell,
-    source::Source,
-    util::jacobian,
+    physics::{
+        PhysicalConstants,
+        material::Material,
+    },
 };
 
 #[derive(Clone, Debug)]
@@ -451,16 +456,16 @@ impl Simulation {
     pub fn add_material(&mut self, geometry: impl Rasterize, material: Material) {
         for point in geometry.rasterize(self) {
             if let Some(cell) = self.lattice.get_mut(&point) {
-                cell.material = material;
+                cell.set_material(material);
             }
         }
     }
 
-    pub fn fill_with(&mut self, mut material_at: impl FnMut(Point3<f64>) -> Material) {
+    pub fn fill_with(&mut self, mut f: impl FnMut(Point3<f64>, &mut Cell)) {
         for (point, cell) in self.lattice.iter_mut() {
             let point_float =
                 self.origin + point.coords.cast().component_mul(&self.resolution.spatial);
-            cell.material = material_at(point_float);
+            f(point_float, cell);
         }
     }
 
@@ -503,93 +508,52 @@ impl Simulation {
     }
 }
 
-#[derive(Clone, Copy, Serialize, Deserialize)]
-pub struct PhysicalConstants {
-    pub vacuum_permittivity: f64,
-    pub vacuum_permeability: f64,
+pub fn estimate_temporal_from_spatial_resolution(
+    physical_constants: &PhysicalConstants,
+    spatial_resolution: &Vector3<f64>,
+) -> f64 {
+    spatial_resolution.min() / (physical_constants.speed_of_light() * 3.0f64.sqrt())
 }
 
-impl Debug for PhysicalConstants {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("PhysicalConstants")
-            .field("vacuum_permittivity", &self.vacuum_permittivity)
-            .field("vacuum_permeability", &self.vacuum_permeability)
-            .field("speed_of_light", &self.speed_of_light())
-            .finish()
-    }
+pub fn estimate_spatial_from_temporal_resolution(
+    physical_constants: &PhysicalConstants,
+    temporal_resolution: f64,
+) -> Vector3<f64> {
+    Vector3::repeat(temporal_resolution * physical_constants.speed_of_light() * 3.0f64.sqrt())
 }
 
-impl Default for PhysicalConstants {
-    fn default() -> Self {
-        Self::SI
-    }
+pub fn estimate_spatial_resolution_from_min_wavelength(min_wavelength: f64) -> Vector3<f64> {
+    Vector3::repeat(min_wavelength / (9.0f64 * 3.0f64.sqrt()))
 }
 
-impl PhysicalConstants {
-    pub const SI: Self = Self {
-        vacuum_permittivity: 8.8541878188e-12,
-        vacuum_permeability: 1.25663706127e-6,
-    };
-
-    pub const REDUCED: Self = Self {
-        vacuum_permittivity: 1.0,
-        vacuum_permeability: 1.0,
-    };
-
-    pub fn speed_of_light(&self) -> f64 {
-        (self.vacuum_permittivity * self.vacuum_permeability).powf(-0.5)
-    }
-
-    pub fn frequency_to_wavelength(&self, frequency: f64) -> f64 {
-        self.speed_of_light() / frequency
-    }
-
-    pub fn wavelength_to_frequency(&self, wavelength: f64) -> f64 {
-        self.speed_of_light() / wavelength
-    }
-
-    pub fn estimate_temporal_from_spatial_resolution(
-        self,
-        spatial_resolution: &Vector3<f64>,
-    ) -> f64 {
-        spatial_resolution.min() / (self.speed_of_light() * 3.0f64.sqrt())
-    }
-
-    pub fn estimate_spatial_from_temporal_resolution(
-        &self,
-        temporal_resolution: f64,
-    ) -> Vector3<f64> {
-        Vector3::repeat(temporal_resolution * self.speed_of_light() * 3.0f64.sqrt())
-    }
-
-    pub fn estimate_spatial_resolution_from_min_wavelength(
-        &self,
-        min_wavelength: f64,
-    ) -> Vector3<f64> {
-        Vector3::repeat(min_wavelength / (9.0f64 * 3.0f64.sqrt()))
-    }
-
-    pub fn estimate_temporal_resolution_from_max_frequency(&self, max_frequency: f64) -> f64 {
-        1.0f64 / (9.0f64 * 3.0f64 * max_frequency)
-    }
-
-    pub fn estimate_resolution_from_min_wavelength(&self, min_wavelength: f64) -> Resolution {
-        let spatial = self.estimate_spatial_resolution_from_min_wavelength(min_wavelength);
-        let temporal = self.estimate_temporal_from_spatial_resolution(&spatial);
-        Resolution { spatial, temporal }
-    }
-
-    pub fn estimate_resolution_from_max_frequency(&self, max_frequency: f64) -> Resolution {
-        let temporal = self.estimate_temporal_resolution_from_max_frequency(max_frequency);
-        let spatial = self.estimate_spatial_from_temporal_resolution(temporal);
-        Resolution { spatial, temporal }
-    }
+pub fn estimate_temporal_resolution_from_max_frequency(max_frequency: f64) -> f64 {
+    1.0f64 / (9.0f64 * 3.0f64 * max_frequency)
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct Resolution {
     pub spatial: Vector3<f64>,
     pub temporal: f64,
+}
+
+impl Resolution {
+    pub fn estimate_from_min_wavelength(
+        physical_constants: &PhysicalConstants,
+        min_wavelength: f64,
+    ) -> Self {
+        let spatial = estimate_spatial_resolution_from_min_wavelength(min_wavelength);
+        let temporal = estimate_temporal_from_spatial_resolution(physical_constants, &spatial);
+        Self { spatial, temporal }
+    }
+
+    pub fn estimate_from_max_frequency(
+        physical_constants: &PhysicalConstants,
+        max_frequency: f64,
+    ) -> Self {
+        let temporal = estimate_temporal_resolution_from_max_frequency(max_frequency);
+        let spatial = estimate_spatial_from_temporal_resolution(physical_constants, temporal);
+        Self { spatial, temporal }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]

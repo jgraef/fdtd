@@ -13,14 +13,14 @@ use crate::{
             FixedVolume,
             SceneAabbVolume,
             SolverConfig,
+            SolverConfigCommon,
+            SolverConfigFdtd,
             SolverConfigSpecifics,
             Volume,
         },
     },
-    fdtd::{
-        self,
-        PhysicalConstants,
-    },
+    fdtd,
+    physics::PhysicalConstants,
 };
 
 impl PropertiesUi for SolverConfig {
@@ -35,18 +35,18 @@ impl PropertiesUi for SolverConfig {
 
                 ui.label("Volume");
                 ui.indent("volume_ui", |ui| {
-                    ui.properties(&mut self.volume);
+                    ui.properties(&mut self.common.volume);
                 });
 
                 ui.label("Physical Constants");
                 ui.indent("volume_ui", |ui| {
-                    ui.properties(&mut self.physical_constants);
+                    ui.properties(&mut self.common.physical_constants);
                 });
 
                 // todo
-                match self.specifics {
-                    SolverConfigSpecifics::Fdtd { .. } => {}
-                    SolverConfigSpecifics::Feec {} => {}
+                match &mut self.specifics {
+                    SolverConfigSpecifics::Fdtd(_fdtd_config) => {}
+                    SolverConfigSpecifics::Feec(_feec_config) => {}
                 }
             })
             .response
@@ -198,14 +198,17 @@ impl Default for SolverConfigUiWindow {
             is_open: false,
             default_solver_config: SolverConfig {
                 label: "New solver".to_owned(),
-                volume: Default::default(),
-                physical_constants: fdtd::PhysicalConstants::REDUCED,
-                specifics: SolverConfigSpecifics::Fdtd {
+                common: SolverConfigCommon {
+                    volume: Default::default(),
+                    physical_constants: PhysicalConstants::REDUCED,
+                    default_material: Default::default(),
+                },
+                specifics: SolverConfigSpecifics::Fdtd(SolverConfigFdtd {
                     resolution: fdtd::Resolution {
                         spatial: Vector3::repeat(1.0),
                         temporal: 0.25,
                     },
-                },
+                }),
             },
         }
     }

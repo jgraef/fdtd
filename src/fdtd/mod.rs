@@ -5,7 +5,6 @@ pub mod boundary_condition;
 pub mod executor;
 pub mod geometry;
 pub mod lattice;
-pub mod material;
 pub mod pml;
 pub mod simulation;
 pub mod source;
@@ -39,19 +38,21 @@ use nalgebra::{
     Vector3,
 };
 
-use crate::fdtd::{
-    executor::Executor,
-    geometry::Block,
-    simulation::Axis,
-    source::GaussianPulse,
+pub use crate::fdtd::simulation::{
+    Resolution,
+    Simulation,
+    SimulationConfig,
 };
-pub use crate::fdtd::{
-    material::Material,
-    simulation::{
+use crate::{
+    fdtd::{
+        executor::Executor,
+        geometry::Block,
+        simulation::Axis,
+        source::GaussianPulse,
+    },
+    physics::{
         PhysicalConstants,
-        Resolution,
-        Simulation,
-        SimulationConfig,
+        material::Material,
     },
 };
 

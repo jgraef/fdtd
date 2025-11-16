@@ -6,6 +6,7 @@ pub mod fdtd;
 pub mod feec;
 pub mod file_formats;
 pub mod geometry;
+pub mod physics;
 pub mod util;
 
 use std::{

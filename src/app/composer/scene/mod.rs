@@ -36,29 +36,26 @@ use serde::{
     Serialize,
 };
 
-use crate::{
-    app::composer::{
-        Selectable,
-        renderer::{
-            Render,
-            grid::GridPlane,
-            light::Material,
-        },
-        scene::{
-            collisions::{
-                BoundingBox,
-                Collides,
-                OctTree,
-                RayHit,
-                merge_aabbs,
-            },
-            serialize::SerializeEntity,
-            shape::SharedShape,
-            transform::Transform,
-        },
-        tree::ShowInTree,
+use crate::app::composer::{
+    Selectable,
+    renderer::{
+        Render,
+        grid::GridPlane,
+        light::Material,
     },
-    fdtd,
+    scene::{
+        collisions::{
+            BoundingBox,
+            Collides,
+            OctTree,
+            RayHit,
+            merge_aabbs,
+        },
+        serialize::SerializeEntity,
+        shape::SharedShape,
+        transform::Transform,
+    },
+    tree::ShowInTree,
 };
 
 /// # TODO
@@ -103,9 +100,9 @@ impl Scene {
             ShowInTree,
             Selectable,
             // todo: added for testing for now.
-            fdtd::Material {
+            crate::physics::material::Material {
                 relative_permittivity: 3.9,
-                ..fdtd::Material::VACUUM
+                ..crate::physics::material::Material::VACUUM
             },
         ))
     }

@@ -3,9 +3,9 @@ use nalgebra::{
     Vector3,
 };
 
-use crate::fdtd::simulation::{
-    PhysicalConstants,
-    Resolution,
+use crate::{
+    fdtd::simulation::Resolution,
+    physics::PhysicalConstants,
 };
 
 #[derive(Clone, Copy, Debug)]

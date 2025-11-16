@@ -1,3 +1,7 @@
+use std::time::Instant;
+
+use nalgebra::Vector3;
+
 use crate::{
     app::{
         composer::{
@@ -6,14 +10,13 @@ use crate::{
         },
         solver::config::{
             SolverConfig,
+            SolverConfigCommon,
+            SolverConfigFdtd,
             SolverConfigSpecifics,
-            Volume,
         },
     },
-    fdtd::{
-        self,
-        PhysicalConstants,
-    },
+    fdtd,
+    physics::material::Material,
     util::format_size,
 };
 
@@ -35,41 +38,35 @@ impl SolverRunner {
     /// description for the runner (e.g. a `fdtd::Simulation`).
     pub fn run(&mut self, solver_config: &SolverConfig, scene: &Scene) {
         match &solver_config.specifics {
-            SolverConfigSpecifics::Fdtd { resolution } => {
-                self.run_fdtd(
-                    scene,
-                    resolution,
-                    &solver_config.volume,
-                    &solver_config.physical_constants,
-                );
+            SolverConfigSpecifics::Fdtd(fdtd_config) => {
+                self.run_fdtd(scene, &solver_config.common, fdtd_config);
             }
-            SolverConfigSpecifics::Feec {} => tracing::debug!("todo: feec solver"),
+            SolverConfigSpecifics::Feec(_feec_config) => tracing::debug!("todo: feec solver"),
         }
     }
 
     fn run_fdtd(
         &mut self,
         scene: &Scene,
-        resolution: &fdtd::Resolution,
-        volume: &Volume,
-        physical_constants: &PhysicalConstants,
+        common_config: &SolverConfigCommon,
+        fdtd_config: &SolverConfigFdtd,
     ) {
-        let aabb = volume.aabb(scene);
-        let _rotation = volume.rotation(); // ignored for now
+        let aabb = common_config.volume.aabb(scene);
+        let _rotation = common_config.volume.rotation(); // ignored for now
 
         let origin = aabb.mins;
         let size = aabb.extents();
 
         // todo: make fdtd generic over float, remove casts
         let config = fdtd::SimulationConfig {
-            resolution: *resolution,
-            physical_constants: *physical_constants,
+            resolution: fdtd_config.resolution,
+            physical_constants: common_config.physical_constants,
             origin: Some(origin.cast()),
             size: size.cast(),
         };
 
         let memory_required = config.memory_usage_estimate();
-        tracing::debug!(?origin, ?size, memory_required = %format_size(memory_required), "creating fdtd simulation");
+        tracing::debug!(?origin, ?size, memory_required = %format_size(memory_required), lattice_size = ?config.lattice_size(), "creating fdtd simulation");
 
         // todo: remove this. we want a ui flow that prepares the solver-run anyway, so
         // we could display and warn about memory requirements there.
@@ -79,12 +76,14 @@ impl SolverRunner {
             return;
         }
 
+        let time_start = Instant::now();
+
         let mut simulation = fdtd::Simulation::new(&config);
 
         // access to the material properties
         //
         // todo: move this out of the fdtd module
-        let entity_materials = scene.entities.view::<&fdtd::Material>();
+        let entity_materials = scene.entities.view::<&Material>();
 
         // todo: would be nice if we could do the rasterization in a thread, since this
         // might block the UI for a moment. maybe we can used a scoped thread?
@@ -93,7 +92,7 @@ impl SolverRunner {
         //  - entities with: Transform, SharedShape, fdtd::Material
         //  - bvh
         // we could then also crop/transform by selected volume at this step.
-        simulation.fill_with(|point| {
+        simulation.fill_with(|point, cell| {
             let point = point.cast::<f32>();
 
             // this produces an iterator of materials present at this point
@@ -109,8 +108,26 @@ impl SolverRunner {
             // if nothing is found, use the default (vacuum)
             let material = point_materials.next().unwrap_or_default();
 
-            material
+            cell.set_material(material)
         });
+
+        {
+            // for testing we'll add a source at the origin
+            // todo: remove this
+
+            let center = aabb.center();
+            simulation.add_source(
+                center.cast::<f64>(),
+                fdtd::source::GaussianPulse {
+                    electric_current_density_amplitude: Vector3::y(),
+                    magnetic_current_density_amplitude: Vector3::zeros(),
+                    time: 20.0,
+                    duration: 10.0,
+                },
+            );
+        }
+
+        tracing::debug!("time to create simulation: {:?}", time_start.elapsed());
 
         let _join_handle = std::thread::spawn(move || {
             // todo
