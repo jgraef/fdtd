@@ -150,10 +150,10 @@ impl UpdateCoefficients {
     /// - `sigma`: Either electrical or magnetic conductivity
     /// - `perm`: Either permittivity or permability
     pub fn new(resolution: &Resolution, sigma: f64, perm: f64) -> Self {
-        let sigma_delta_t = sigma * resolution.temporal;
+        let half_sigmal_delta_t_over_perm = 0.5 * sigma * resolution.temporal / perm;
         Self {
-            a: (1.0 - 0.5 * sigma_delta_t / perm) / (1.0 + 0.5 * sigma_delta_t / perm),
-            b: resolution.temporal / (perm * (1.0 + 0.5 * sigma_delta_t / perm)),
+            a: (1.0 - half_sigmal_delta_t_over_perm) / (1.0 + half_sigmal_delta_t_over_perm),
+            b: resolution.temporal / (perm * (1.0 + half_sigmal_delta_t_over_perm)),
         }
     }
 
@@ -296,6 +296,8 @@ impl Simulation {
     }
 
     pub fn step(&mut self) {
+        // note: CE page 68. we moved the delta_x from the coefficients into the sum,
+        // which then becomes the curl plus source current density.
         // todo: integrate psi auxiliary fields
 
         let previous = SwapBufferIndex::from_tick(self.tick);
@@ -519,17 +521,17 @@ impl Simulation {
 }
 
 pub fn estimate_temporal_from_spatial_resolution(
-    physical_constants: &PhysicalConstants,
+    speed_of_light: f64,
     spatial_resolution: &Vector3<f64>,
 ) -> f64 {
-    spatial_resolution.min() / (physical_constants.speed_of_light() * 3.0f64.sqrt())
+    spatial_resolution.min() / (speed_of_light * 3.0f64.sqrt())
 }
 
 pub fn estimate_spatial_from_temporal_resolution(
-    physical_constants: &PhysicalConstants,
+    speed_of_light: f64,
     temporal_resolution: f64,
 ) -> Vector3<f64> {
-    Vector3::repeat(temporal_resolution * physical_constants.speed_of_light() * 3.0f64.sqrt())
+    Vector3::repeat(temporal_resolution * speed_of_light * 3.0f64.sqrt())
 }
 
 pub fn estimate_spatial_resolution_from_min_wavelength(min_wavelength: f64) -> Vector3<f64> {
@@ -552,7 +554,10 @@ impl Resolution {
         min_wavelength: f64,
     ) -> Self {
         let spatial = estimate_spatial_resolution_from_min_wavelength(min_wavelength);
-        let temporal = estimate_temporal_from_spatial_resolution(physical_constants, &spatial);
+        let temporal = estimate_temporal_from_spatial_resolution(
+            physical_constants.speed_of_light(),
+            &spatial,
+        );
         Self { spatial, temporal }
     }
 
@@ -561,7 +566,10 @@ impl Resolution {
         max_frequency: f64,
     ) -> Self {
         let temporal = estimate_temporal_resolution_from_max_frequency(max_frequency);
-        let spatial = estimate_spatial_from_temporal_resolution(physical_constants, temporal);
+        let spatial = estimate_spatial_from_temporal_resolution(
+            physical_constants.speed_of_light(),
+            temporal,
+        );
         Self { spatial, temporal }
     }
 }

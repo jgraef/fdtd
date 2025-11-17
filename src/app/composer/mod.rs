@@ -331,8 +331,8 @@ impl ComposerState {
 
             specifics: SolverConfigSpecifics::Fdtd(SolverConfigFdtd {
                 resolution: fdtd::Resolution {
-                    spatial: Vector3::repeat(0.001),
-                    temporal: 0.25,
+                    spatial: Vector3::repeat(0.01),
+                    temporal: 0.01,
                 },
                 stop_condition: StopCondition::Never,
             }),

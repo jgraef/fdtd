@@ -12,6 +12,7 @@ use nalgebra::{
     Point3,
     Vector3,
 };
+use palette::Srgba;
 
 use crate::{
     Error,
@@ -39,7 +40,7 @@ use crate::{
         },
     },
     fdtd,
-    physics::PhysicalConstants,
+    physics::material::Material,
     util::format_size,
 };
 
@@ -79,17 +80,27 @@ impl SolverRunner {
 
         let origin = aabb.mins;
         let mut size = aabb.extents();
-        size.y = 0.0;
+
+        // only a 2d plane for now
         size.z = 0.0;
 
-        // todo: make fdtd generic over float, remove casts
-        /*let config = fdtd::SimulationConfig {
+        let mut config = fdtd::SimulationConfig {
             resolution: fdtd_config.resolution,
             physical_constants: common_config.physical_constants,
             origin: Some(origin.cast()),
             size: size.cast(),
-        };*/
-        let config = fdtd::SimulationConfig {
+        };
+
+        // overwriting temporal resolution to satisfy courant condition
+        // todo: whether the courant condition is satisfied should be checked by the
+        // solver config ui.
+        config.resolution.temporal = 0.2
+            * fdtd::simulation::estimate_temporal_from_spatial_resolution(
+                common_config.physical_constants.speed_of_light(),
+                &config.resolution.spatial,
+            );
+
+        /*let config = fdtd::SimulationConfig {
             resolution: fdtd::Resolution {
                 spatial: Vector3::repeat(1.0),
                 temporal: 0.25,
@@ -97,7 +108,7 @@ impl SolverRunner {
             physical_constants: PhysicalConstants::REDUCED,
             origin: None,
             size: Vector3::new(100.0, 100.0, 0.0),
-        };
+        };*/
 
         let memory_required = config.memory_usage_estimate();
         tracing::debug!(?origin, ?size, resolution = ?config.resolution, memory_required = %format_size(memory_required), lattice_size = ?config.lattice_size(), "creating fdtd simulation");
@@ -105,7 +116,7 @@ impl SolverRunner {
         // todo: remove this. we want a ui flow that prepares the solver-run anyway, so
         // we could display and warn about memory requirements there.
         // for now this is just a safe-guard that I don't crash my system xD
-        if memory_required > 100_000_000 {
+        if memory_required > 200_000_000 {
             tracing::warn!("abort. too much memory required");
             return;
         }
@@ -115,7 +126,7 @@ impl SolverRunner {
         let mut simulation = fdtd::Simulation::new(&config);
         tracing::debug!(simulation_origin = ?simulation.origin());
 
-        /*{
+        {
             // access to the material properties
             //
             // todo: move this out of the fdtd module
@@ -146,27 +157,33 @@ impl SolverRunner {
 
                 cell.set_material(material)
             });
-        }*/
+        }
 
         {
             // for testing we'll add a source at the origin
             // todo: remove this
 
-            //let mut source_position = aabb.center();
-            //source_position.y = origin.y;
-            //source_position.z = origin.z;
-            let source_position = Point3::new(-40.0, -40.0, 0.0);
+            let mut source_position = aabb.center();
+            source_position.z = origin.z;
+            //let source_position = Point3::new(-40.0, -40.0, 0.0);
 
-            simulation.add_source(
-                source_position.cast::<f64>(),
-                fdtd::source::ContinousWave {
-                    electric_current_density_amplitude: Vector3::z(),
-                    magnetic_current_density_amplitude: Vector3::zeros(),
-                    electric_current_density_phase: 0.0,
-                    magnetic_current_density_phase: 0.0,
-                    frequency: 0.1,
-                },
-            );
+            /*let source = fdtd::source::ContinousWave {
+                electric_current_density_amplitude: Vector3::z() / config.resolution.temporal,
+                magnetic_current_density_amplitude: Vector3::zeros(),
+                electric_current_density_phase: 0.0,
+                magnetic_current_density_phase: 0.0,
+                frequency: 2.0,
+            };*/
+            let source = fdtd::source::GaussianPulse {
+                electric_current_density_amplitude: Vector3::z() / config.resolution.temporal,
+                magnetic_current_density_amplitude: Vector3::zeros(),
+                time: config.resolution.temporal * 50.0,
+                duration: config.resolution.temporal * 10.0,
+            };
+
+            tracing::debug!(position = ?source_position, ?source, "source");
+
+            simulation.add_source(source_position.cast::<f64>(), source);
         }
 
         let mut run_observers = {
@@ -233,20 +250,23 @@ impl SolverRunner {
                 };
 
                 image_output
-                    .write_field_values(
-                        |point| {
-                            let point = point.cast();
-                            let cell = simulation
-                                .lattice()
-                                .get(&Point3::new(point.x, point.y, z))
-                                .unwrap();
+                    .write_colors(|point| {
+                        let point = point.cast();
+                        let cell = simulation
+                            .lattice()
+                            .get(&Point3::new(point.x, point.y, z))
+                            .unwrap();
 
-                            let e_field = cell.electric_field(swap_buffer_index);
-                            //(0.5 + 0.5 * e_field.y).clamp(0.0, 1.0) as f32
-                            e_field.z.clamp(-1.0, 1.0) as f32
-                        },
-                        &gradient,
-                    )
+                        let e_field = cell.electric_field(swap_buffer_index);
+                        //(0.5 + 0.5 * e_field.y).clamp(0.0, 1.0) as f32
+                        let e_field = e_field.z.clamp(-1.0, 1.0) as f32;
+                        let eps = cell.material().relative_permittivity as f32;
+
+                        let mut color: Srgba = gradient.at(e_field).to_array().into();
+                        color.green = (eps / 20.0).clamp(0.0, 1.0);
+
+                        color
+                    })
                     .unwrap();
             }
         };
@@ -273,7 +293,6 @@ impl SolverRunner {
                     simulation.step();
 
                     run_observers(&simulation);
-
                     std::thread::sleep(Duration::from_millis(10));
                 }
             }
