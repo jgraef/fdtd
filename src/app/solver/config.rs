@@ -70,6 +70,7 @@ pub struct SolverConfigFdtd {
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum StopCondition {
+    Never,
     StepLimit { limit: usize },
     SimulatedTimeLimit { limit: f32 },
     RealtimeLimit { limit: Duration },

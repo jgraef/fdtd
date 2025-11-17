@@ -1,16 +1,26 @@
 use std::{
     convert::Infallible,
+    path::{
+        Path,
+        PathBuf,
+    },
     sync::Arc,
 };
 
-use image::RgbaImage;
+use image::{
+    ImageReader,
+    RgbaImage,
+};
 use nalgebra::Vector2;
 use parking_lot::Mutex;
 use wgpu::util::DeviceExt;
 
-use crate::app::solver::util::WriteImage;
+use crate::{
+    Error,
+    app::solver::util::WriteImage,
+};
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Texture {
     pub texture: wgpu::Texture,
     pub texture_view: wgpu::TextureView,
@@ -123,7 +133,10 @@ fn create_texture_descriptor(size: Vector2<u32>) -> wgpu::TextureDescriptor<'sta
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
-        format: wgpu::TextureFormat::Rgba8UnormSrgb,
+        // not sure, but it looks better without Srgb. The surface egui-wgpu uses is not srgba, but
+        // wouldn't the conversion being taken care of?
+        // format: wgpu::TextureFormat::Rgba8UnormSrgb,
+        format: wgpu::TextureFormat::Rgba8Unorm,
         usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         view_formats: &[],
     }
@@ -220,6 +233,32 @@ fn create_textures_for_texture_writers(
     }
 }
 
+fn load_textures_from_files(
+    world: &mut hecs::World,
+    command_buffer: &mut hecs::CommandBuffer,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    sampler: &wgpu::Sampler,
+    texture_bind_group_layout: &wgpu::BindGroupLayout,
+) {
+    for (entity, load_texture) in world.query_mut::<&LoadTexture>() {
+        tracing::debug!(path = %load_texture.path.display(), "loading texture from file");
+
+        let texture = match load_image(&load_texture.path) {
+            Ok(image) => {
+                Texture::new_with_data(device, queue, sampler, texture_bind_group_layout, &image)
+            }
+            Err(error) => {
+                tracing::debug!("failed to load image: {error}");
+                continue;
+            }
+        };
+
+        command_buffer.insert_one(entity, texture);
+        command_buffer.remove_one::<LoadTexture>(entity);
+    }
+}
+
 pub(super) fn update_textures(
     world: &mut hecs::World,
     command_buffer: &mut hecs::CommandBuffer,
@@ -228,6 +267,15 @@ pub(super) fn update_textures(
     sampler: &wgpu::Sampler,
     texture_bind_group_layout: &wgpu::BindGroupLayout,
 ) {
+    load_textures_from_files(
+        world,
+        command_buffer,
+        device,
+        queue,
+        sampler,
+        texture_bind_group_layout,
+    );
+
     create_textures_for_texture_writers(
         world,
         command_buffer,
@@ -236,9 +284,20 @@ pub(super) fn update_textures(
         sampler,
         texture_bind_group_layout,
     );
+
     sync_texture_writers_with_textures(world, queue);
 }
 
 fn image_size(image: &RgbaImage) -> Vector2<u32> {
     Vector2::new(image.width(), image.height())
+}
+
+#[derive(Clone, Debug)]
+pub struct LoadTexture {
+    pub path: PathBuf,
+}
+
+pub(super) fn load_image(path: impl AsRef<Path>) -> Result<RgbaImage, Error> {
+    let image = ImageReader::open(path)?.decode()?;
+    Ok(image.to_rgba8())
 }

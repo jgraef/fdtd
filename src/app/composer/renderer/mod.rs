@@ -412,8 +412,10 @@ impl Renderer {
             .device
             .create_sampler(&wgpu::SamplerDescriptor {
                 label: Some("texture_sampler"),
+                address_mode_u: wgpu::AddressMode::ClampToEdge,
+                address_mode_v: wgpu::AddressMode::ClampToEdge,
                 mag_filter: wgpu::FilterMode::Linear,
-                min_filter: wgpu::FilterMode::Linear,
+                min_filter: wgpu::FilterMode::Nearest,
                 ..Default::default()
             });
 

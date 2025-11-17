@@ -1,3 +1,4 @@
+use either::Either;
 use nalgebra::{
     Isometry3,
     Point,
@@ -36,7 +37,15 @@ impl Aabb {
 }
 
 pub trait Rasterize {
-    fn rasterize(&self, simulation: &Simulation) -> impl Iterator<Item = Point3<usize>> + '_;
+    fn rasterize(
+        &self,
+        simulation: &Simulation,
+    ) -> impl Iterator<Item = Result<Point3<usize>, InvalidPoint>> + '_;
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct InvalidPoint {
+    pub point: Point3<f64>,
 }
 
 pub trait BoundingBox {
@@ -44,7 +53,10 @@ pub trait BoundingBox {
 }
 
 impl Rasterize for Point3<f64> {
-    fn rasterize(&self, simulation: &Simulation) -> impl Iterator<Item = Point3<usize>> + '_ {
+    fn rasterize(
+        &self,
+        simulation: &Simulation,
+    ) -> impl Iterator<Item = Result<Point3<usize>, InvalidPoint>> + '_ {
         let x = round_to_grid(
             self,
             &simulation.origin().coords,
@@ -67,24 +79,33 @@ pub struct Block {
 }
 
 impl Rasterize for Block {
-    fn rasterize(&self, simulation: &Simulation) -> impl Iterator<Item = Point3<usize>> + '_ {
+    fn rasterize(
+        &self,
+        simulation: &Simulation,
+    ) -> impl Iterator<Item = Result<Point3<usize>, InvalidPoint>> + '_ {
         // todo: rotation. currently this will returrn the whole aabb
         // fixme: this doesn't account for E and H fields being staggered
 
         let center = self.transform.transform_point(&Point::origin());
 
-        let x0 = round_to_grid(
+        let x0 = match round_to_grid(
             &(center - 0.5 * self.dimensions),
             &simulation.origin().coords,
             &simulation.resolution().spatial,
-        );
-        let x1 = round_to_grid(
+        ) {
+            Ok(x) => x,
+            Err(error) => return Either::Left([Err(error)].into_iter()),
+        };
+        let x1 = match round_to_grid(
             &(center + 0.5 * self.dimensions),
             &simulation.origin().coords,
             &simulation.resolution().spatial,
-        );
+        ) {
+            Ok(x) => x,
+            Err(error) => return Either::Left([Err(error)].into_iter()),
+        };
 
-        iter_points(x0..=x1, simulation.lattice().dimensions())
+        Either::Right(iter_points(x0..=x1, simulation.lattice().dimensions()).map(Ok))
     }
 }
 

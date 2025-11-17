@@ -144,6 +144,7 @@ pub(super) fn run_app(args: Args) -> Result<(), Error> {
                 depth_texture_format,
                 multisample_count,
             };
+            tracing::debug!(?renderer_config);
 
             // pass wgpu context to app (e.g. for compute shaders)
             let wgpu_context = WgpuContext {

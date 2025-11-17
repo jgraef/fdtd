@@ -241,7 +241,7 @@ impl SimulationConfig {
     }
 
     pub fn origin(&self) -> Point3<f64> {
-        self.origin.unwrap_or_else(|| (0.5 * self.size).into())
+        self.origin.unwrap_or_else(|| (-0.5 * self.size).into())
     }
 
     pub fn memory_usage_estimate(&self) -> usize {
@@ -455,9 +455,14 @@ impl Simulation {
 
     pub fn add_material(&mut self, geometry: impl Rasterize, material: Material) {
         for point in geometry.rasterize(self) {
-            if let Some(cell) = self.lattice.get_mut(&point) {
-                cell.set_material(material);
-            }
+            let cell = point
+                .ok()
+                .and_then(|x| self.lattice.get_mut(&x))
+                .unwrap_or_else(|| {
+                    panic!("point outside lattice: {point:?}");
+                });
+
+            cell.set_material(material);
         }
     }
 
@@ -474,9 +479,14 @@ impl Simulation {
         self.sources.push(Box::new(source));
 
         for point in geometry.rasterize(self) {
-            if let Some(cell) = self.lattice.get_mut(&point) {
-                cell.source = Some(index);
-            }
+            let cell = point
+                .ok()
+                .and_then(|x| self.lattice.get_mut(&x))
+                .unwrap_or_else(|| {
+                    panic!("point outside lattice: {point:?}");
+                });
+
+            cell.source = Some(index);
         }
     }
 
@@ -503,7 +513,7 @@ impl Simulation {
             let x = x0 + i * e;
             let cell = self.lattice.get(&x).unwrap();
             let value = f(&cell, swap_buffer_index);
-            (i as f64 * resolution - origin + x_correction, value)
+            (i as f64 * resolution + origin + x_correction, value)
         })
     }
 }

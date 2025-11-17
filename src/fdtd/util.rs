@@ -14,6 +14,7 @@ use crate::fdtd::{
         AnyBoundaryCondition,
         BoundaryCondition,
     },
+    geometry::InvalidPoint,
     lattice::Lattice,
     simulation::Axis,
 };
@@ -94,11 +95,12 @@ pub fn round_to_grid(
     x: &Point3<f64>,
     origin: &Vector3<f64>,
     spatial_resolution: &Vector3<f64>,
-) -> Point3<usize> {
-    (x.coords + origin)
-        .component_div(spatial_resolution)
-        .map(|c| c.round() as usize)
-        .into()
+) -> Result<Point3<usize>, InvalidPoint> {
+    let x = (x.coords - origin).component_div(spatial_resolution);
+    x.iter()
+        .all(|c| *c >= 0.0)
+        .then(|| x.map(|c| c.round() as usize).into())
+        .ok_or_else(|| InvalidPoint { point: x.into() })
 }
 
 /// See [`partial_derivate`] for details.

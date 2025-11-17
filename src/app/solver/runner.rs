@@ -7,6 +7,7 @@ use std::{
     },
 };
 
+use colorgrad::Gradient;
 use nalgebra::{
     Point3,
     Vector3,
@@ -38,7 +39,7 @@ use crate::{
         },
     },
     fdtd,
-    physics::material::Material,
+    physics::PhysicalConstants,
     util::format_size,
 };
 
@@ -78,18 +79,28 @@ impl SolverRunner {
 
         let origin = aabb.mins;
         let mut size = aabb.extents();
+        size.y = 0.0;
         size.z = 0.0;
 
         // todo: make fdtd generic over float, remove casts
-        let config = fdtd::SimulationConfig {
+        /*let config = fdtd::SimulationConfig {
             resolution: fdtd_config.resolution,
             physical_constants: common_config.physical_constants,
             origin: Some(origin.cast()),
             size: size.cast(),
+        };*/
+        let config = fdtd::SimulationConfig {
+            resolution: fdtd::Resolution {
+                spatial: Vector3::repeat(1.0),
+                temporal: 0.25,
+            },
+            physical_constants: PhysicalConstants::REDUCED,
+            origin: None,
+            size: Vector3::new(100.0, 100.0, 0.0),
         };
 
         let memory_required = config.memory_usage_estimate();
-        tracing::debug!(?origin, ?size, memory_required = %format_size(memory_required), lattice_size = ?config.lattice_size(), "creating fdtd simulation");
+        tracing::debug!(?origin, ?size, resolution = ?config.resolution, memory_required = %format_size(memory_required), lattice_size = ?config.lattice_size(), "creating fdtd simulation");
 
         // todo: remove this. we want a ui flow that prepares the solver-run anyway, so
         // we could display and warn about memory requirements there.
@@ -102,8 +113,9 @@ impl SolverRunner {
         let time_start = Instant::now();
 
         let mut simulation = fdtd::Simulation::new(&config);
+        tracing::debug!(simulation_origin = ?simulation.origin());
 
-        {
+        /*{
             // access to the material properties
             //
             // todo: move this out of the fdtd module
@@ -134,20 +146,25 @@ impl SolverRunner {
 
                 cell.set_material(material)
             });
-        }
+        }*/
 
         {
             // for testing we'll add a source at the origin
             // todo: remove this
 
-            let center = aabb.center();
+            //let mut source_position = aabb.center();
+            //source_position.y = origin.y;
+            //source_position.z = origin.z;
+            let source_position = Point3::new(-40.0, -40.0, 0.0);
+
             simulation.add_source(
-                center.cast::<f64>(),
-                fdtd::source::GaussianPulse {
-                    electric_current_density_amplitude: Vector3::y(),
+                source_position.cast::<f64>(),
+                fdtd::source::ContinousWave {
+                    electric_current_density_amplitude: Vector3::z(),
                     magnetic_current_density_amplitude: Vector3::zeros(),
-                    time: 20.0,
-                    duration: 10.0,
+                    electric_current_density_phase: 0.0,
+                    magnetic_current_density_phase: 0.0,
+                    frequency: 0.1,
                 },
             );
         }
@@ -201,7 +218,7 @@ impl SolverRunner {
             // apply deferred commands
             scene.apply_deferred();
 
-            let gradient = colorgrad::preset::rd_bu();
+            let gradient = TestGradient;
 
             // wrap image output into closure that takes the field values from the
             // simulation and writes a frame with it everytime it's called
@@ -225,7 +242,8 @@ impl SolverRunner {
                                 .unwrap();
 
                             let e_field = cell.electric_field(swap_buffer_index);
-                            (0.5 + 0.5 * e_field.y).clamp(0.0, 1.0) as f32
+                            //(0.5 + 0.5 * e_field.y).clamp(0.0, 1.0) as f32
+                            e_field.z.clamp(-1.0, 1.0) as f32
                         },
                         &gradient,
                     )
@@ -250,12 +268,13 @@ impl SolverRunner {
                         break;
                     }
 
-                    tracing::debug!(tick = simulation.tick(), elapsed = ?time_elapsed);
+                    //tracing::debug!(tick = simulation.tick(), elapsed = ?time_elapsed);
 
                     simulation.step();
 
-                    // testing: write some slice of field values to GIF
                     run_observers(&simulation);
+
+                    std::thread::sleep(Duration::from_millis(10));
                 }
             }
         });
@@ -268,8 +287,30 @@ fn evaluate_stop_condition_for_fdtd(
     time_elapsed: Duration,
 ) -> bool {
     match stop_condition {
+        StopCondition::Never => false,
         StopCondition::StepLimit { limit } => simulation.tick() >= *limit,
         StopCondition::SimulatedTimeLimit { limit } => simulation.time() as f32 >= *limit,
         StopCondition::RealtimeLimit { limit } => time_elapsed >= *limit,
+    }
+}
+
+#[derive(Clone, Debug)]
+struct TestGradient;
+
+impl Gradient for TestGradient {
+    fn at(&self, t: f32) -> colorgrad::Color {
+        let mut red = 0.0;
+        let mut blue = 0.0;
+        if t > 0.0 {
+            red = t.min(1.0);
+        }
+        else {
+            blue = (-t).min(1.0);
+        }
+        [red, 0.0, blue, 1.0].into()
+    }
+
+    fn domain(&self) -> (f32, f32) {
+        (-1.0, 1.0)
     }
 }

@@ -245,7 +245,7 @@ fn vs_main_quad_with_texture(input: VertexInput) -> VertexOutputTexture {
 
     var output: VertexOutputTexture;
     output.fragment_position = camera.projection * camera.transform * instance.transform * vec4f(vertex_centered, 0.0, 1.0);
-    output.texture_position = vertex;
+    output.texture_position = vec2f(vertex.x, 1.0 - vertex.y);
 
     return output;
 }

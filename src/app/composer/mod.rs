@@ -13,6 +13,7 @@ use std::{
         Path,
         PathBuf,
     },
+    time::Duration,
 };
 
 use base64::engine::Engine;
@@ -330,10 +331,10 @@ impl ComposerState {
 
             specifics: SolverConfigSpecifics::Fdtd(SolverConfigFdtd {
                 resolution: fdtd::Resolution {
-                    spatial: Vector3::repeat(0.01),
+                    spatial: Vector3::repeat(0.001),
                     temporal: 0.25,
                 },
-                stop_condition: StopCondition::StepLimit { limit: 5 },
+                stop_condition: StopCondition::Never,
             }),
         }];
 
@@ -359,6 +360,7 @@ impl ComposerState {
         // prepare world
         self.scene.prepare();
         renderer.prepare_world(&mut self.scene);
+        ctx.request_repaint_after(Duration::from_millis(1000 / 60));
 
         {
             let mut copy = false;
@@ -719,7 +721,6 @@ impl PopulateScene for ExampleScene {
                 write_to_gif: None,
                 display_as_texture: true,
             },
-            //Transform::from(UnitQuaternion::from_axis_angle(&Vector3::y_axis(), 0.0)),
             Transform::identity(),
             Quad {
                 half_extents: Vector2::new(1.0, 1.0),
