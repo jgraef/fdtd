@@ -1,37 +1,35 @@
-use std::{
-    fmt::Debug,
-    ops::{
-        Index,
-        IndexMut,
-    },
-};
+use std::fmt::Debug;
 
 use nalgebra::{
     Point3,
-    Scalar,
-    UnitVector3,
     Vector3,
-};
-use num::{
-    One,
-    Zero,
-};
-use serde::{
-    Deserialize,
-    Serialize,
 };
 
 use crate::{
-    fdtd::{
+    app::solver::fdtd::{
+        FdtdSolverConfig,
+        Resolution,
         boundary_condition::{
             AnyBoundaryCondition,
             default_boundary_conditions,
         },
-        geometry::Rasterize,
-        lattice::Lattice,
-        pml::PmlCell,
-        source::Source,
-        util::jacobian,
+        cpu::{
+            Axis,
+            jacobian,
+        },
+        lattice::{
+            Lattice,
+            Strider,
+        },
+        legacy::{
+            geometry::Rasterize,
+            pml::PmlCell,
+            source::Source,
+        },
+        util::{
+            SwapBuffer,
+            SwapBufferIndex,
+        },
     },
     physics::{
         PhysicalConstants,
@@ -182,87 +180,6 @@ impl UpdateCoefficients {
     }
 }
 
-/// Buffer holding 2 values.
-///
-/// One value is the current value, the other one is the value from the previous
-/// step. Which one is which depends on the [`SwapBufferIndex`].
-#[derive(Clone, Copy, Debug, Default)]
-pub struct SwapBuffer<T> {
-    buffer: [T; 2],
-}
-
-impl<T> From<[T; 2]> for SwapBuffer<T> {
-    fn from(value: [T; 2]) -> Self {
-        Self { buffer: value }
-    }
-}
-
-impl<T> SwapBuffer<T> {
-    pub fn from_fn(mut f: impl FnMut(SwapBufferIndex) -> T) -> Self {
-        Self::from(std::array::from_fn::<T, 2, _>(|index| {
-            f(SwapBufferIndex { index })
-        }))
-    }
-}
-
-impl<T> Index<SwapBufferIndex> for SwapBuffer<T> {
-    type Output = T;
-
-    fn index(&self, index: SwapBufferIndex) -> &Self::Output {
-        &self.buffer[index.index]
-    }
-}
-
-impl<T> IndexMut<SwapBufferIndex> for SwapBuffer<T> {
-    fn index_mut(&mut self, index: SwapBufferIndex) -> &mut Self::Output {
-        &mut self.buffer[index.index]
-    }
-}
-
-/// Index into a [`SwapBuffer`].
-///
-/// This can be derived from the simulation tick.
-#[derive(Clone, Copy, Debug)]
-pub struct SwapBufferIndex {
-    index: usize,
-}
-
-impl SwapBufferIndex {
-    pub fn from_tick(tick: usize) -> Self {
-        Self { index: tick % 2 }
-    }
-
-    pub fn other(&self) -> Self {
-        Self {
-            index: (self.index + 1) % 2,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct SimulationConfig {
-    pub resolution: Resolution,
-    pub physical_constants: PhysicalConstants,
-    pub origin: Option<Point3<f64>>,
-    pub size: Vector3<f64>,
-}
-
-impl SimulationConfig {
-    pub fn lattice_size(&self) -> Vector3<usize> {
-        self.size
-            .component_div(&self.resolution.spatial)
-            .map(|x| (x.ceil() as usize).max(1))
-    }
-
-    pub fn origin(&self) -> Point3<f64> {
-        self.origin.unwrap_or_else(|| (-0.5 * self.size).into())
-    }
-
-    pub fn memory_usage_estimate(&self) -> usize {
-        size_of::<Cell>() * self.lattice_size().product()
-    }
-}
-
 #[derive(derive_more::Debug)]
 pub struct Simulation {
     resolution: Resolution,
@@ -274,6 +191,7 @@ pub struct Simulation {
     total_energy: f64,
 
     lattice: Lattice<Cell>,
+    strider: Strider,
     boundary_conditions: [AnyBoundaryCondition; 3],
 
     #[debug(ignore)]
@@ -281,10 +199,10 @@ pub struct Simulation {
 }
 
 impl Simulation {
-    pub fn new(config: &SimulationConfig) -> Self {
-        let lattice_size = config.lattice_size();
-        let lattice = Lattice::new(lattice_size, |_| Cell::default());
-        let boundary_conditions = default_boundary_conditions(&lattice_size);
+    pub fn new(config: &FdtdSolverConfig) -> Self {
+        let strider = config.strider();
+        let lattice = Lattice::from_default(&strider);
+        let boundary_conditions = default_boundary_conditions(&strider.size());
 
         Self {
             physical_constants: config.physical_constants,
@@ -294,6 +212,7 @@ impl Simulation {
             origin: config.origin(),
             total_energy: 0.0,
             lattice,
+            strider,
             boundary_conditions,
             sources: vec![],
         }
@@ -302,7 +221,9 @@ impl Simulation {
     pub fn reset(&mut self) {
         self.tick = 0;
         self.time = 0.0;
-        self.lattice.iter_mut().for_each(|(_, cell)| cell.reset());
+        self.lattice
+            .iter_mut(&self.strider, ..)
+            .for_each(|(_, _, cell)| cell.reset());
 
         for source in &mut self.sources {
             source.reset();
@@ -327,11 +248,12 @@ impl Simulation {
         }
 
         // update magnetic field
-        for point in self.lattice.iter_points() {
+        for (index, point) in self.strider.iter(..) {
             let e_jacobian = jacobian(
                 &point,
                 &Vector3::repeat(1),
                 &Vector3::zeros(),
+                &self.strider,
                 &self.lattice,
                 |cell| cell.electric_field[previous],
                 &self.resolution.spatial,
@@ -339,7 +261,7 @@ impl Simulation {
             );
             let e_curl = e_jacobian.curl();
 
-            let cell = self.lattice.get_mut(&point).unwrap();
+            let cell = &mut self.lattice[index];
 
             let m_source = if let Some(index) = cell.source {
                 let m_source = &mut self.sources[index];
@@ -373,11 +295,12 @@ impl Simulation {
 
         // update electric field
         let time = self.time + 0.5 * self.resolution.temporal;
-        for point in self.lattice.iter_points() {
+        for (index, point) in self.strider.iter(..) {
             let h_jacobian = jacobian(
                 &point,
                 &Vector3::zeros(),
                 &Vector3::repeat(1),
+                &self.strider,
                 &self.lattice,
                 |cell| {
                     // NOTE: this is `current` not `previous`, because we have already updated the H
@@ -389,7 +312,7 @@ impl Simulation {
             );
             let h_curl = h_jacobian.curl();
 
-            let cell = self.lattice.get_mut(&point).unwrap();
+            let cell = &mut self.lattice[index];
 
             let j_source = if let Some(index) = cell.source {
                 let j_source = &mut self.sources[index];
@@ -452,9 +375,13 @@ impl Simulation {
     }
 
     pub fn size(&self) -> Vector3<f64> {
-        self.lattice
-            .dimensions()
+        self.strider
+            .size()
             .zip_map(&self.resolution.spatial, |x, dx| x as f64 * dx)
+    }
+
+    pub fn strider(&self) -> &Strider {
+        &self.strider
     }
 
     pub fn total_energy(&self) -> f64 {
@@ -473,7 +400,7 @@ impl Simulation {
         for point in geometry.rasterize(self) {
             let cell = point
                 .ok()
-                .and_then(|x| self.lattice.get_mut(&x))
+                .and_then(|x| self.lattice.get_point_mut(&self.strider, &x))
                 .unwrap_or_else(|| {
                     panic!("point outside lattice: {point:?}");
                 });
@@ -483,7 +410,7 @@ impl Simulation {
     }
 
     pub fn fill_with(&mut self, mut f: impl FnMut(Point3<f64>, &mut Cell)) {
-        for (point, cell) in self.lattice.iter_mut() {
+        for (_index, point, cell) in self.lattice.iter_mut(&self.strider, ..) {
             let point_float =
                 self.origin + point.coords.cast().component_mul(&self.resolution.spatial);
             f(point_float, cell);
@@ -497,7 +424,7 @@ impl Simulation {
         for point in geometry.rasterize(self) {
             let cell = point
                 .ok()
-                .and_then(|x| self.lattice.get_mut(&x))
+                .and_then(|x| self.lattice.get_point_mut(&self.strider, &x))
                 .unwrap_or_else(|| {
                     panic!("point outside lattice: {point:?}");
                 });
@@ -507,7 +434,7 @@ impl Simulation {
     }
 
     /// Returns field values along an axis-aligned line.
-    pub(super) fn field_values<'a, T, F>(
+    pub(crate) fn field_values<'a, T, F>(
         &'a self,
         mut x0: Point3<usize>,
         axis: Axis,
@@ -519,7 +446,7 @@ impl Simulation {
     {
         *axis.vector_component_mut(&mut x0.coords) = 0;
 
-        let n = *axis.vector_component(&self.lattice.dimensions());
+        let n = *axis.vector_component(&self.strider.size());
         let e = axis.basis().into_inner();
         let resolution = *axis.vector_component(&self.resolution.spatial);
         let origin = *axis.vector_component(&self.origin.coords);
@@ -527,112 +454,9 @@ impl Simulation {
 
         (0..n).map(move |i| {
             let x = x0 + i * e;
-            let cell = self.lattice.get(&x).unwrap();
+            let cell = self.lattice.get_point(&self.strider, &x).unwrap();
             let value = f(&cell, swap_buffer_index);
             (i as f64 * resolution + origin + x_correction, value)
         })
-    }
-}
-
-pub fn estimate_temporal_from_spatial_resolution(
-    speed_of_light: f64,
-    spatial_resolution: &Vector3<f64>,
-) -> f64 {
-    spatial_resolution.min() / (speed_of_light * 3.0f64.sqrt())
-}
-
-pub fn estimate_spatial_from_temporal_resolution(
-    speed_of_light: f64,
-    temporal_resolution: f64,
-) -> Vector3<f64> {
-    Vector3::repeat(temporal_resolution * speed_of_light * 3.0f64.sqrt())
-}
-
-pub fn estimate_spatial_resolution_from_min_wavelength(min_wavelength: f64) -> Vector3<f64> {
-    Vector3::repeat(min_wavelength / (9.0f64 * 3.0f64.sqrt()))
-}
-
-pub fn estimate_temporal_resolution_from_max_frequency(max_frequency: f64) -> f64 {
-    1.0f64 / (9.0f64 * 3.0f64 * max_frequency)
-}
-
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
-pub struct Resolution {
-    pub spatial: Vector3<f64>,
-    pub temporal: f64,
-}
-
-impl Resolution {
-    pub fn estimate_from_min_wavelength(
-        physical_constants: &PhysicalConstants,
-        min_wavelength: f64,
-    ) -> Self {
-        let spatial = estimate_spatial_resolution_from_min_wavelength(min_wavelength);
-        let temporal = estimate_temporal_from_spatial_resolution(
-            physical_constants.speed_of_light(),
-            &spatial,
-        );
-        Self { spatial, temporal }
-    }
-
-    pub fn estimate_from_max_frequency(
-        physical_constants: &PhysicalConstants,
-        max_frequency: f64,
-    ) -> Self {
-        let temporal = estimate_temporal_resolution_from_max_frequency(max_frequency);
-        let spatial = estimate_spatial_from_temporal_resolution(
-            physical_constants.speed_of_light(),
-            temporal,
-        );
-        Self { spatial, temporal }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum Axis {
-    X,
-    Y,
-    Z,
-}
-
-impl Axis {
-    pub fn vector_index(&self) -> usize {
-        match self {
-            Axis::X => 0,
-            Axis::Y => 1,
-            Axis::Z => 2,
-        }
-    }
-
-    pub fn vector_component<'a, T>(&self, vector: &'a Vector3<T>) -> &'a T {
-        &vector[self.vector_index()]
-    }
-
-    pub fn vector_component_mut<'a, T>(&self, vector: &'a mut Vector3<T>) -> &'a mut T {
-        &mut vector[self.vector_index()]
-    }
-
-    pub fn basis<T>(&self) -> UnitVector3<T>
-    where
-        T: Scalar + Zero + One,
-    {
-        let mut e = Vector3::<T>::zeros();
-        *self.vector_component_mut(&mut e) = T::one();
-        // note: one component is 1, all others are 0, therefore this vector is
-        // normalized
-        UnitVector3::new_unchecked(e)
-    }
-
-    pub fn from_vector<T>(vector: &Vector3<T>) -> Option<Self>
-    where
-        T: Scalar + Zero,
-    {
-        let z = vector.map(|x| !x.is_zero());
-        match (z.x, z.y, z.z) {
-            (true, false, false) => Some(Self::X),
-            (false, true, false) => Some(Self::Y),
-            (false, false, true) => Some(Self::Z),
-            _ => None,
-        }
     }
 }

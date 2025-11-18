@@ -4,7 +4,7 @@ use nalgebra::{
 };
 
 use crate::{
-    fdtd::simulation::Resolution,
+    app::solver::fdtd::Resolution,
     physics::PhysicalConstants,
 };
 

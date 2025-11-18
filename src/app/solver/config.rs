@@ -12,11 +12,13 @@ use serde::{
 };
 
 use crate::{
-    app::composer::scene::{
-        Scene,
-        transform::Transform,
+    app::{
+        composer::scene::{
+            Scene,
+            transform::Transform,
+        },
+        solver::fdtd,
     },
-    fdtd,
     physics::{
         PhysicalConstants,
         material::Material,

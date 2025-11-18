@@ -32,3 +32,16 @@ impl Default for Material {
         Self::VACUUM
     }
 }
+
+pub trait MaterialDistribution<P> {
+    fn at(&self, point: &P) -> Material;
+}
+
+impl<F, P> MaterialDistribution<P> for F
+where
+    F: Fn(&P) -> Material,
+{
+    fn at(&self, point: &P) -> Material {
+        (self)(point)
+    }
+}

@@ -1,15 +1,7 @@
 // disable clippy for this, since we will be refactoring this into the app later
 #![allow(clippy::all)]
 
-pub mod boundary_condition;
 mod executor;
-pub mod geometry;
-pub mod lattice;
-pub mod pml;
-pub mod simulation;
-pub mod source;
-mod util;
-pub mod wgpu;
 
 use std::{
     path::PathBuf,
@@ -39,18 +31,26 @@ use nalgebra::{
     Vector3,
 };
 
-pub use crate::fdtd::simulation::{
-    Resolution,
-    Simulation,
-    SimulationConfig,
-};
 use crate::{
-    fdtd::{
-        executor::Executor,
-        geometry::Block,
-        simulation::Axis,
-        source::GaussianPulse,
+    app::solver::{
+        fdtd::{
+            FdtdSolverConfig,
+            Resolution,
+            cpu,
+            legacy::{
+                Simulation,
+                estimate_memory_usage,
+                geometry::Block,
+                source::GaussianPulse,
+            },
+            wgpu,
+        },
+        traits::{
+            Solver,
+            SolverInstance,
+        },
     },
+    fdtd::executor::Executor,
     physics::{
         PhysicalConstants,
         material::Material,
@@ -92,7 +92,7 @@ pub struct App {
 
 impl App {
     pub fn new(args: Args, device: ::wgpu::Device, queue: ::wgpu::Queue) -> Self {
-        let config = SimulationConfig {
+        let config = FdtdSolverConfig {
             resolution: Resolution {
                 spatial: Vector3::repeat(1.0),
                 temporal: 0.25,
@@ -101,7 +101,7 @@ impl App {
             origin: None,
             size: Vector3::new(500.0, 0.0, 0.0),
         };
-        tracing::debug!(?config, memory_usage = config.memory_usage_estimate());
+        tracing::debug!(?config, memory_usage = estimate_memory_usage(&config));
 
         let simulation = if args.wgpu {
             CpuOrGpu::new_gpu(&config, &device, &queue)
@@ -221,14 +221,13 @@ enum CpuOrGpu {
         simulation: Simulation,
     },
     Gpu {
-        pipeline: wgpu::Pipeline,
-        state: wgpu::State,
-        queue: ::wgpu::Queue,
+        instance: wgpu::FdtdWgpuSolverInstance,
+        state: wgpu::FdtdWgpuSolverState,
     },
 }
 
 impl CpuOrGpu {
-    pub fn new_cpu(config: &SimulationConfig) -> Self {
+    pub fn new_cpu(config: &FdtdSolverConfig) -> Self {
         let mut simulation = Simulation::new(&config);
 
         simulation.add_material(
@@ -259,40 +258,33 @@ impl CpuOrGpu {
     }
 
     pub fn new_gpu(
-        config: &SimulationConfig,
+        config: &FdtdSolverConfig,
         device: &::wgpu::Device,
         queue: &::wgpu::Queue,
     ) -> Self {
-        let pipeline_layout = wgpu::PipelineLayout::new(&device);
+        let solver = wgpu::FdtdWgpuSolver::new(device, queue);
 
-        let pipeline = pipeline_layout.create_pipeline(&config, |x| {
-            let x = x.cast::<f32>();
-            let mut material = Material::VACUUM;
-            if x.x >= 440.0 && x.x <= 460.0 {
-                material.relative_permittivity = 3.9;
-            }
-            material
-        });
-
+        let instance = solver
+            .create_instance(&config, |x: &Point3<usize>| {
+                let x = x.cast::<f32>();
+                let mut material = Material::VACUUM;
+                if x.x >= 440.0 && x.x <= 460.0 {
+                    material.relative_permittivity = 3.9;
+                }
+                material
+            })
+            .unwrap();
         // note: source hardcoded in shader
 
-        let state = pipeline.create_state();
+        let state = instance.create_state();
 
-        Self::Gpu {
-            pipeline,
-            state,
-            queue: queue.clone(),
-        }
+        Self::Gpu { instance, state }
     }
 
     pub fn step(&mut self) {
         match self {
             CpuOrGpu::Cpu { simulation } => simulation.step(),
-            CpuOrGpu::Gpu {
-                pipeline,
-                state,
-                queue,
-            } => pipeline.update(state, queue),
+            CpuOrGpu::Gpu { instance, state } => instance.update(state),
         }
     }
 
@@ -300,9 +292,9 @@ impl CpuOrGpu {
         match self {
             CpuOrGpu::Cpu { simulation } => simulation.reset(),
             CpuOrGpu::Gpu {
-                pipeline, state, ..
+                instance, state, ..
             } => {
-                *state = pipeline.create_state();
+                *state = instance.create_state();
             }
         }
     }
@@ -340,7 +332,8 @@ impl CpuOrGpu {
 
         match self {
             CpuOrGpu::Cpu { simulation } => {
-                let get_value = |cell: &simulation::Cell, swap_buffer_index| {
+                use crate::app::solver::fdtd::legacy::simulation::Cell;
+                let get_value = |cell: &Cell, swap_buffer_index| {
                     match which {
                         WhichFieldValue::Electric => cell.electric_field(swap_buffer_index).y,
                         WhichFieldValue::Magnetic => cell.magnetic_field(swap_buffer_index).z,
@@ -350,19 +343,15 @@ impl CpuOrGpu {
 
                 PlotPoints::Owned(
                     simulation
-                        .field_values(Point3::origin(), Axis::X, x_correction, get_value)
+                        .field_values(Point3::origin(), cpu::Axis::X, x_correction, get_value)
                         .map(|(x, y)| PlotPoint::new(x, y))
                         .collect::<Vec<_>>(),
                 )
             }
-            CpuOrGpu::Gpu {
-                pipeline,
-                state,
-                queue,
-            } => {
+            CpuOrGpu::Gpu { instance, state } => {
                 PlotPoints::Owned(
-                    pipeline
-                        .field_values(state, queue, which)
+                    instance
+                        .field_values(state, which)
                         .into_iter()
                         .map(|(x, y)| PlotPoint::new(x, y))
                         .collect::<Vec<_>>(),
@@ -373,7 +362,7 @@ impl CpuOrGpu {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum WhichFieldValue {
+pub(crate) enum WhichFieldValue {
     Electric,
     Magnetic,
     Epsilon,

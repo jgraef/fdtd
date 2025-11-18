@@ -1,3 +1,5 @@
+use std::convert::Infallible;
+
 use bytemuck::{
     Pod,
     Zeroable,
@@ -5,79 +7,44 @@ use bytemuck::{
 use nalgebra::{
     Point3,
     Vector3,
-    Vector4,
 };
 use smallvec::SmallVec;
 use wgpu::util::DeviceExt;
 
 use crate::{
-    fdtd::{
-        Resolution,
-        SimulationConfig,
-        WhichFieldValue,
-        lattice::Strider,
-        simulation::{
-            SwapBuffer,
-            SwapBufferIndex,
+    app::solver::{
+        fdtd::{
+            FdtdSolverConfig,
+            Resolution,
+            lattice::Strider,
+            util::{
+                SwapBuffer,
+                SwapBufferIndex,
+                UpdateCoefficients,
+            },
+        },
+        traits::{
+            Solver,
+            SolverInstance,
         },
     },
-    physics::{
-        PhysicalConstants,
-        material::Material,
-    },
+    fdtd::WhichFieldValue,
+    physics::material::MaterialDistribution,
     util::wgpu::TypedArrayBuffer,
 };
 
-pub(super) fn run_test() {
-    let instance = wgpu::Instance::new(&Default::default());
-
-    let (adapter, device, queue): (wgpu::Adapter, wgpu::Device, wgpu::Queue) =
-        pollster::block_on(async {
-            let adapter = instance.request_adapter(&Default::default()).await?;
-            let (device, queue) = adapter.request_device(&Default::default()).await?;
-            Ok::<_, crate::Error>((adapter, device, queue))
-        })
-        .unwrap();
-
-    tracing::debug!(adapter = ?adapter.get_info());
-
-    let pipeline_layout = PipelineLayout::new(&device);
-
-    let config = SimulationConfig {
-        resolution: Resolution {
-            spatial: Vector3::repeat(1.0),
-            temporal: 0.25,
-        },
-        physical_constants: PhysicalConstants::REDUCED,
-        origin: Some(Point3::origin()),
-        size: Vector3::new(500.0, 0.0, 0.0),
-    };
-
-    let pipeline = pipeline_layout.create_pipeline(&config, |x| {
-        let x = x.cast::<f32>();
-        let mut material = Material::VACUUM;
-        if x.x >= 190.0 && x.x <= 210.0 {
-            material.relative_permittivity = 3.9;
-        }
-        material
-    });
-
-    let mut state = pipeline.create_state();
-
-    pipeline.update(&mut state, &queue);
-}
-
 #[derive(Clone, Debug)]
-pub struct PipelineLayout {
+pub struct FdtdWgpuSolver {
     device: wgpu::Device,
+    queue: wgpu::Queue,
     limits: ComputeLimits,
     shader_module: wgpu::ShaderModule,
     bind_group_layout: wgpu::BindGroupLayout,
     pipeline_layout: wgpu::PipelineLayout,
 }
 
-impl PipelineLayout {
-    pub fn new(device: &wgpu::Device) -> Self {
+impl FdtdWgpuSolver {
+    pub fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
         let limits = ComputeLimits::from_limits(&device.limits());
 
         let shader_module = device.create_shader_module(wgpu::include_wgsl!("fdtd.wgsl"));
@@ -113,30 +80,40 @@ impl PipelineLayout {
 
         Self {
             device: device.clone(),
+            queue: queue.clone(),
             limits,
             shader_module,
             bind_group_layout,
             pipeline_layout,
         }
     }
+}
 
-    pub fn create_pipeline(
+impl Solver for FdtdWgpuSolver {
+    type Config = FdtdSolverConfig;
+    type Point = Point3<usize>;
+    type Instance = FdtdWgpuSolverInstance;
+    type Error = Infallible;
+
+    fn create_instance<M>(
         &self,
-        config: &SimulationConfig,
-        material: impl FnMut(&Point3<usize>) -> Material,
-    ) -> Pipeline {
-        Pipeline::new(self, config, material)
+        config: &Self::Config,
+        material: M,
+    ) -> Result<Self::Instance, Self::Error>
+    where
+        M: MaterialDistribution<Self::Point>,
+    {
+        Ok(FdtdWgpuSolverInstance::new(self, config, material))
     }
 }
 
 #[derive(Clone, Debug)]
-pub struct Pipeline {
-    pipeline_layout: PipelineLayout,
+pub struct FdtdWgpuSolverInstance {
+    solver: FdtdWgpuSolver,
     resolution: Resolution,
-    size: Vector3<usize>, // todo: move into strider
     strider: Strider,
     config_buffer: wgpu::Buffer,
-    material_buffer: TypedArrayBuffer<MaterialCoefficients>,
+    material_buffer: TypedArrayBuffer<UpdateCoefficientsData>,
     num_cells: usize,
     update_e_pipeline: wgpu::ComputePipeline,
     update_h_pipeline: wgpu::ComputePipeline,
@@ -144,47 +121,49 @@ pub struct Pipeline {
     dispatches: SmallVec<[Vector3<u32>; 1]>,
 }
 
-impl Pipeline {
+impl FdtdWgpuSolverInstance {
     fn new(
-        pipeline_layout: &PipelineLayout,
-        config: &SimulationConfig,
-        mut material: impl FnMut(&Point3<usize>) -> Material,
+        solver: &FdtdWgpuSolver,
+        config: &FdtdSolverConfig,
+        material: impl MaterialDistribution<Point3<usize>>,
     ) -> Self {
-        let size = config.lattice_size();
-        let strider = Strider::from_dimensions(&size);
-        let num_cells = size.product();
+        let strider = config.strider();
+        let num_cells = strider.len();
         assert_ne!(num_cells, 0);
 
-        let config_data = ConfigData::new(&size, strider.strides(), &config.resolution, 0.0);
+        let config_data = ConfigData::new(&strider, &config.resolution, 0.0);
 
-        let config_buffer =
-            pipeline_layout
-                .device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("fdtd/uniform"),
-                    contents: bytemuck::bytes_of(&config_data),
-                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                });
+        let config_buffer = solver
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("fdtd/uniform"),
+                contents: bytemuck::bytes_of(&config_data),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            });
 
         let material_buffer = TypedArrayBuffer::from_fn(
-            &pipeline_layout.device,
+            &solver.device,
             "fdtd/material",
             num_cells,
             wgpu::BufferUsages::STORAGE,
             |index| {
-                let point = strider.from_index(index);
-
-                MaterialCoefficients::new(
-                    &config.resolution,
-                    &config.physical_constants,
-                    &material(&point),
-                )
+                strider
+                    .from_index(index)
+                    .map(|point| {
+                        UpdateCoefficients::new(
+                            &config.resolution,
+                            &config.physical_constants,
+                            &material.at(&point),
+                        )
+                    })
+                    .unwrap_or_default()
+                    .into()
             },
         );
 
-        let workgroup_size = pipeline_layout.limits.work_group_size_for(num_cells);
+        let workgroup_size = solver.limits.work_group_size_for(num_cells);
 
-        let dispatches = pipeline_layout
+        let dispatches = solver
             .limits
             .divide_work_into_dispatches(num_cells, &workgroup_size)
             .collect();
@@ -197,12 +176,12 @@ impl Pipeline {
             ("workgroup_size_z", workgroup_size.z.into()),
         ];
         let create_pipeline = |label, entrypoint| {
-            pipeline_layout
+            solver
                 .device
                 .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                     label: Some(label),
-                    layout: Some(&pipeline_layout.pipeline_layout),
-                    module: &pipeline_layout.shader_module,
+                    layout: Some(&solver.pipeline_layout),
+                    module: &solver.shader_module,
                     entry_point: Some(entrypoint),
                     compilation_options: wgpu::PipelineCompilationOptions {
                         constants: &shader_constants,
@@ -216,9 +195,8 @@ impl Pipeline {
         let update_h_pipeline = create_pipeline("fdtd/update/h", "update_h");
 
         Self {
-            pipeline_layout: pipeline_layout.clone(),
+            solver: solver.clone(),
             resolution: config.resolution,
-            size,
             strider,
             config_buffer,
             material_buffer,
@@ -229,25 +207,18 @@ impl Pipeline {
         }
     }
 
-    pub fn create_state(&self) -> State {
-        State::new(self)
-    }
-
-    pub fn update(&self, state: &mut State, queue: &wgpu::Queue) {
+    fn update_impl(&self, state: &mut FdtdWgpuSolverState) {
         let swap_buffer_index = SwapBufferIndex::from_tick(state.tick + 1);
 
         // update time
         // todo: would be nice if we could combine this with the command encoder
-        let config_data = ConfigData::new(
-            &self.size,
-            self.strider.strides(),
-            &self.resolution,
-            state.time as f32,
-        );
-        queue.write_buffer(&self.config_buffer, 0, bytemuck::bytes_of(&config_data));
+        let config_data = ConfigData::new(&self.strider, &self.resolution, state.time as f32);
+        self.solver
+            .queue
+            .write_buffer(&self.config_buffer, 0, bytemuck::bytes_of(&config_data));
 
         let mut command_encoder =
-            self.pipeline_layout
+            self.solver
                 .device
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                     label: Some("fdtd/update"),
@@ -261,23 +232,32 @@ impl Pipeline {
                     timestamp_writes: None,
                 });
 
+            let mut dispatch_update = |pipeline, bind_group| {
+                compute_pass.set_pipeline(pipeline);
+                compute_pass.set_bind_group(0, bind_group, &[]);
+
+                for num_workgroups in &self.dispatches {
+                    compute_pass.dispatch_workgroups(
+                        num_workgroups.x,
+                        num_workgroups.y,
+                        num_workgroups.z,
+                    );
+                }
+            };
+
             dispatch_update(
-                &mut compute_pass,
                 &self.update_h_pipeline,
                 &state.update_h_field_bind_group[swap_buffer_index],
-                &self.dispatches,
             );
 
             dispatch_update(
-                &mut compute_pass,
                 &self.update_e_pipeline,
                 &state.update_e_field_bind_group[swap_buffer_index],
-                &self.dispatches,
             );
         }
 
-        let submission_index = queue.submit([command_encoder.finish()]);
-        self.pipeline_layout
+        let submission_index = self.solver.queue.submit([command_encoder.finish()]);
+        self.solver
             .device
             .poll(wgpu::PollType::Wait {
                 submission_index: Some(submission_index),
@@ -289,10 +269,10 @@ impl Pipeline {
         state.time += self.resolution.temporal;
     }
 
-    pub(super) fn field_values(
+    // todo: this is only temporary
+    pub(crate) fn field_values(
         &self,
-        state: &State,
-        queue: &wgpu::Queue,
+        state: &FdtdWgpuSolverState,
         which: WhichFieldValue,
     ) -> Vec<(f64, f64)> {
         let swap_buffer_index = SwapBufferIndex::from_tick(state.tick);
@@ -305,22 +285,23 @@ impl Pipeline {
         };
 
         buffer
-            .read(&self.pipeline_layout.device, queue, |view| {
+            .read(&self.solver.device, &self.solver.queue, |view| {
                 view.iter()
                     .enumerate()
-                    .map(|(i, value)| {
-                        let point = self.strider.from_index(i);
-                        let point = point
-                            .cast::<f64>()
-                            .coords
-                            .component_mul(&self.resolution.spatial);
-                        let value = value.value;
-                        let value = match which {
-                            WhichFieldValue::Electric => value.y,
-                            WhichFieldValue::Magnetic => value.z,
-                            WhichFieldValue::Epsilon => unreachable!(),
-                        };
-                        (point.x, value as f64)
+                    .filter_map(|(i, value)| {
+                        self.strider.from_index(i).map(|point| {
+                            let point = point
+                                .cast::<f64>()
+                                .coords
+                                .component_mul(&self.resolution.spatial);
+                            let value = value.value;
+                            let value = match which {
+                                WhichFieldValue::Electric => value.y,
+                                WhichFieldValue::Magnetic => value.z,
+                                WhichFieldValue::Epsilon => unreachable!(),
+                            };
+                            (point.x, value as f64)
+                        })
                     })
                     .collect()
             })
@@ -328,22 +309,21 @@ impl Pipeline {
     }
 }
 
-fn dispatch_update(
-    compute_pass: &mut wgpu::ComputePass,
-    pipeline: &wgpu::ComputePipeline,
-    bind_group: &wgpu::BindGroup,
-    dispatches: &[Vector3<u32>],
-) {
-    compute_pass.set_pipeline(pipeline);
-    compute_pass.set_bind_group(0, bind_group, &[]);
+impl SolverInstance for FdtdWgpuSolverInstance {
+    type State = FdtdWgpuSolverState;
+    type Point = Point3<usize>;
 
-    for num_workgroups in dispatches {
-        compute_pass.dispatch_workgroups(num_workgroups.x, num_workgroups.y, num_workgroups.z);
+    fn create_state(&self) -> Self::State {
+        FdtdWgpuSolverState::new(self)
+    }
+
+    fn update(&self, state: &mut Self::State) {
+        self.update_impl(state);
     }
 }
 
 #[derive(Debug)]
-pub struct State {
+pub struct FdtdWgpuSolverState {
     field_buffers: SwapBuffer<FieldBuffers>,
     update_h_field_bind_group: SwapBuffer<wgpu::BindGroup>,
     update_e_field_bind_group: SwapBuffer<wgpu::BindGroup>,
@@ -351,14 +331,14 @@ pub struct State {
     time: f64,
 }
 
-impl State {
-    fn new(pipeline: &Pipeline) -> Self {
+impl FdtdWgpuSolverState {
+    fn new(pipeline: &FdtdWgpuSolverInstance) -> Self {
         let field_buffers = {
             let default_value = FieldVector::default();
             SwapBuffer::from_fn(|_| {
                 let buffer = |label| {
                     TypedArrayBuffer::from_fn(
-                        &pipeline.pipeline_layout.device,
+                        &pipeline.solver.device,
                         label,
                         pipeline.num_cells,
                         wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
@@ -375,11 +355,11 @@ impl State {
         let update_h_field_bind_group = SwapBuffer::from_fn(|current| {
             let previous = current.other();
             pipeline
-                .pipeline_layout
+                .solver
                 .device
                 .create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some(&format!("fdtd/bind_group/{current:?}")),
-                    layout: &pipeline.pipeline_layout.bind_group_layout,
+                    layout: &pipeline.solver.bind_group_layout,
                     entries: &[
                         wgpu::BindGroupEntry {
                             binding: 0,
@@ -408,11 +388,11 @@ impl State {
         let update_e_field_bind_group = SwapBuffer::from_fn(|current| {
             let previous = current.other();
             pipeline
-                .pipeline_layout
+                .solver
                 .device
                 .create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some(&format!("fdtd/bind_group/{current:?}")),
-                    layout: &pipeline.pipeline_layout.bind_group_layout,
+                    layout: &pipeline.solver.bind_group_layout,
                     entries: &[
                         wgpu::BindGroupEntry {
                             binding: 0,
@@ -468,19 +448,19 @@ struct ConfigData {
 }
 
 impl ConfigData {
-    fn new(
-        lattice_size: &Vector3<usize>,
-        lattice_strides: &Vector4<usize>,
-        resolution: &Resolution,
-        time: f32,
-    ) -> Self {
+    fn new(strider: &Strider, resolution: &Resolution, time: f32) -> Self {
         Self {
             size: {
                 let mut size = [0; 4];
-                size[..3].copy_from_slice(lattice_size.cast::<u32>().as_slice());
+                size[..3].copy_from_slice(strider.size().cast::<u32>().as_slice());
                 size
             },
-            strides: lattice_strides.cast::<u32>().as_slice().try_into().unwrap(),
+            strides: strider
+                .strides()
+                .cast::<u32>()
+                .as_slice()
+                .try_into()
+                .unwrap(),
             resolution: {
                 let mut output = [0.0; 4];
                 output[..3].copy_from_slice(resolution.spatial.cast::<f32>().as_slice());
@@ -499,54 +479,31 @@ struct FieldBuffers {
     h: TypedArrayBuffer<FieldVector>,
 }
 
-#[derive(Clone, Copy, Debug, Zeroable, Pod)]
+#[derive(Clone, Copy, Debug, Default, Zeroable, Pod)]
 #[repr(C)]
-struct MaterialCoefficients {
+struct FieldVector {
+    value: Vector3<f32>,
+    _padding: u32,
+}
+
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+#[repr(C)]
+struct UpdateCoefficientsData {
     c_a: f32,
     c_b: f32,
     d_a: f32,
     d_b: f32,
 }
 
-impl MaterialCoefficients {
-    pub fn new(
-        resolution: &Resolution,
-        physical_constants: &PhysicalConstants,
-        material: &Material,
-    ) -> Self {
-        let c_or_d = |perm, sigma| {
-            let half_sigmal_delta_t_over_perm = 0.5 * sigma * resolution.temporal / perm;
-
-            let a = (1.0 - half_sigmal_delta_t_over_perm) / (1.0 + half_sigmal_delta_t_over_perm);
-            let b = resolution.temporal / (perm * (1.0 + half_sigmal_delta_t_over_perm));
-
-            let a = a as f32;
-            let b = b as f32;
-
-            assert!(!a.is_nan());
-            assert!(!b.is_nan());
-
-            (a, b)
-        };
-
-        let (c_a, c_b) = c_or_d(
-            material.relative_permittivity * physical_constants.vacuum_permittivity,
-            material.eletrical_conductivity,
-        );
-        let (d_a, d_b) = c_or_d(
-            material.relative_permeability * physical_constants.vacuum_permeability,
-            material.magnetic_conductivity,
-        );
-
-        Self { c_a, c_b, d_a, d_b }
+impl From<UpdateCoefficients> for UpdateCoefficientsData {
+    fn from(value: UpdateCoefficients) -> Self {
+        Self {
+            c_a: value.c_a as f32,
+            c_b: value.c_b as f32,
+            d_a: value.d_a as f32,
+            d_b: value.d_b as f32,
+        }
     }
-}
-
-#[derive(Clone, Copy, Debug, Default, Zeroable, Pod)]
-#[repr(C)]
-struct FieldVector {
-    value: Vector3<f32>,
-    _padding: u32,
 }
 
 #[derive(Clone, Copy, Debug)]

@@ -9,18 +9,20 @@ use crate::{
             TrackChanges,
             label_and_value,
         },
-        solver::config::{
-            FixedVolume,
-            SceneAabbVolume,
-            SolverConfig,
-            SolverConfigCommon,
-            SolverConfigFdtd,
-            SolverConfigSpecifics,
-            StopCondition,
-            Volume,
+        solver::{
+            config::{
+                FixedVolume,
+                SceneAabbVolume,
+                SolverConfig,
+                SolverConfigCommon,
+                SolverConfigFdtd,
+                SolverConfigSpecifics,
+                StopCondition,
+                Volume,
+            },
+            fdtd,
         },
     },
-    fdtd,
     physics::PhysicalConstants,
 };
 

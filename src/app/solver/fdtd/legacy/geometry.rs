@@ -6,10 +6,10 @@ use nalgebra::{
     Vector3,
 };
 
-use crate::fdtd::{
-    simulation::Simulation,
+use crate::{
+    app::solver::fdtd::legacy::Simulation,
     util::{
-        iter_points,
+        InvalidPoint,
         round_to_grid,
     },
 };
@@ -37,15 +37,10 @@ impl Aabb {
 }
 
 pub trait Rasterize {
-    fn rasterize(
-        &self,
+    fn rasterize<'a>(
+        &'a self,
         simulation: &Simulation,
-    ) -> impl Iterator<Item = Result<Point3<usize>, InvalidPoint>> + '_;
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct InvalidPoint {
-    pub point: Point3<f64>,
+    ) -> impl Iterator<Item = Result<Point3<usize>, InvalidPoint>> + 'a;
 }
 
 pub trait BoundingBox {
@@ -53,10 +48,10 @@ pub trait BoundingBox {
 }
 
 impl Rasterize for Point3<f64> {
-    fn rasterize(
-        &self,
+    fn rasterize<'a>(
+        &'a self,
         simulation: &Simulation,
-    ) -> impl Iterator<Item = Result<Point3<usize>, InvalidPoint>> + '_ {
+    ) -> impl Iterator<Item = Result<Point3<usize>, InvalidPoint>> + 'a {
         let x = round_to_grid(
             self,
             &simulation.origin().coords,
@@ -79,10 +74,10 @@ pub struct Block {
 }
 
 impl Rasterize for Block {
-    fn rasterize(
-        &self,
+    fn rasterize<'a>(
+        &'a self,
         simulation: &Simulation,
-    ) -> impl Iterator<Item = Result<Point3<usize>, InvalidPoint>> + '_ {
+    ) -> impl Iterator<Item = Result<Point3<usize>, InvalidPoint>> + 'a {
         // todo: rotation. currently this will returrn the whole aabb
         // fixme: this doesn't account for E and H fields being staggered
 
@@ -105,7 +100,12 @@ impl Rasterize for Block {
             Err(error) => return Either::Left([Err(error)].into_iter()),
         };
 
-        Either::Right(iter_points(x0..=x1, simulation.lattice().dimensions()).map(Ok))
+        Either::Right(
+            simulation
+                .strider()
+                .iter(x0..=x1)
+                .map(|(_index, point)| Ok(point)),
+        )
     }
 }
 

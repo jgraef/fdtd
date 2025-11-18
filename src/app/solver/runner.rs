@@ -32,6 +32,7 @@ use crate::{
                 SolverConfigSpecifics,
                 StopCondition,
             },
+            fdtd,
             observer::Observer,
             util::{
                 WriteImage,
@@ -39,7 +40,6 @@ use crate::{
             },
         },
     },
-    fdtd,
     physics::material::Material,
     util::format_size,
 };
@@ -84,7 +84,7 @@ impl SolverRunner {
         // only a 2d plane for now
         size.z = 0.0;
 
-        let mut config = fdtd::SimulationConfig {
+        let mut config = fdtd::FdtdSolverConfig {
             resolution: fdtd_config.resolution,
             physical_constants: common_config.physical_constants,
             origin: Some(origin.cast()),
@@ -95,7 +95,7 @@ impl SolverRunner {
         // todo: whether the courant condition is satisfied should be checked by the
         // solver config ui.
         config.resolution.temporal = 0.2
-            * fdtd::simulation::estimate_temporal_from_spatial_resolution(
+            * fdtd::estimate_temporal_from_spatial_resolution(
                 common_config.physical_constants.speed_of_light(),
                 &config.resolution.spatial,
             );
@@ -110,8 +110,8 @@ impl SolverRunner {
             size: Vector3::new(100.0, 100.0, 0.0),
         };*/
 
-        let memory_required = config.memory_usage_estimate();
-        tracing::debug!(?origin, ?size, resolution = ?config.resolution, memory_required = %format_size(memory_required), lattice_size = ?config.lattice_size(), "creating fdtd simulation");
+        let memory_required = fdtd::legacy::estimate_memory_usage(&config);
+        tracing::debug!(?origin, ?size, resolution = ?config.resolution, memory_required = %format_size(memory_required), lattice_size = ?config.size(), "creating fdtd simulation");
 
         // todo: remove this. we want a ui flow that prepares the solver-run anyway, so
         // we could display and warn about memory requirements there.
@@ -123,7 +123,7 @@ impl SolverRunner {
 
         let time_start = Instant::now();
 
-        let mut simulation = fdtd::Simulation::new(&config);
+        let mut simulation = fdtd::legacy::Simulation::new(&config);
         tracing::debug!(simulation_origin = ?simulation.origin());
 
         {
@@ -174,7 +174,7 @@ impl SolverRunner {
                 magnetic_current_density_phase: 0.0,
                 frequency: 2.0,
             };*/
-            let source = fdtd::source::GaussianPulse {
+            let source = fdtd::legacy::source::GaussianPulse {
                 electric_current_density_amplitude: Vector3::z() / config.resolution.temporal,
                 magnetic_current_density_amplitude: Vector3::zeros(),
                 time: config.resolution.temporal * 50.0,
@@ -187,7 +187,7 @@ impl SolverRunner {
         }
 
         let mut run_observers = {
-            let lattice_size = simulation.lattice().dimensions();
+            let lattice_size = *simulation.strider().size();
 
             // create an "observer". later we want this to be defined by the user and just
             // attach our TextureOutput to it. We need to create the texture output since
@@ -239,7 +239,7 @@ impl SolverRunner {
 
             // wrap image output into closure that takes the field values from the
             // simulation and writes a frame with it everytime it's called
-            move |simulation: &fdtd::Simulation| {
+            move |simulation: &fdtd::legacy::Simulation| {
                 let swap_buffer_index = simulation.swap_buffer_index();
                 let z = lattice_size.z / 2;
 
@@ -254,7 +254,7 @@ impl SolverRunner {
                         let point = point.cast();
                         let cell = simulation
                             .lattice()
-                            .get(&Point3::new(point.x, point.y, z))
+                            .get_point(simulation.strider(), &Point3::new(point.x, point.y, z))
                             .unwrap();
 
                         let e_field = cell.electric_field(swap_buffer_index);
@@ -302,7 +302,7 @@ impl SolverRunner {
 
 fn evaluate_stop_condition_for_fdtd(
     stop_condition: &StopCondition,
-    simulation: &fdtd::Simulation,
+    simulation: &fdtd::legacy::Simulation,
     time_elapsed: Duration,
 ) -> bool {
     match stop_condition {

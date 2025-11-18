@@ -84,12 +84,12 @@ use crate::{
                 SolverConfigSpecifics,
                 StopCondition,
             },
+            fdtd,
             observer::Observer,
             runner::SolverRunner,
             ui::SolverConfigUiWindow,
         },
     },
-    fdtd,
     file_formats::{
         FileFormat,
         guess_file_format_from_path,
