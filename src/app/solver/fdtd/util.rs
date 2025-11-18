@@ -1,10 +1,16 @@
-use std::ops::{
-    Index,
-    IndexMut,
+use std::{
+    ops::{
+        Index,
+        IndexMut,
+    },
+    time::Duration,
 };
 
 use crate::{
-    app::solver::fdtd::Resolution,
+    app::solver::{
+        config::StopCondition,
+        fdtd::Resolution,
+    },
     physics::{
         PhysicalConstants,
         material::Material,
@@ -105,5 +111,19 @@ impl UpdateCoefficients {
         );
 
         Self { c_a, c_b, d_a, d_b }
+    }
+}
+
+pub fn evaluate_stop_condition(
+    stop_condition: &StopCondition,
+    time_elapsed: Duration,
+    tick: usize,
+    time: f64,
+) -> bool {
+    match stop_condition {
+        StopCondition::Never => false,
+        StopCondition::StepLimit { limit } => tick >= *limit,
+        StopCondition::SimulatedTimeLimit { limit } => time as f32 >= *limit,
+        StopCondition::RealtimeLimit { limit } => time_elapsed >= *limit,
     }
 }

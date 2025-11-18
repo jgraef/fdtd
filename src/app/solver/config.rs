@@ -17,7 +17,10 @@ use crate::{
             Scene,
             transform::Transform,
         },
-        solver::fdtd,
+        solver::{
+            fdtd,
+            traits::SolverInstance,
+        },
     },
     physics::{
         PhysicalConstants,
@@ -47,6 +50,8 @@ pub struct SolverConfigCommon {
     pub physical_constants: PhysicalConstants,
 
     pub default_material: Material,
+
+    pub parallelization: Option<Parallelization>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -76,6 +81,21 @@ pub enum StopCondition {
     StepLimit { limit: usize },
     SimulatedTimeLimit { limit: f32 },
     RealtimeLimit { limit: Duration },
+}
+
+pub trait EvaluateStopCondition: SolverInstance {
+    fn evaluate_stop_condition(
+        &self,
+        state: &Self::State,
+        stop_condition: &StopCondition,
+        time_elapsed: Duration,
+    ) -> bool;
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Parallelization {
+    MultiThreaded,
+    Wgpu,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]

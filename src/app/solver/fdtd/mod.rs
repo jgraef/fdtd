@@ -5,10 +5,7 @@ pub(crate) mod legacy;
 mod util;
 pub mod wgpu;
 
-use nalgebra::{
-    Point3,
-    Vector3,
-};
+use nalgebra::Vector3;
 use serde::{
     Deserialize,
     Serialize,
@@ -23,7 +20,6 @@ use crate::{
 pub struct FdtdSolverConfig {
     pub resolution: Resolution,
     pub physical_constants: PhysicalConstants,
-    pub origin: Option<Point3<f64>>,
     pub size: Vector3<f64>,
 }
 
@@ -36,10 +32,6 @@ impl FdtdSolverConfig {
 
     pub fn strider(&self) -> Strider {
         Strider::new(&self.size())
-    }
-
-    pub fn origin(&self) -> Point3<f64> {
-        self.origin.unwrap_or_else(|| (-0.5 * self.size).into())
     }
 
     pub fn num_cells(&self) -> usize {

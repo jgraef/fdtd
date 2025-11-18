@@ -1,4 +1,7 @@
-use std::convert::Infallible;
+use std::{
+    convert::Infallible,
+    time::Duration,
+};
 
 use bytemuck::{
     Pod,
@@ -13,6 +16,10 @@ use wgpu::util::DeviceExt;
 
 use crate::{
     app::solver::{
+        config::{
+            EvaluateStopCondition,
+            StopCondition,
+        },
         fdtd::{
             FdtdSolverConfig,
             Resolution,
@@ -21,6 +28,7 @@ use crate::{
                 SwapBuffer,
                 SwapBufferIndex,
                 UpdateCoefficients,
+                evaluate_stop_condition,
             },
         },
         traits::{
@@ -319,6 +327,17 @@ impl SolverInstance for FdtdWgpuSolverInstance {
 
     fn update(&self, state: &mut Self::State) {
         self.update_impl(state);
+    }
+}
+
+impl EvaluateStopCondition for FdtdWgpuSolverInstance {
+    fn evaluate_stop_condition(
+        &self,
+        state: &Self::State,
+        stop_condition: &StopCondition,
+        time_elapsed: Duration,
+    ) -> bool {
+        evaluate_stop_condition(stop_condition, time_elapsed, state.tick, state.time)
     }
 }
 

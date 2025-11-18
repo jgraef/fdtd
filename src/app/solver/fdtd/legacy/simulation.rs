@@ -187,7 +187,6 @@ pub struct Simulation {
 
     tick: usize,
     time: f64,
-    origin: Point3<f64>,
     total_energy: f64,
 
     lattice: Lattice<Cell>,
@@ -209,7 +208,6 @@ impl Simulation {
             resolution: config.resolution,
             tick: 0,
             time: 0.0,
-            origin: config.origin(),
             total_energy: 0.0,
             lattice,
             strider,
@@ -370,10 +368,6 @@ impl Simulation {
         &self.resolution
     }
 
-    pub fn origin(&self) -> &Point3<f64> {
-        &self.origin
-    }
-
     pub fn size(&self) -> Vector3<f64> {
         self.strider
             .size()
@@ -411,8 +405,11 @@ impl Simulation {
 
     pub fn fill_with(&mut self, mut f: impl FnMut(Point3<f64>, &mut Cell)) {
         for (_index, point, cell) in self.lattice.iter_mut(&self.strider, ..) {
-            let point_float =
-                self.origin + point.coords.cast().component_mul(&self.resolution.spatial);
+            let point_float = point
+                .coords
+                .cast()
+                .component_mul(&self.resolution.spatial)
+                .into();
             f(point_float, cell);
         }
     }
@@ -449,14 +446,13 @@ impl Simulation {
         let n = *axis.vector_component(&self.strider.size());
         let e = axis.basis().into_inner();
         let resolution = *axis.vector_component(&self.resolution.spatial);
-        let origin = *axis.vector_component(&self.origin.coords);
         let swap_buffer_index = self.swap_buffer_index();
 
         (0..n).map(move |i| {
             let x = x0 + i * e;
             let cell = self.lattice.get_point(&self.strider, &x).unwrap();
             let value = f(&cell, swap_buffer_index);
-            (i as f64 * resolution + origin + x_correction, value)
+            (i as f64 * resolution + x_correction, value)
         })
     }
 }

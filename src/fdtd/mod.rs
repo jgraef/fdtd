@@ -98,7 +98,6 @@ impl App {
                 temporal: 0.25,
             },
             physical_constants: PhysicalConstants::REDUCED,
-            origin: None,
             size: Vector3::new(500.0, 0.0, 0.0),
         };
         tracing::debug!(?config, memory_usage = estimate_memory_usage(&config));

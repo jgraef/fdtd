@@ -314,10 +314,10 @@ impl ExactSizeIterator for PointIter {}
 
 pub fn round_to_grid(
     x: &Point3<f64>,
-    origin: &Vector3<f64>,
+    origin: &Point3<f64>,
     spatial_resolution: &Vector3<f64>,
 ) -> Result<Point3<usize>, InvalidPoint> {
-    let x = (x.coords - origin).component_div(spatial_resolution);
+    let x = (x - origin).component_div(spatial_resolution);
     x.iter()
         .all(|c| *c >= 0.0)
         .then(|| x.map(|c| c.round() as usize).into())

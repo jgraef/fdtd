@@ -1,4 +1,7 @@
-use std::convert::Infallible;
+use std::{
+    convert::Infallible,
+    time::Duration,
+};
 
 use nalgebra::{
     Matrix3,
@@ -14,6 +17,10 @@ use num::{
 
 use crate::{
     app::solver::{
+        config::{
+            EvaluateStopCondition,
+            StopCondition,
+        },
         fdtd::{
             FdtdSolverConfig,
             Resolution,
@@ -30,6 +37,7 @@ use crate::{
                 SwapBuffer,
                 SwapBufferIndex,
                 UpdateCoefficients,
+                evaluate_stop_condition,
             },
         },
         traits::{
@@ -61,6 +69,12 @@ impl Solver for FdtdCpuSolver {
         M: MaterialDistribution<Self::Point>,
     {
         Ok(FdtdCpuSolverInstance::new(config, material))
+    }
+
+    fn memory_required(&self, config: &Self::Config) -> Option<usize> {
+        let per_cell = std::mem::size_of::<UpdateCoefficients>()
+            + std::mem::size_of::<SwapBuffer<FieldVectors>>();
+        Some(per_cell * config.num_cells())
     }
 }
 
@@ -227,6 +241,17 @@ impl SolverInstance for FdtdCpuSolverInstance {
 
     fn update(&self, state: &mut Self::State) {
         self.update_impl(state);
+    }
+}
+
+impl EvaluateStopCondition for FdtdCpuSolverInstance {
+    fn evaluate_stop_condition(
+        &self,
+        state: &Self::State,
+        stop_condition: &StopCondition,
+        time_elapsed: Duration,
+    ) -> bool {
+        evaluate_stop_condition(stop_condition, time_elapsed, state.tick, state.time)
     }
 }
 

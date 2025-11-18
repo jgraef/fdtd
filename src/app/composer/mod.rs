@@ -327,6 +327,7 @@ impl ComposerState {
                 volume: Default::default(),
                 physical_constants: PhysicalConstants::REDUCED,
                 default_material: Material::VACUUM,
+                parallelization: None,
             },
 
             specifics: SolverConfigSpecifics::Fdtd(SolverConfigFdtd {

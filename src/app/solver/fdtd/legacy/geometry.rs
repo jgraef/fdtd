@@ -52,11 +52,7 @@ impl Rasterize for Point3<f64> {
         &'a self,
         simulation: &Simulation,
     ) -> impl Iterator<Item = Result<Point3<usize>, InvalidPoint>> + 'a {
-        let x = round_to_grid(
-            self,
-            &simulation.origin().coords,
-            &simulation.resolution().spatial,
-        );
+        let x = round_to_grid(self, &Point3::origin(), &simulation.resolution().spatial);
         [x].into_iter()
     }
 }
@@ -85,7 +81,7 @@ impl Rasterize for Block {
 
         let x0 = match round_to_grid(
             &(center - 0.5 * self.dimensions),
-            &simulation.origin().coords,
+            &Point3::origin(),
             &simulation.resolution().spatial,
         ) {
             Ok(x) => x,
@@ -93,7 +89,7 @@ impl Rasterize for Block {
         };
         let x1 = match round_to_grid(
             &(center + 0.5 * self.dimensions),
-            &simulation.origin().coords,
+            &Point3::origin(),
             &simulation.resolution().spatial,
         ) {
             Ok(x) => x,
