@@ -1,8 +1,4 @@
 use std::{
-    ops::{
-        Deref,
-        DerefMut,
-    },
     sync::{
         Arc,
         mpsc,
@@ -20,7 +16,7 @@ use parking_lot::{
     RwLockWriteGuard,
 };
 
-use crate::fdtd::simulation::Simulation;
+use crate::fdtd::CpuOrGpu;
 
 #[derive(Clone, Debug)]
 pub struct Executor {
@@ -29,7 +25,7 @@ pub struct Executor {
 }
 
 impl Executor {
-    pub fn new(simulation: Simulation, step_interval: Duration) -> Self {
+    pub fn new(simulation: CpuOrGpu, step_interval: Duration) -> Self {
         let state = Arc::new(RwLock::new(State {
             simulation,
             running_state: None,
@@ -68,10 +64,7 @@ impl Executor {
         self.send_command(Command::Step);
     }
 
-    pub fn start(
-        &self,
-        on_update: Option<Box<dyn FnMut(&mut Simulation) + Send + Sync + 'static>>,
-    ) {
+    pub fn start(&self, on_update: Option<Box<dyn FnMut(&mut CpuOrGpu) + Send + Sync + 'static>>) {
         self.send_command(Command::Start { on_update });
     }
 
@@ -87,7 +80,7 @@ impl Executor {
 
 #[derive(Debug)]
 struct State {
-    simulation: Simulation,
+    simulation: CpuOrGpu,
     running_state: Option<RunningState>,
     step_interval: Duration,
 }
@@ -96,12 +89,12 @@ struct State {
 struct RunningState {
     next_step: Instant,
     #[debug(ignore)]
-    on_update: Option<Box<dyn FnMut(&mut Simulation) + Send + Sync + 'static>>,
+    on_update: Option<Box<dyn FnMut(&mut CpuOrGpu) + Send + Sync + 'static>>,
 }
 
 enum Command {
     Start {
-        on_update: Option<Box<dyn FnMut(&mut Simulation) + Send + Sync + 'static>>,
+        on_update: Option<Box<dyn FnMut(&mut CpuOrGpu) + Send + Sync + 'static>>,
     },
     Stop,
     Step,
@@ -193,15 +186,7 @@ impl<'a> ReadGuard<'a> {
         self.guard.running_state.is_some()
     }
 
-    pub fn simulation(&self) -> &Simulation {
-        &self.guard.simulation
-    }
-}
-
-impl<'a> Deref for ReadGuard<'a> {
-    type Target = Simulation;
-
-    fn deref(&self) -> &Self::Target {
+    pub fn simulation(&self) -> &CpuOrGpu {
         &self.guard.simulation
     }
 }
@@ -211,21 +196,7 @@ pub struct WriteGuard<'a> {
 }
 
 impl<'a> WriteGuard<'a> {
-    pub fn simulation(&mut self) -> &mut Simulation {
-        &mut self.guard.simulation
-    }
-}
-
-impl<'a> Deref for WriteGuard<'a> {
-    type Target = Simulation;
-
-    fn deref(&self) -> &Self::Target {
-        &self.guard.simulation
-    }
-}
-
-impl<'a> DerefMut for WriteGuard<'a> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
+    pub fn simulation(&mut self) -> &mut CpuOrGpu {
         &mut self.guard.simulation
     }
 }

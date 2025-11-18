@@ -44,8 +44,8 @@ fn main() -> Result<(), Error> {
         Command::Main(args) => {
             args.run()?;
         }
-        Command::Fdtd => {
-            fdtd::run_app()?;
+        Command::Fdtd(args) => {
+            args.run()?;
         }
         Command::ReadNec { file } => {
             let reader = BufReader::new(File::open(&file)?);
@@ -80,8 +80,8 @@ struct Args {
 #[derive(Debug, Subcommand)]
 enum Command {
     // the main app, the other's are just temporary for testing purposes
-    Main(crate::app::args::Args),
-    Fdtd,
+    Main(app::args::Args),
+    Fdtd(fdtd::Args),
     ReadNec {
         file: PathBuf,
     },
