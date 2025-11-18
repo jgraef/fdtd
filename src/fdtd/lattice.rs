@@ -1,6 +1,7 @@
 use nalgebra::{
     Point3,
     Vector3,
+    Vector4,
 };
 
 use crate::fdtd::util::{
@@ -93,16 +94,20 @@ impl<T> Lattice<T> {
 
 #[derive(Clone, Copy, Debug)]
 pub struct Strider {
-    strides: Vector3<usize>,
+    strides: Vector4<usize>,
 }
 
 impl Strider {
-    pub fn new(strides: Vector3<usize>) -> Self {
+    pub fn new(strides: Vector4<usize>) -> Self {
         Self { strides }
     }
 
     pub fn from_dimensions(dimensions: &Vector3<usize>) -> Self {
-        let strides = Vector3::new(1, dimensions.x, dimensions.x * dimensions.y);
+        let mut strides = Vector4::zeros();
+        strides.x = 1;
+        strides.y = strides.x * dimensions.x;
+        strides.z = strides.y * dimensions.y;
+        strides.w = strides.z * dimensions.z;
         Self::new(strides)
     }
 
@@ -116,7 +121,11 @@ impl Strider {
     }
 
     pub fn to_index(&self, point: &Point3<usize>) -> usize {
-        point.coords.dot(&self.strides)
+        point.coords.dot(&self.strides.xyz())
+    }
+
+    pub(super) fn strides(&self) -> &Vector4<usize> {
+        &self.strides
     }
 }
 

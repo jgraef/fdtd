@@ -2,13 +2,14 @@
 #![allow(clippy::all)]
 
 pub mod boundary_condition;
-pub mod executor;
+mod executor;
 pub mod geometry;
 pub mod lattice;
 pub mod pml;
 pub mod simulation;
 pub mod source;
 mod util;
+pub mod wgpu;
 
 use std::{
     path::PathBuf,
@@ -56,13 +57,30 @@ use crate::{
     },
 };
 
-pub fn run_app() -> Result<(), Error> {
-    eframe::run_native(
-        "fdtd",
-        Default::default(),
-        Box::new(|_cc| Ok(Box::new(crate::fdtd::App::new()))),
-    )?;
-    Ok(())
+#[derive(Debug, clap::Parser)]
+pub struct Args {
+    #[clap(long)]
+    wgpu: bool,
+}
+
+impl Args {
+    pub fn run(self) -> Result<(), Error> {
+        eframe::run_native(
+            "fdtd",
+            Default::default(),
+            Box::new(move |cc| {
+                let render_state = cc.wgpu_render_state.as_ref().unwrap();
+
+                Ok(Box::new(crate::fdtd::App::new(
+                    self,
+                    render_state.device.clone(),
+                    render_state.queue.clone(),
+                )))
+            }),
+        )?;
+
+        Ok(())
+    }
 }
 
 #[derive(Debug)]
@@ -73,54 +91,24 @@ pub struct App {
 }
 
 impl App {
-    pub fn new() -> Self {
-        //let physical_constants = PhysicalConstants::SI;
-        let physical_constants = PhysicalConstants::REDUCED;
-
-        //let min_wavelength = 400e-9;
-        //let resolution =
-        // physical_constants.estimate_resolution_from_min_wavelength(min_wavelength);
-        let resolution = Resolution {
-            spatial: Vector3::repeat(1.0),
-            temporal: 0.25,
-        };
-
-        println!("{physical_constants:#?}");
-        println!("{resolution:#?}");
-
+    pub fn new(args: Args, device: ::wgpu::Device, queue: ::wgpu::Queue) -> Self {
         let config = SimulationConfig {
-            resolution,
-            physical_constants,
+            resolution: Resolution {
+                spatial: Vector3::repeat(1.0),
+                temporal: 0.25,
+            },
+            physical_constants: PhysicalConstants::REDUCED,
             origin: None,
             size: Vector3::new(500.0, 0.0, 0.0),
         };
-        println!("Memory usage: {}", config.memory_usage_estimate());
+        tracing::debug!(?config, memory_usage = config.memory_usage_estimate());
 
-        let mut simulation = Simulation::new(&config);
-
-        simulation.add_material(
-            Block {
-                transform: Isometry3::from_parts(
-                    Vector3::new(200.0, 0.0, 0.0).into(),
-                    UnitQuaternion::identity(),
-                ),
-                dimensions: Vector3::new(20.0, 0.0, 0.0),
-            },
-            Material {
-                relative_permittivity: 3.9,
-                ..Default::default()
-            },
-        );
-
-        simulation.add_source(
-            Point3::new(-200.0, 0.0, 0.0),
-            GaussianPulse {
-                electric_current_density_amplitude: Vector3::y(),
-                magnetic_current_density_amplitude: Vector3::z(),
-                time: 20.0,
-                duration: 10.0,
-            },
-        );
+        let simulation = if args.wgpu {
+            CpuOrGpu::new_gpu(&config, &device, &queue)
+        }
+        else {
+            CpuOrGpu::new_cpu(&config)
+        };
 
         let ticks_per_second = 100;
         let executor = Executor::new(simulation, Duration::from_millis(1000 / ticks_per_second));
@@ -212,44 +200,181 @@ impl eframe::App for App {
                 plot_ui.set_plot_bounds_y(-2.0..=2.0);
                 plot_ui.line(Line::new(
                     "E",
-                    PlotPoints::Owned(
-                        simulation
-                            .field_values(
-                                Point3::origin(),
-                                Axis::X,
-                                0.5,
-                                |cell, swap_buffer_index| cell.electric_field(swap_buffer_index).y,
-                            )
-                            .map(|(x, y)| PlotPoint::new(x, y))
-                            .collect::<Vec<_>>(),
-                    ),
+                    simulation.field_values(WhichFieldValue::Electric),
                 ));
                 plot_ui.line(Line::new(
                     "H",
-                    PlotPoints::Owned(
-                        simulation
-                            .field_values(
-                                Point3::origin(),
-                                Axis::X,
-                                0.0,
-                                |cell, swap_buffer_index| cell.magnetic_field(swap_buffer_index).z,
-                            )
-                            .map(|(x, y)| PlotPoint::new(x, y))
-                            .collect::<Vec<_>>(),
-                    ),
+                    simulation.field_values(WhichFieldValue::Magnetic),
                 ));
                 plot_ui.line(Line::new(
                     "ε_r",
-                    PlotPoints::Owned(
-                        simulation
-                            .field_values(Point3::origin(), Axis::X, 0.5, |cell, _| {
-                                cell.material().relative_permittivity
-                            })
-                            .map(|(x, y)| PlotPoint::new(x, y))
-                            .collect::<Vec<_>>(),
-                    ),
+                    simulation.field_values(WhichFieldValue::Epsilon),
                 ))
             });
         });
     }
+}
+
+#[derive(Debug)]
+enum CpuOrGpu {
+    Cpu {
+        simulation: Simulation,
+    },
+    Gpu {
+        pipeline: wgpu::Pipeline,
+        state: wgpu::State,
+        queue: ::wgpu::Queue,
+    },
+}
+
+impl CpuOrGpu {
+    pub fn new_cpu(config: &SimulationConfig) -> Self {
+        let mut simulation = Simulation::new(&config);
+
+        simulation.add_material(
+            Block {
+                transform: Isometry3::from_parts(
+                    Vector3::new(200.0, 0.0, 0.0).into(),
+                    UnitQuaternion::identity(),
+                ),
+                dimensions: Vector3::new(20.0, 0.0, 0.0),
+            },
+            Material {
+                relative_permittivity: 3.9,
+                ..Default::default()
+            },
+        );
+
+        simulation.add_source(
+            Point3::new(-200.0, 0.0, 0.0),
+            GaussianPulse {
+                electric_current_density_amplitude: Vector3::y(),
+                magnetic_current_density_amplitude: Vector3::z(),
+                time: 20.0,
+                duration: 10.0,
+            },
+        );
+
+        Self::Cpu { simulation }
+    }
+
+    pub fn new_gpu(
+        config: &SimulationConfig,
+        device: &::wgpu::Device,
+        queue: &::wgpu::Queue,
+    ) -> Self {
+        let pipeline_layout = wgpu::PipelineLayout::new(&device);
+
+        let pipeline = pipeline_layout.create_pipeline(&config, |x| {
+            let x = x.cast::<f32>();
+            let mut material = Material::VACUUM;
+            if x.x >= 190.0 && x.x <= 210.0 {
+                material.relative_permittivity = 3.9;
+            }
+            material
+        });
+
+        // note: source hardcoded in shader
+
+        let state = pipeline.create_state();
+
+        Self::Gpu {
+            pipeline,
+            state,
+            queue: queue.clone(),
+        }
+    }
+
+    pub fn step(&mut self) {
+        match self {
+            CpuOrGpu::Cpu { simulation } => simulation.step(),
+            CpuOrGpu::Gpu {
+                pipeline,
+                state,
+                queue,
+            } => pipeline.update(state, queue),
+        }
+    }
+
+    pub fn reset(&mut self) {
+        match self {
+            CpuOrGpu::Cpu { simulation } => simulation.reset(),
+            CpuOrGpu::Gpu {
+                pipeline, state, ..
+            } => {
+                *state = pipeline.create_state();
+            }
+        }
+    }
+
+    pub fn tick(&self) -> usize {
+        match self {
+            CpuOrGpu::Cpu { simulation } => simulation.tick(),
+            CpuOrGpu::Gpu { state, .. } => state.tick(),
+        }
+    }
+
+    pub fn time(&self) -> f64 {
+        match self {
+            CpuOrGpu::Cpu { simulation } => simulation.time(),
+            CpuOrGpu::Gpu { state, .. } => state.time(),
+        }
+    }
+
+    pub fn total_energy(&self) -> f64 {
+        match self {
+            CpuOrGpu::Cpu { simulation } => simulation.total_energy(),
+            CpuOrGpu::Gpu { .. } => {
+                // todo
+                0.0
+            }
+        }
+    }
+
+    pub fn field_values(&self, which: WhichFieldValue) -> PlotPoints<'static> {
+        let x_correction = match which {
+            WhichFieldValue::Electric => 0.5,
+            WhichFieldValue::Magnetic => 0.0,
+            WhichFieldValue::Epsilon => 0.5,
+        };
+
+        match self {
+            CpuOrGpu::Cpu { simulation } => {
+                let get_value = |cell: &simulation::Cell, swap_buffer_index| {
+                    match which {
+                        WhichFieldValue::Electric => cell.electric_field(swap_buffer_index).y,
+                        WhichFieldValue::Magnetic => cell.magnetic_field(swap_buffer_index).z,
+                        WhichFieldValue::Epsilon => cell.material().relative_permittivity,
+                    }
+                };
+
+                PlotPoints::Owned(
+                    simulation
+                        .field_values(Point3::origin(), Axis::X, x_correction, get_value)
+                        .map(|(x, y)| PlotPoint::new(x, y))
+                        .collect::<Vec<_>>(),
+                )
+            }
+            CpuOrGpu::Gpu {
+                pipeline,
+                state,
+                queue,
+            } => {
+                PlotPoints::Owned(
+                    pipeline
+                        .field_values(state, queue, which)
+                        .into_iter()
+                        .map(|(x, y)| PlotPoint::new(x, y))
+                        .collect::<Vec<_>>(),
+                )
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WhichFieldValue {
+    Electric,
+    Magnetic,
+    Epsilon,
 }

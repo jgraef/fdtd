@@ -191,6 +191,20 @@ pub struct SwapBuffer<T> {
     buffer: [T; 2],
 }
 
+impl<T> From<[T; 2]> for SwapBuffer<T> {
+    fn from(value: [T; 2]) -> Self {
+        Self { buffer: value }
+    }
+}
+
+impl<T> SwapBuffer<T> {
+    pub fn from_fn(mut f: impl FnMut(SwapBufferIndex) -> T) -> Self {
+        Self::from(std::array::from_fn::<T, 2, _>(|index| {
+            f(SwapBufferIndex { index })
+        }))
+    }
+}
+
 impl<T> Index<SwapBufferIndex> for SwapBuffer<T> {
     type Output = T;
 

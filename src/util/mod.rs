@@ -1,5 +1,6 @@
 pub mod arena;
 pub mod serde;
+pub mod wgpu;
 
 use std::{
     fmt::Display,
