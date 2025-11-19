@@ -22,9 +22,9 @@ use crate::{
             StopCondition,
         },
         fdtd::{
+            AccessFieldRegion,
             FdtdSolverConfig,
             FieldComponent,
-            ReadRegionState,
             Resolution,
             boundary_condition::{
                 AnyBoundaryCondition,
@@ -33,8 +33,9 @@ use crate::{
             },
             lattice::{
                 Lattice,
+                LatticeIter,
+                LatticeIterMut,
                 Strider,
-                StriderPointIter,
             },
             util::{
                 SwapBuffer,
@@ -47,6 +48,7 @@ use crate::{
             ReadState,
             Solver,
             SolverInstance,
+            WriteState,
         },
     },
     physics::{
@@ -278,10 +280,9 @@ impl FdtdCpuSolverState {
     }
 }
 
-impl ReadState<FdtdCpuSolverInstance> for ReadRegionState {
-    type Value = Vector3<f64>;
-    type Iter<'a>
-        = ReadCpuRegionStateIter<'a>
+impl ReadState<FdtdCpuSolverInstance> for AccessFieldRegion {
+    type Value<'a>
+        = CpuFieldRegionIter<'a>
     where
         Self: 'a;
 
@@ -289,43 +290,93 @@ impl ReadState<FdtdCpuSolverInstance> for ReadRegionState {
         &'a self,
         instance: &'a FdtdCpuSolverInstance,
         state: &'a FdtdCpuSolverState,
-    ) -> Self::Iter<'a> {
-        ReadCpuRegionStateIter {
+    ) -> CpuFieldRegionIter<'a> {
+        CpuFieldRegionIter {
             field_component: self.field_component,
-            lattice: &state.lattice,
+            lattice_iter: state.lattice.iter(&instance.strider, self.range),
             swap_buffer_index: SwapBufferIndex::from_tick(state.tick),
-            points: instance.strider.iter(self.range),
+        }
+    }
+}
+
+impl WriteState<FdtdCpuSolverInstance> for AccessFieldRegion {
+    type Value<'a>
+        = CpuFieldRegionIterMut<'a>
+    where
+        Self: 'a;
+
+    fn write_state<'a>(
+        &'a self,
+        instance: &'a FdtdCpuSolverInstance,
+        state: &'a mut FdtdCpuSolverState,
+    ) -> CpuFieldRegionIterMut<'a> {
+        CpuFieldRegionIterMut {
+            field_component: self.field_component,
+            lattice_iter: state.lattice.iter_mut(&instance.strider, self.range),
+            swap_buffer_index: SwapBufferIndex::from_tick(state.tick),
         }
     }
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct ReadCpuRegionStateIter<'a> {
+pub struct CpuFieldRegionIter<'a> {
     field_component: FieldComponent,
-    lattice: &'a Lattice<SwapBuffer<FieldVectors>>,
+    lattice_iter: LatticeIter<'a, SwapBuffer<FieldVectors>>,
     swap_buffer_index: SwapBufferIndex,
-    points: StriderPointIter,
 }
 
-impl<'a> Iterator for ReadCpuRegionStateIter<'a> {
+impl<'a> Iterator for CpuFieldRegionIter<'a> {
     type Item = (Point3<usize>, &'a Vector3<f64>);
 
     fn next(&mut self) -> Option<Self::Item> {
-        let (index, point) = self.points.next()?;
-        let cell = &self.lattice[index][self.swap_buffer_index];
+        let (_index, point, data) = self.lattice_iter.next()?;
+        let data = &data[self.swap_buffer_index];
         let value = match self.field_component {
-            FieldComponent::E => &cell.e,
-            FieldComponent::H => &cell.h,
+            FieldComponent::E => &data.e,
+            FieldComponent::H => &data.h,
         };
         Some((point, value))
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        self.points.size_hint()
+        self.lattice_iter.size_hint()
     }
 }
 
-impl<'a> ExactSizeIterator for ReadCpuRegionStateIter<'a> where StriderPointIter: ExactSizeIterator {}
+impl<'a> ExactSizeIterator for CpuFieldRegionIter<'a> where
+    LatticeIter<'a, SwapBuffer<FieldVectors>>: ExactSizeIterator
+{
+}
+
+#[derive(Debug)]
+pub struct CpuFieldRegionIterMut<'a> {
+    field_component: FieldComponent,
+    lattice_iter: LatticeIterMut<'a, SwapBuffer<FieldVectors>>,
+    swap_buffer_index: SwapBufferIndex,
+}
+
+impl<'a> Iterator for CpuFieldRegionIterMut<'a> {
+    type Item = (Point3<usize>, &'a mut Vector3<f64>);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let (_index, point, data) = self.lattice_iter.next()?;
+        let data = &mut data[self.swap_buffer_index];
+        let value = match self.field_component {
+            FieldComponent::E => &mut data.e,
+            FieldComponent::H => &mut data.h,
+        };
+        Some((point, value))
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.lattice_iter.size_hint()
+    }
+}
+
+impl<'a> ExactSizeIterator for CpuFieldRegionIterMut<'a> where
+    LatticeIter<'a, SwapBuffer<FieldVectors>>: ExactSizeIterator
+{
+}
 
 #[derive(Clone, Copy, Debug, Default)]
 struct FieldVectors {

@@ -102,12 +102,12 @@ impl Resolution {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct ReadRegionState {
+pub struct AccessFieldRegion {
     pub(super) range: (Bound<Point3<usize>>, Bound<Point3<usize>>),
     pub(super) field_component: FieldComponent,
 }
 
-impl ReadRegionState {
+impl AccessFieldRegion {
     pub fn new(range: impl RangeBounds<Point3<usize>>, field_component: FieldComponent) -> Self {
         Self {
             range: (range.start_bound().cloned(), range.end_bound().cloned()),

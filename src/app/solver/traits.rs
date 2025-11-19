@@ -49,11 +49,18 @@ pub trait SolverInstance {
     fn create_state(&self) -> Self::State;
     fn update(&self, state: &mut Self::State);
 
-    fn read_state<'a, R>(&'a self, state: &'a mut Self::State, reader: &'a R) -> R::Iter<'a>
+    fn read_state<'a, R>(&'a self, state: &'a mut Self::State, reader: &'a R) -> R::Value<'a>
     where
         R: ReadState<Self>,
     {
         reader.read_state(self, state)
+    }
+
+    fn write_state<'a, W>(&'a self, state: &'a mut Self::State, writer: &'a W) -> W::Value<'a>
+    where
+        W: WriteState<Self>,
+    {
+        writer.write_state(self, state)
     }
 
     // todo: needs methods for converting from/to solver coordinates
@@ -63,13 +70,24 @@ pub trait ReadState<I>
 where
     I: SolverInstance + ?Sized,
 {
-    type Value: 'static;
-    type Iter<'a>: Iterator<Item = (I::Point, &'a Self::Value)>
+    type Value<'a>
     where
         Self: 'a,
         I: 'a;
 
-    fn read_state<'a>(&'a self, instance: &'a I, state: &'a I::State) -> Self::Iter<'a>;
+    fn read_state<'a>(&'a self, instance: &'a I, state: &'a I::State) -> Self::Value<'a>;
+}
+
+pub trait WriteState<I>
+where
+    I: SolverInstance + ?Sized,
+{
+    type Value<'a>
+    where
+        Self: 'a,
+        I: 'a;
+
+    fn write_state<'a>(&'a self, instance: &'a I, state: &'a mut I::State) -> Self::Value<'a>;
 }
 
 #[derive(Clone, Copy, Debug)]

@@ -91,26 +91,22 @@ impl<T> Lattice<T> {
         &self,
         strider: &Strider,
         range: impl RangeBounds<Point3<usize>>,
-    ) -> impl Iterator<Item = (usize, Point3<usize>, &T)> {
-        strider
-            .iter(range)
-            .map(|(index, point)| (index, point, &self.data[index]))
+    ) -> LatticeIter<'_, T> {
+        LatticeIter {
+            strider_iter: strider.iter(range),
+            data: &self.data,
+        }
     }
 
     pub fn iter_mut(
         &mut self,
         strider: &Strider,
         range: impl RangeBounds<Point3<usize>>,
-    ) -> impl Iterator<Item = (usize, Point3<usize>, &mut T)> {
-        strider.iter(range).map(|(index, point)| {
-            let data = unsafe {
-                // SAFETY: No mutable borrow to data at the same index is handed out twice
-                // (assuming strider.iter() works as expected) This is basically
-                // what iter_mut does.
-                &mut *(&mut self.data[index] as *mut T)
-            };
-            (index, point, data)
-        })
+    ) -> LatticeIterMut<'_, T> {
+        LatticeIterMut {
+            strider_iter: strider.iter(range),
+            data: &mut self.data,
+        }
     }
 }
 
@@ -127,6 +123,54 @@ impl<T> IndexMut<usize> for Lattice<T> {
         &mut self.data[index]
     }
 }
+
+#[derive(Clone, Copy, Debug)]
+pub struct LatticeIter<'a, T> {
+    strider_iter: StriderPointIter,
+    data: &'a [T],
+}
+
+impl<'a, T> Iterator for LatticeIter<'a, T> {
+    type Item = (usize, Point3<usize>, &'a T);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let (index, point) = self.strider_iter.next()?;
+        Some((index, point, &self.data[index]))
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.strider_iter.size_hint()
+    }
+}
+
+impl<'a, T> ExactSizeIterator for LatticeIter<'a, T> where StriderPointIter: ExactSizeIterator {}
+
+#[derive(Debug)]
+pub struct LatticeIterMut<'a, T> {
+    strider_iter: StriderPointIter,
+    data: &'a mut [T],
+}
+
+impl<'a, T> Iterator for LatticeIterMut<'a, T> {
+    type Item = (usize, Point3<usize>, &'a mut T);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let (index, point) = self.strider_iter.next()?;
+        let data = unsafe {
+            // SAFETY: No mutable borrow to data at the same index is handed out twice
+            // (assuming strider.iter() works as expected) This is basically
+            // what iter_mut does.
+            &mut *(&mut self.data[index] as *mut T)
+        };
+        Some((index, point, data))
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.strider_iter.size_hint()
+    }
+}
+
+impl<'a, T> ExactSizeIterator for LatticeIterMut<'a, T> where StriderPointIter: ExactSizeIterator {}
 
 #[derive(Clone, Copy, Debug)]
 pub struct Strider {
