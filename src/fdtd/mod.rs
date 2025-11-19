@@ -359,7 +359,6 @@ impl CpuOrGpu {
                 PlotPoints::Owned(
                     instance
                         .read_state(state, &AccessFieldRegion::new(.., field_component))
-                        .unwrap()
                         .map(|(x, y)| {
                             // note: casting x like this doesn't account for resolution and offset
                             PlotPoint::new(x.x as f64, y[component_index] as f64)

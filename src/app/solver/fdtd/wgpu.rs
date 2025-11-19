@@ -1,6 +1,7 @@
 use std::{
     convert::Infallible,
     ops::Range,
+    sync::Arc,
     time::Duration,
 };
 
@@ -10,6 +11,7 @@ use bytemuck::{
 };
 use nalgebra::{
     Point3,
+    Scalar,
     Vector3,
 };
 use smallvec::SmallVec;
@@ -26,6 +28,7 @@ use crate::{
             FdtdSolverConfig,
             FieldComponent,
             Resolution,
+            SourceValues,
             lattice::Strider,
             util::{
                 SwapBuffer,
@@ -131,7 +134,7 @@ pub struct FdtdWgpuSolverInstance {
     resolution: Resolution,
     strider: Strider,
     config_buffer: wgpu::Buffer,
-    material_buffer: TypedArrayBuffer<UpdateCoefficientsData>,
+    material_buffer: Arc<TypedArrayBuffer<UpdateCoefficientsData>>,
     num_cells: usize,
     update_e_pipeline: wgpu::ComputePipeline,
     update_h_pipeline: wgpu::ComputePipeline,
@@ -217,7 +220,7 @@ impl FdtdWgpuSolverInstance {
             resolution: config.resolution,
             strider,
             config_buffer,
-            material_buffer,
+            material_buffer: Arc::new(material_buffer),
             num_cells,
             update_e_pipeline,
             update_h_pipeline,
@@ -234,6 +237,16 @@ impl FdtdWgpuSolverInstance {
         self.backend
             .queue
             .write_buffer(&self.config_buffer, 0, bytemuck::bytes_of(&config_data));
+
+        // apply sources
+        //todo!();
+        // pretend data
+        let sources: Vec<(Point3<usize>, SourceValues)> = vec![];
+        // reallocate source buffer if needed. if it is being allocated, use the
+        // constructor that fills it
+        for (point, source_value) in sources {
+            // todo
+        }
 
         let mut command_encoder =
             self.backend
@@ -265,12 +278,12 @@ impl FdtdWgpuSolverInstance {
 
             dispatch_update(
                 &self.update_h_pipeline,
-                &state.update_h_field_bind_group[swap_buffer_index],
+                &state.update_bind_groups.h[swap_buffer_index],
             );
 
             dispatch_update(
                 &self.update_e_pipeline,
-                &state.update_e_field_bind_group[swap_buffer_index],
+                &state.update_bind_groups.e[swap_buffer_index],
             );
         }
 
@@ -315,22 +328,22 @@ impl EvaluateStopCondition for FdtdWgpuSolverInstance {
 #[derive(Debug)]
 pub struct FdtdWgpuSolverState {
     field_buffers: SwapBuffer<FieldBuffers>,
-    update_h_field_bind_group: SwapBuffer<wgpu::BindGroup>,
-    update_e_field_bind_group: SwapBuffer<wgpu::BindGroup>,
+    source_buffer: Option<TypedArrayBuffer<SourceData>>,
+    update_bind_groups: UpdateBindGroups,
     tick: usize,
     time: f64,
 }
 
 impl FdtdWgpuSolverState {
-    fn new(pipeline: &FdtdWgpuSolverInstance) -> Self {
+    fn new(instance: &FdtdWgpuSolverInstance) -> Self {
         let field_buffers = {
-            let default_value = FieldVector::default();
+            let default_value = Cell::default();
             SwapBuffer::from_fn(|_| {
                 let buffer = |label| {
                     TypedArrayBuffer::from_fn(
-                        &pipeline.backend.device,
+                        &instance.backend.device,
                         label,
-                        pipeline.num_cells,
+                        instance.num_cells,
                         wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
                         |_index| default_value,
                     )
@@ -342,77 +355,12 @@ impl FdtdWgpuSolverState {
             })
         };
 
-        let update_h_field_bind_group = SwapBuffer::from_fn(|current| {
-            let previous = current.other();
-            pipeline
-                .backend
-                .device
-                .create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some(&format!("fdtd/bind_group/{current:?}")),
-                    layout: &pipeline.backend.bind_group_layout,
-                    entries: &[
-                        wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: pipeline.config_buffer.as_entire_binding(),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 1,
-                            resource: pipeline.material_buffer.buffer().as_entire_binding(),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 2,
-                            resource: field_buffers[current].h.buffer().as_entire_binding(),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 3,
-                            resource: field_buffers[previous].h.buffer().as_entire_binding(),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 4,
-                            resource: field_buffers[previous].e.buffer().as_entire_binding(),
-                        },
-                    ],
-                })
-        });
-
-        let update_e_field_bind_group = SwapBuffer::from_fn(|current| {
-            let previous = current.other();
-            pipeline
-                .backend
-                .device
-                .create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some(&format!("fdtd/bind_group/{current:?}")),
-                    layout: &pipeline.backend.bind_group_layout,
-                    entries: &[
-                        wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: pipeline.config_buffer.as_entire_binding(),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 1,
-                            resource: pipeline.material_buffer.buffer().as_entire_binding(),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 2,
-                            resource: field_buffers[current].e.buffer().as_entire_binding(),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 3,
-                            // note: this uses the current h buffer, since we update h first.
-                            resource: field_buffers[current].h.buffer().as_entire_binding(),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 4,
-                            resource: field_buffers[previous].e.buffer().as_entire_binding(),
-                        },
-                    ],
-                })
-        });
+        let update_bind_groups = UpdateBindGroups::new(instance, &field_buffers);
 
         Self {
             field_buffers,
-            update_h_field_bind_group,
-            update_e_field_bind_group,
+            source_buffer: None,
+            update_bind_groups,
             tick: 0,
             time: 0.0,
         }
@@ -429,7 +377,7 @@ impl FdtdWgpuSolverState {
 
 impl ReadState<FdtdWgpuSolverInstance> for AccessFieldRegion {
     type Value<'a>
-        = Result<WgpuFieldRegionIter, wgpu::BufferAsyncError>
+        = WgpuFieldRegionIter
     where
         Self: 'a,
         FdtdWgpuSolverInstance: 'a;
@@ -438,7 +386,7 @@ impl ReadState<FdtdWgpuSolverInstance> for AccessFieldRegion {
         &'a self,
         instance: &'a FdtdWgpuSolverInstance,
         state: &'a FdtdWgpuSolverState,
-    ) -> Result<WgpuFieldRegionIter, wgpu::BufferAsyncError> {
+    ) -> WgpuFieldRegionIter {
         let range = normalize_point_bounds(self.range, *instance.strider.size());
 
         let fetch_data = |index_range: Range<usize>, check_inside: Option<Range<Point3<usize>>>| {
@@ -461,14 +409,14 @@ impl ReadState<FdtdWgpuSolverInstance> for AccessFieldRegion {
                 &instance.backend.queue,
                 index_range,
                 |view| view.iter().map(|data| data.value).collect::<Vec<_>>(),
-            )?;
+            );
 
-            Ok(WgpuFieldRegionIter {
+            WgpuFieldRegionIter {
                 strider: instance.strider,
                 start_index,
                 data: data.into_iter().enumerate(),
                 check_inside,
-            })
+            }
         };
 
         match instance.strider.to_contiguous_index_range(range.clone()) {
@@ -536,21 +484,20 @@ impl ConfigData {
     fn new(strider: &Strider, resolution: &Resolution, time: f32) -> Self {
         Self {
             size: {
-                let mut size = [0; 4];
-                size[..3].copy_from_slice(strider.size().cast::<u32>().as_slice());
-                size
+                let size = strider.size().cast::<u32>();
+                [size.x, size.y, size.z, 0]
             },
-            strides: strider
-                .strides()
-                .cast::<u32>()
-                .as_slice()
-                .try_into()
-                .unwrap(),
+            strides: {
+                let strides = strider.strides().cast::<u32>();
+                [strides.x, strides.y, strides.z, strides.w]
+            },
             resolution: {
-                let mut output = [0.0; 4];
-                output[..3].copy_from_slice(resolution.spatial.cast::<f32>().as_slice());
-                output[3] = resolution.temporal as f32;
-                output
+                [
+                    resolution.spatial.x as f32,
+                    resolution.spatial.y as f32,
+                    resolution.spatial.z as f32,
+                    resolution.temporal as f32,
+                ]
             },
             time,
             ..Default::default()
@@ -558,17 +505,167 @@ impl ConfigData {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]
+#[repr(C)]
+struct SourceData {
+    j_source: Vector3<f32>,
+    index: u32,
+    m_source: Vector3<f32>,
+    padding: u32,
+}
+
+impl SourceData {
+    pub fn new(index: u32, j_source: Vector3<f32>, m_source: Vector3<f32>) -> Self {
+        Self {
+            index,
+            j_source,
+            m_source,
+            ..Default::default()
+        }
+    }
+}
+
+fn array4_from_vector3<T>(vector: Vector3<T>) -> [T; 4]
+where
+    T: Scalar + Default,
+{
+    [
+        vector.x.clone(),
+        vector.y.clone(),
+        vector.z.clone(),
+        T::default(),
+    ]
+}
+
 #[derive(Debug)]
 struct FieldBuffers {
-    e: TypedArrayBuffer<FieldVector>,
-    h: TypedArrayBuffer<FieldVector>,
+    e: TypedArrayBuffer<Cell>,
+    h: TypedArrayBuffer<Cell>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Zeroable, Pod)]
 #[repr(C)]
-struct FieldVector {
+struct Cell {
     value: Vector3<f32>,
-    _padding: u32,
+    source_id: u32,
+}
+
+#[derive(Debug)]
+struct UpdateBindGroups {
+    h: SwapBuffer<wgpu::BindGroup>,
+    e: SwapBuffer<wgpu::BindGroup>,
+}
+
+impl UpdateBindGroups {
+    fn new(instance: &FdtdWgpuSolverInstance, field_buffers: &SwapBuffer<FieldBuffers>) -> Self {
+        // note: all the unwraps are okay, since we never allocate empty buffers.
+
+        let update_h_field_bind_group = {
+            SwapBuffer::from_fn(|current| {
+                let previous = current.other();
+                instance
+                    .backend
+                    .device
+                    .create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some(&format!("fdtd/bind_group/h/{current:?}")),
+                        layout: &instance.backend.bind_group_layout,
+                        entries: &[
+                            wgpu::BindGroupEntry {
+                                binding: 0,
+                                resource: instance.config_buffer.as_entire_binding(),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 1,
+                                resource: instance
+                                    .material_buffer
+                                    .buffer()
+                                    .unwrap()
+                                    .as_entire_binding(),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 2,
+                                resource: field_buffers[current]
+                                    .h
+                                    .buffer()
+                                    .unwrap()
+                                    .as_entire_binding(),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 3,
+                                resource: field_buffers[previous]
+                                    .h
+                                    .buffer()
+                                    .unwrap()
+                                    .as_entire_binding(),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 4,
+                                resource: field_buffers[previous]
+                                    .e
+                                    .buffer()
+                                    .unwrap()
+                                    .as_entire_binding(),
+                            },
+                        ],
+                    })
+            })
+        };
+
+        let update_e_field_bind_group = SwapBuffer::from_fn(|current| {
+            let previous = current.other();
+            instance
+                .backend
+                .device
+                .create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some(&format!("fdtd/bind_group/e/{current:?}")),
+                    layout: &instance.backend.bind_group_layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: instance.config_buffer.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: instance
+                                .material_buffer
+                                .buffer()
+                                .unwrap()
+                                .as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: field_buffers[current]
+                                .e
+                                .buffer()
+                                .unwrap()
+                                .as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 3,
+                            // note: this uses the current h buffer, since we update h first.
+                            resource: field_buffers[current]
+                                .h
+                                .buffer()
+                                .unwrap()
+                                .as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 4,
+                            resource: field_buffers[previous]
+                                .e
+                                .buffer()
+                                .unwrap()
+                                .as_entire_binding(),
+                        },
+                    ],
+                })
+        });
+
+        Self {
+            h: update_h_field_bind_group,
+            e: update_e_field_bind_group,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]

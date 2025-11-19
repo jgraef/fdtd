@@ -1,6 +1,6 @@
 pub mod boundary_condition;
 pub mod cpu;
-pub mod lattice;
+mod lattice;
 pub(crate) mod legacy;
 mod util;
 pub mod wgpu;
@@ -120,4 +120,10 @@ impl AccessFieldRegion {
 pub enum FieldComponent {
     E,
     H,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct SourceValues {
+    pub j_source: Vector3<f64>,
+    pub m_source: Vector3<f64>,
 }

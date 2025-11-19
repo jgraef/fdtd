@@ -1,6 +1,7 @@
 use std::{
     marker::PhantomData,
     ops::{
+        Deref,
         Range,
         RangeBounds,
     },
@@ -48,59 +49,92 @@ pub fn is_buffer_copy_aligned(index: u64) -> bool {
     (index & BUFFER_COPY_ALIGN_MASK) == 0
 }
 
-#[derive(Clone, Debug)]
+// note: this is intentionally not Clone
+#[derive(Debug)]
 pub struct TypedArrayBuffer<T> {
+    inner: Option<TypedArrayBufferInner>,
+    device: wgpu::Device,
+    label: String,
+    _phantom: PhantomData<[T]>,
+}
+
+#[derive(Debug)]
+struct TypedArrayBufferInner {
     buffer: wgpu::Buffer,
     num_elements: usize,
+    capacity: usize,
     unpadded_buffer_size: u64,
     padded_buffer_size: u64,
-    _phantom: PhantomData<[T]>,
 }
 
 impl<T> TypedArrayBuffer<T> {
     fn new_impl(
         device: &wgpu::Device,
         label: &str,
-        num_elements: usize,
+        capacity: usize,
         usage: wgpu::BufferUsages,
         mapped_at_creation: bool,
     ) -> Self {
-        assert_ne!(num_elements, 0);
+        let inner = (capacity > 0).then(|| {
+            let unpadded_buffer_size = unpadded_buffer_size::<T>(capacity);
+            let padded_buffer_size = if mapped_at_creation || buffer_usage_needs_padding(usage) {
+                pad_buffer_size_for_copy(unpadded_buffer_size)
+            }
+            else {
+                unpadded_buffer_size
+            };
 
-        let unpadded_buffer_size = unpadded_buffer_size::<T>(num_elements);
-        let padded_buffer_size = if mapped_at_creation || buffer_usage_needs_padding(usage) {
-            pad_buffer_size_for_copy(unpadded_buffer_size)
-        }
-        else {
-            unpadded_buffer_size
-        };
+            let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some(label),
+                size: padded_buffer_size,
+                usage,
+                mapped_at_creation,
+            });
 
-        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some(label),
-            size: padded_buffer_size,
-            usage,
-            mapped_at_creation,
+            TypedArrayBufferInner {
+                buffer,
+                num_elements: 0,
+                capacity,
+                unpadded_buffer_size,
+                padded_buffer_size,
+            }
         });
 
         Self {
-            buffer,
-            num_elements,
-            unpadded_buffer_size,
-            padded_buffer_size,
+            inner,
+            device: device.clone(),
+            label: label.to_owned(),
             _phantom: PhantomData,
         }
     }
 
-    pub fn new(device: &wgpu::Device, label: &str, usage: wgpu::BufferUsages, size: usize) -> Self {
-        Self::new_impl(device, label, size, usage, false)
+    pub fn new(
+        device: &wgpu::Device,
+        label: &str,
+        usage: wgpu::BufferUsages,
+        capacity: usize,
+    ) -> Self {
+        Self::new_impl(device, label, capacity, usage, false)
     }
 
-    pub fn buffer(&self) -> &wgpu::Buffer {
-        &self.buffer
+    pub fn buffer(&self) -> Option<&wgpu::Buffer> {
+        self.inner.as_ref().map(|inner| &inner.buffer)
     }
 
     pub fn len(&self) -> usize {
-        self.num_elements
+        self.inner.as_ref().map_or(0, |inner| inner.num_elements)
+    }
+
+    pub fn capacity(&self) -> usize {
+        self.inner.as_ref().map_or(0, |inner| inner.capacity)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.inner.is_none()
+    }
+
+    pub fn reserve_total(&mut self, num_elements: usize) -> bool {
+        todo!();
     }
 }
 
@@ -108,13 +142,27 @@ impl<T> TypedArrayBuffer<T>
 where
     T: Pod,
 {
-    pub fn from_data(
+    pub fn from_slice(
         device: &wgpu::Device,
         label: &str,
         usage: wgpu::BufferUsages,
         data: &[T],
     ) -> Self {
-        Self::from_fn(device, label, data.len(), usage, |index| data[index])
+        Self::from_fn_with_view(device, label, data.len(), usage, |view| {
+            view.copy_from_slice(data);
+        })
+    }
+
+    pub fn from_value(
+        device: &wgpu::Device,
+        label: &str,
+        num_elements: usize,
+        usage: wgpu::BufferUsages,
+        value: T,
+    ) -> Self {
+        Self::from_fn_with_view(device, label, num_elements, usage, |view| {
+            view.fill(value);
+        })
     }
 
     pub fn from_fn(
@@ -124,129 +172,361 @@ where
         usage: wgpu::BufferUsages,
         mut fill: impl FnMut(usize) -> T,
     ) -> Self {
-        let buffer = Self::new_impl(device, label, num_elements, usage, true);
-
-        {
-            let mut view = buffer
-                .buffer
-                .get_mapped_range_mut(..buffer.unpadded_buffer_size);
-            let view: &mut [T] = bytemuck::cast_slice_mut(view.as_mut());
+        Self::from_fn_with_view(device, label, num_elements, usage, |view| {
             view.iter_mut()
                 .enumerate()
                 .for_each(|(index, value)| *value = fill(index));
-        }
+        })
+    }
 
-        buffer.buffer.unmap();
+    pub fn from_fn_with_view(
+        device: &wgpu::Device,
+        label: &str,
+        num_elements: usize,
+        usage: wgpu::BufferUsages,
+        mut fill: impl FnMut(&mut [T]),
+    ) -> Self {
+        let mut buffer = Self::new_impl(device, label, num_elements, usage, true);
+
+        if let Some(inner) = &mut buffer.inner {
+            inner.num_elements = num_elements;
+
+            {
+                let mut view = inner.buffer.get_mapped_range_mut(..);
+                let view: &mut [T] =
+                    bytemuck::cast_slice_mut(&mut view[..(inner.unpadded_buffer_size as usize)]);
+                fill(&mut view[..num_elements]);
+            }
+
+            inner.buffer.unmap();
+        }
+        else {
+            fill(&mut []);
+        }
 
         buffer
     }
 
+    #[deprecated]
     pub fn read<R>(
         &self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         range: impl RangeBounds<usize>,
         mut f: impl FnMut(&[T]) -> R,
-    ) -> Result<R, wgpu::BufferAsyncError> {
-        let index_range = normalize_index_bounds(range, self.num_elements);
+    ) -> R {
+        let view = self.read_view(range, device, queue);
+        f(view.as_ref())
+    }
 
-        if index_range.is_empty() {
-            // that one is easy!
-            return Ok(f(&[]));
-        }
+    pub fn read_view<'a>(
+        &'a self,
+        range: impl RangeBounds<usize>,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+    ) -> TypedArrayBufferReadView<'a, T> {
+        self.inner
+            .as_ref()
+            .and_then(|inner| {
+                let index_range = normalize_index_bounds(range, inner.num_elements);
 
-        let copy_alignment = CopyAlignment::from_typed_source_range::<T>(index_range.clone());
+                (!index_range.is_empty()).then(|| {
+                    let alignment = StagingBufferAlignment::from_unaligned_buffer_range_typed::<T>(
+                        index_range.clone(),
+                    );
 
-        let staging = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("read_staging"),
-            size: copy_alignment.copy_size,
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-            mapped_at_creation: false,
-        });
+                    let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                        label: Some("read: staging"),
+                        size: alignment.copy_size,
+                        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                        mapped_at_creation: false,
+                    });
 
-        let mut command_encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("fdtd/read"),
-        });
+                    let mut command_encoder =
+                        device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                            label: Some("read: copy to staging"),
+                        });
 
-        command_encoder.copy_buffer_to_buffer(
-            &self.buffer,
-            copy_alignment.copy_source_start,
-            &staging,
-            0,
-            copy_alignment.copy_size,
-        );
+                    command_encoder.copy_buffer_to_buffer(
+                        &inner.buffer,
+                        alignment.buffer_start,
+                        &staging_buffer,
+                        0,
+                        alignment.copy_size,
+                    );
 
-        let result_buf = Arc::new(Mutex::new(None));
+                    let result_buf = Arc::new(Mutex::new(None));
 
-        command_encoder.map_buffer_on_submit(&staging, wgpu::MapMode::Read, .., {
-            let result_buf = result_buf.clone();
-            move |result| {
-                let mut result_buf = result_buf.lock();
-                *result_buf = Some(result);
-            }
-        });
+                    command_encoder.map_buffer_on_submit(
+                        &staging_buffer,
+                        wgpu::MapMode::Read,
+                        ..,
+                        {
+                            let result_buf = result_buf.clone();
+                            move |result| {
+                                let mut result_buf = result_buf.lock();
+                                *result_buf = Some(result);
+                            }
+                        },
+                    );
 
-        let submission_index = queue.submit([command_encoder.finish()]);
+                    let submission_index = queue.submit([command_encoder.finish()]);
 
-        device
-            .poll(wgpu::PollType::Wait {
-                submission_index: Some(submission_index),
-                timeout: None,
+                    device
+                        .poll(wgpu::PollType::Wait {
+                            submission_index: Some(submission_index),
+                            timeout: None,
+                        })
+                        .expect("device poll failed");
+
+                    let result = result_buf.lock().take();
+                    result
+                        .expect("map_buffer_on_submit hasn't finished yet")
+                        .unwrap();
+
+                    let staging_view = staging_buffer.get_mapped_range(..);
+
+                    TypedArrayBufferReadView {
+                        inner: Some(TypedBufferReadViewInner {
+                            alignment,
+                            staging_buffer,
+                            staging_view,
+                        }),
+                        _phantom: PhantomData,
+                    }
+                })
             })
-            .expect("device poll failed");
+            .unwrap_or(TypedArrayBufferReadView {
+                inner: None,
+                _phantom: PhantomData,
+            })
+    }
 
-        let result = result_buf.lock().take();
-        result.expect("map_buffer_on_submit hasn't finished yet")?;
+    pub fn write_view<'a>(
+        &'a mut self,
+        range: impl RangeBounds<usize>,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+    ) -> TypedArrayBufferWriteView<'a, T> {
+        self.inner
+            .as_mut()
+            .and_then(|inner| {
+                let index_range = normalize_index_bounds(range, inner.num_elements);
 
-        let mapped = staging.get_mapped_range(copy_alignment.destination_range);
-        let view: &[T] = bytemuck::cast_slice(mapped.as_ref());
-        assert_eq!(view.len(), index_range.end - index_range.start);
+                (!index_range.is_empty()).then(|| {
+                    let alignment = StagingBufferAlignment::from_unaligned_buffer_range_typed::<T>(
+                        index_range.clone(),
+                    );
+                    if !alignment.is_aligned() {
+                        todo!("unaligned write");
+                    }
 
-        let output = f(view);
+                    // note: we could use `wgpu::Queue::write_buffer_with`, but prefer something we
+                    // can customize better later.
+                    let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                        label: Some("write: staging"),
+                        size: alignment.copy_size,
+                        usage: wgpu::BufferUsages::MAP_WRITE,
+                        mapped_at_creation: true,
+                    });
 
-        drop(mapped);
-        staging.unmap();
+                    let staging_view = inner.buffer.get_mapped_range_mut(..);
 
-        Ok(output)
+                    TypedArrayBufferWriteView {
+                        inner: Some(TypedArrayBufferWriteViewInner {
+                            alignment,
+                            staging_buffer,
+                            staging_view,
+                            destination_buffer: inner.buffer.clone(),
+                            device: device.clone(),
+                            queue: queue.clone(),
+                        }),
+                        _phantom: PhantomData,
+                    }
+                })
+            })
+            .unwrap_or(TypedArrayBufferWriteView {
+                inner: None,
+                _phantom: PhantomData,
+            })
     }
 }
 
-pub struct CopyAlignment {
-    pub copy_source_start: u64,
-    pub copy_size: u64,
-    pub destination_range: Range<u64>,
+#[derive(Debug)]
+pub struct TypedArrayBufferReadView<'a, T> {
+    inner: Option<TypedBufferReadViewInner>,
+    _phantom: PhantomData<&'a [T]>,
 }
 
-impl CopyAlignment {
-    pub fn from_typed_source_range<T>(index_range: Range<usize>) -> Self {
+impl<'a, T> AsRef<[T]> for TypedArrayBufferReadView<'a, T>
+where
+    T: Pod,
+{
+    fn as_ref(&self) -> &[T] {
+        self.inner
+            .as_ref()
+            .map(|inner| bytemuck::cast_slice(&inner.staging_view[inner.alignment.staging_range()]))
+            .unwrap_or(&[])
+    }
+}
+
+impl<'a, T> Deref for TypedArrayBufferReadView<'a, T>
+where
+    T: Pod,
+{
+    type Target = [T];
+
+    fn deref(&self) -> &Self::Target {
+        self.as_ref()
+    }
+}
+
+impl<'a, T> Drop for TypedArrayBufferReadView<'a, T> {
+    fn drop(&mut self) {
+        if let Some(inner) = self.inner.take() {
+            drop(inner.staging_view);
+            inner.staging_buffer.unmap();
+        }
+    }
+}
+
+#[derive(Debug)]
+struct TypedBufferReadViewInner {
+    alignment: StagingBufferAlignment,
+    staging_buffer: wgpu::Buffer,
+    staging_view: wgpu::BufferView,
+}
+
+#[derive(Debug)]
+pub struct TypedArrayBufferWriteView<'a, T> {
+    inner: Option<TypedArrayBufferWriteViewInner>,
+    _phantom: PhantomData<&'a mut [T]>,
+}
+
+impl<'a, T> TypedArrayBufferWriteView<'a, T> {
+    pub fn finish_with(mut self, command_encoder: &mut wgpu::CommandEncoder) {
+        if let Some(inner) = self.inner.take() {
+            inner.dispatch_copy_with(command_encoder);
+        }
+    }
+
+    pub fn finish(mut self) {
+        if let Some(inner) = self.inner.take() {
+            inner.dispatch_copy();
+        }
+    }
+}
+
+#[derive(Debug)]
+struct TypedArrayBufferWriteViewInner {
+    alignment: StagingBufferAlignment,
+    staging_buffer: wgpu::Buffer,
+    staging_view: wgpu::BufferViewMut,
+    destination_buffer: wgpu::Buffer,
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+}
+
+impl TypedArrayBufferWriteViewInner {
+    fn dispatch_copy(&self) {
+        let mut command_encoder =
+            self.device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("write: copy from staging"),
+                });
+
+        self.dispatch_copy_with(&mut command_encoder);
+
+        self.queue.submit([command_encoder.finish()]);
+    }
+
+    fn dispatch_copy_with(&self, command_encoder: &mut wgpu::CommandEncoder) {
+        command_encoder.copy_buffer_to_buffer(
+            &self.staging_buffer,
+            self.alignment.buffer_start,
+            &self.destination_buffer,
+            self.alignment.staging_start,
+            self.alignment.copy_size,
+        );
+    }
+}
+
+impl<'a, T> AsRef<[T]> for TypedArrayBufferWriteView<'a, T>
+where
+    T: Pod,
+{
+    fn as_ref(&self) -> &[T] {
+        self.inner
+            .as_ref()
+            .map(|inner| bytemuck::cast_slice(&inner.staging_view[inner.alignment.staging_range()]))
+            .unwrap_or(&[])
+    }
+}
+
+impl<'a, T> AsMut<[T]> for TypedArrayBufferWriteView<'a, T>
+where
+    T: Pod,
+{
+    fn as_mut(&mut self) -> &mut [T] {
+        self.inner
+            .as_mut()
+            .map(|inner| {
+                bytemuck::cast_slice_mut(&mut inner.staging_view[inner.alignment.staging_range()])
+            })
+            .unwrap_or(&mut [])
+    }
+}
+
+impl<'a, T> Drop for TypedArrayBufferWriteView<'a, T> {
+    fn drop(&mut self) {
+        if let Some(inner) = self.inner.take() {
+            inner.dispatch_copy();
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct StagingBufferAlignment {
+    pub buffer_start: u64,
+    pub buffer_end: u64,
+    pub staging_start: u64,
+    pub staging_end: u64,
+    pub copy_size: u64,
+}
+
+impl StagingBufferAlignment {
+    pub fn from_unaligned_buffer_range_typed<T>(index_range: Range<usize>) -> Self {
         let unaligned_copy_source = Range {
             start: (std::mem::size_of::<T>() * index_range.start) as u64,
             end: (std::mem::size_of::<T>() * index_range.end) as u64,
         };
-        Self::from_unaligned_source(unaligned_copy_source)
+        Self::from_unaligned_buffer_range(unaligned_copy_source)
     }
 
-    pub fn from_unaligned_source(unaligned_copy_source: Range<u64>) -> Self {
-        //let unaligned_copy_size = unaligned_copy_source_end -
-        // unaligned_copy_source_start;
+    pub fn from_unaligned_buffer_range(unaligned_buffer_range: Range<u64>) -> Self {
+        let unaligned_copy_size = unaligned_buffer_range.end - unaligned_buffer_range.start;
 
-        let aligned_copy_source_start = align_copy_start_offset(unaligned_copy_source.start);
-        let aligned_copy_size =
-            pad_buffer_size_for_copy(unaligned_copy_source.end - aligned_copy_source_start);
+        let buffer_start = align_copy_start_offset(unaligned_buffer_range.start);
+        let copy_size = pad_buffer_size_for_copy(unaligned_copy_size);
+        let buffer_end = buffer_start + copy_size;
 
-        let aligned_copy_destination_start =
-            unaligned_copy_source.start - aligned_copy_source_start;
-        //let aligned_copy_destination_end = aligned_copy_destination_start +
-        // unaligned_copy_size;
-        let aligned_copy_destination_end = unaligned_copy_source.end - aligned_copy_source_start;
+        let staging_start = unaligned_buffer_range.start - buffer_start;
+        let staging_end = unaligned_buffer_range.end - buffer_start;
 
         Self {
-            copy_source_start: aligned_copy_source_start,
-            copy_size: aligned_copy_size,
-            destination_range: Range {
-                start: aligned_copy_destination_start,
-                end: aligned_copy_destination_end,
-            },
+            buffer_start,
+            buffer_end,
+            staging_start,
+            staging_end,
+            copy_size,
         }
+    }
+
+    pub fn staging_range(&self) -> Range<usize> {
+        (self.staging_start as usize)..(self.staging_end as usize)
+    }
+
+    pub fn is_aligned(&self) -> bool {
+        self.staging_start == 0 && self.staging_end == self.copy_size
     }
 }

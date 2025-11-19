@@ -20,19 +20,24 @@ override workgroup_size_z: u32 = 0;
 @group(0) @binding(1)
 var<storage, read> material_coeff: array<vec4f>;
 
-// H-field update
+// note: our H and E field buffers will align the elements to 16 bytes anyway,
+// so we can use the 4 extra bytes to indicate if a source current is present.
+struct Cell {
+    value: vec3f,
+    source_id: u32,
+}
 
 @group(0) @binding(2)
-var<storage, read_write> h_field_next: array<vec3f>;
+var<storage, read_write> h_field_next: array<Cell>;
 
 @group(0) @binding(2)
-var<storage, read_write> e_field_next: array<vec3f>;
+var<storage, read_write> e_field_next: array<Cell>;
 
 @group(0) @binding(3)
-var<storage, read> h_field_prev: array<vec3f>;
+var<storage, read> h_field_prev: array<Cell>;
 
 @group(0) @binding(4)
-var<storage, read> e_field_prev: array<vec3f>;
+var<storage, read> e_field_prev: array<Cell>;
 
 
 @compute @workgroup_size(workgroup_size_x, workgroup_size_y, workgroup_size_z)
@@ -61,7 +66,7 @@ fn update_h(input: Input) {
     let psi = vec3f(0.0);
 
     // update rule
-    h_field_next[index] = coeff.x * h_field_prev[index] + coeff.y * (-e_curl - m_source(index, x) + psi);
+    h_field_next[index].value = coeff.x * h_field_prev[index].value + coeff.y * (-e_curl - m_source(index, x) + psi);
 }
 
 
@@ -91,7 +96,7 @@ fn update_e(input: Input) {
     let psi = vec3f(0.0);
 
     // update rule
-    e_field_next[index] = coeff.x * e_field_prev[index] + coeff.y * (h_curl - j_source(index, x) + psi);
+    e_field_next[index].value = coeff.x * e_field_prev[index].value + coeff.y * (h_curl - j_source(index, x) + psi);
 }
 
 
@@ -127,8 +132,8 @@ fn curl(dfdx: vec3f, dfdy: vec3f, dfdz: vec3f) -> vec3f {
 
 fn dedi(index: u32, x: vec3u, axis: u32) -> vec3f {
     if x[axis] > 0 {
-        let e1 = e_field_prev[index - config.strides[axis]];
-        let e2 = e_field_prev[index];
+        let e1 = e_field_prev[index - config.strides[axis]].value;
+        let e2 = e_field_prev[index].value;
         return (e2 - e1) / config.resolution[axis];
     }
     else {
@@ -139,8 +144,8 @@ fn dedi(index: u32, x: vec3u, axis: u32) -> vec3f {
 
 fn dhdi(index: u32, x: vec3u, axis: u32) -> vec3f {
     if x[axis] + 1 < config.size[axis] {
-        let h1 = h_field_prev[index];
-        let h2 = h_field_prev[index + config.strides[axis]];
+        let h1 = h_field_prev[index].value;
+        let h2 = h_field_prev[index + config.strides[axis]].value;
         return (h2 - h1) / config.resolution[axis];
     }
     else {

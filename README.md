@@ -4,7 +4,8 @@ This app is work-in-progress. It's intended to model electromagnetic behavior. I
 
 # TODO
 
- - simplify `ReadState` and `WriteState`
+ - add fdtd-cpu backend with rayon for multithreading.
+ - simplify `ReadState` and `WriteState`. read/write should also be able to prepare/reuse staging buffers.
  - PRs for `egui_ltreeview`
  - manipulating objects's isometry in scene view
  - pass more config to properties_ui for floats for proper formatting
