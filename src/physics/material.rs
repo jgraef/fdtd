@@ -45,3 +45,11 @@ where
         (self)(point)
     }
 }
+
+/// Uniform material distribution
+impl<P> MaterialDistribution<P> for Material {
+    fn at(&self, point: &P) -> Material {
+        let _ = point;
+        *self
+    }
+}
