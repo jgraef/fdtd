@@ -8,6 +8,7 @@ use std::{
         Bound,
         Deref,
         DerefMut,
+        Range,
         RangeBounds,
     },
     path::Path,
@@ -244,25 +245,55 @@ where
 }
 
 pub fn iter_points(range: impl RangeBounds<Point3<usize>>, size: Vector3<usize>) -> PointIter {
-    let x0 = match range.start_bound() {
-        Bound::Included(x0) => x0.coords,
-        Bound::Excluded(x0) => x0.coords + Vector3::repeat(1),
-        Bound::Unbounded => Vector3::zeros(),
-    };
-
-    let x1 = match range.end_bound() {
-        Bound::Included(x1) => x1.coords + Vector3::repeat(1),
-        Bound::Excluded(x1) => x1.coords,
-        Bound::Unbounded => size,
-    };
-
-    let x1 = x0.zip_map(&x1, |x0, x1| x0.max(x1));
+    let Range { start, end } = normalize_point_bounds(range, size);
 
     PointIter {
-        x0,
-        x1,
-        x: (x0 != x1).then_some(x0),
+        x0: start.coords,
+        x1: end.coords,
+        x: (start != end).then_some(start.coords),
     }
+}
+
+pub fn normalize_point_bounds(
+    range: impl RangeBounds<Point3<usize>>,
+    size: Vector3<usize>,
+) -> Range<Point3<usize>> {
+    let start = match range.start_bound() {
+        Bound::Included(start) => *start,
+        Bound::Excluded(start) => start + Vector3::repeat(1),
+        Bound::Unbounded => Point3::origin(),
+    };
+
+    let end = match range.end_bound() {
+        Bound::Included(end) => end + Vector3::repeat(1),
+        Bound::Excluded(end) => *end,
+        Bound::Unbounded => size.into(),
+    };
+
+    let end = start
+        .coords
+        .zip_map(&end.coords, |x0, x1| x0.max(x1))
+        .into();
+
+    Range { start, end }
+}
+
+pub fn normalize_index_bounds(range: impl RangeBounds<usize>, len: usize) -> Range<usize> {
+    let start = match range.start_bound() {
+        Bound::Included(start) => *start,
+        Bound::Excluded(start) => start + 1,
+        Bound::Unbounded => 0,
+    };
+
+    let end = match range.end_bound() {
+        Bound::Included(end) => end + 1,
+        Bound::Excluded(end) => *end,
+        Bound::Unbounded => len,
+    };
+
+    let end = end.max(start);
+
+    Range { start, end }
 }
 
 #[derive(Clone, Copy, Debug)]

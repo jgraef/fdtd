@@ -34,7 +34,9 @@ use nalgebra::{
 use crate::{
     app::solver::{
         fdtd::{
+            AccessFieldRegion,
             FdtdSolverConfig,
+            FieldComponent,
             Resolution,
             cpu,
             legacy::{
@@ -88,6 +90,7 @@ pub struct App {
     ticks_per_second: u64,
     executor: Executor,
     screenshots_path: PathBuf,
+    wgpu_enabled: bool,
 }
 
 impl App {
@@ -102,7 +105,9 @@ impl App {
         };
         tracing::debug!(?config, memory_usage = estimate_memory_usage(&config));
 
+        let mut wgpu_enabled = false;
         let simulation = if args.wgpu {
+            wgpu_enabled = true;
             CpuOrGpu::new_gpu(&config, &device, &queue)
         }
         else {
@@ -116,6 +121,7 @@ impl App {
             ticks_per_second,
             executor,
             screenshots_path: PathBuf::from("screenshots"),
+            wgpu_enabled,
         }
     }
 
@@ -182,6 +188,8 @@ impl eframe::App for App {
                 if ui.button("📷").clicked() {
                     ctx.send_viewport_cmd(ViewportCommand::Screenshot(UserData::default()));
                 }
+
+                ui.label(if self.wgpu_enabled { "GPU" } else { "CPU" });
             });
 
             let guard = self.executor.read();
@@ -232,7 +240,7 @@ impl CpuOrGpu {
         simulation.add_material(
             Block {
                 transform: Isometry3::from_parts(
-                    Vector3::new(200.0, 0.0, 0.0).into(),
+                    Vector3::new(450.0, 0.0, 0.0).into(),
                     UnitQuaternion::identity(),
                 ),
                 dimensions: Vector3::new(20.0, 0.0, 0.0),
@@ -244,7 +252,7 @@ impl CpuOrGpu {
         );
 
         simulation.add_source(
-            Point3::new(-200.0, 0.0, 0.0),
+            Point3::new(50.0, 0.0, 0.0),
             GaussianPulse {
                 electric_current_density_amplitude: Vector3::y(),
                 magnetic_current_density_amplitude: Vector3::z(),
@@ -348,11 +356,20 @@ impl CpuOrGpu {
                 )
             }
             CpuOrGpu::Gpu { instance, state } => {
+                let (field_component, component_index) = match which {
+                    WhichFieldValue::Electric => (FieldComponent::E, 1),
+                    WhichFieldValue::Magnetic => (FieldComponent::H, 2),
+                    WhichFieldValue::Epsilon => return PlotPoints::Owned(vec![]),
+                };
+
                 PlotPoints::Owned(
                     instance
-                        .field_values(state, which)
-                        .into_iter()
-                        .map(|(x, y)| PlotPoint::new(x, y))
+                        .read_state(state, &AccessFieldRegion::new(.., field_component))
+                        .unwrap()
+                        .map(|(x, y)| {
+                            // note: casting x like this doesn't account for resolution and offset
+                            PlotPoint::new(x.x as f64, y[component_index] as f64)
+                        })
                         .collect::<Vec<_>>(),
                 )
             }
@@ -361,7 +378,7 @@ impl CpuOrGpu {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum WhichFieldValue {
+enum WhichFieldValue {
     Electric,
     Magnetic,
     Epsilon,

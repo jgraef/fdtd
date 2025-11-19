@@ -1,14 +1,22 @@
 use std::{
     marker::PhantomData,
+    ops::{
+        Range,
+        RangeBounds,
+    },
     sync::Arc,
 };
 
 use bytemuck::Pod;
 use parking_lot::Mutex;
 
+use crate::util::normalize_index_bounds;
+
 pub fn unpadded_buffer_size<T>(num_elements: usize) -> u64 {
     (std::mem::size_of::<T>() * num_elements) as u64
 }
+
+pub const BUFFER_COPY_ALIGN_MASK: u64 = wgpu::COPY_BUFFER_ALIGNMENT - 1;
 
 pub fn pad_buffer_size_for_copy(unpadded_size: u64) -> u64 {
     // https://github.com/gfx-rs/wgpu/blob/836c97056fb2c32852d1d8f6f45fefba1d1d6d26/wgpu/src/util/device.rs#L52
@@ -17,8 +25,8 @@ pub fn pad_buffer_size_for_copy(unpadded_size: u64) -> u64 {
     // 2. buffer size must be greater than 0.
     // Therefore we round the value up to the nearest multiple, and ensure it's at
     // least COPY_BUFFER_ALIGNMENT.
-    const ALIGN_MASK: u64 = wgpu::COPY_BUFFER_ALIGNMENT - 1;
-    ((unpadded_size + ALIGN_MASK) & !ALIGN_MASK).max(wgpu::COPY_BUFFER_ALIGNMENT)
+    ((unpadded_size + BUFFER_COPY_ALIGN_MASK) & !BUFFER_COPY_ALIGN_MASK)
+        .max(wgpu::COPY_BUFFER_ALIGNMENT)
 }
 
 pub fn buffer_usage_needs_padding(usage: wgpu::BufferUsages) -> bool {
@@ -30,6 +38,10 @@ pub fn buffer_usage_needs_padding(usage: wgpu::BufferUsages) -> bool {
     //
     // [1]: https://github.com/gfx-rs/wgpu/blob/836c97056fb2c32852d1d8f6f45fefba1d1d6d26/wgpu/src/util/mod.rs#L166
     usage.intersects(wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC)
+}
+
+pub fn is_buffer_copy_aligned(index: u64) -> bool {
+    (index & BUFFER_COPY_ALIGN_MASK) == 0
 }
 
 #[derive(Clone, Debug)]
@@ -129,11 +141,33 @@ where
         &self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
+        range: impl RangeBounds<usize>,
         mut f: impl FnMut(&[T]) -> R,
     ) -> Result<R, wgpu::BufferAsyncError> {
+        let index_range = normalize_index_bounds(range, self.num_elements);
+
+        if index_range.is_empty() {
+            // that one is easy!
+            return Ok(f(&[]));
+        }
+
+        let offset_range = Range {
+            start: (std::mem::size_of::<T>() * index_range.start) as u64,
+            end: (std::mem::size_of::<T>() * index_range.end) as u64,
+        };
+
+        if !is_buffer_copy_aligned(offset_range.start) || !is_buffer_copy_aligned(offset_range.end)
+        {
+            todo!(
+                "start or end index not buffer aligned: index range: {index_range:?}; offset range: {offset_range:?}"
+            );
+        }
+
+        let staging_buffer_size = offset_range.end - offset_range.start;
+
         let staging = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("read_staging"),
-            size: self.padded_buffer_size,
+            size: staging_buffer_size,
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
@@ -142,14 +176,12 @@ where
             label: Some("fdtd/read"),
         });
 
-        // note: a general copy_from method on TypedArrayBuffer doesn't work, since the
-        // source offset might not always be aligned.
         command_encoder.copy_buffer_to_buffer(
             &self.buffer,
-            0,
+            offset_range.start,
             &staging,
             0,
-            self.padded_buffer_size,
+            staging_buffer_size,
         );
 
         let result_buf = Arc::new(Mutex::new(None));
@@ -174,8 +206,9 @@ where
         let result = result_buf.lock().take();
         result.expect("map_buffer_on_submit hasn't finished yet")?;
 
-        let mapped = staging.get_mapped_range(..self.unpadded_buffer_size);
+        let mapped = staging.get_mapped_range(..staging_buffer_size);
         let view: &[T] = bytemuck::cast_slice(mapped.as_ref());
+        assert_eq!(view.len(), index_range.end - index_range.start);
 
         let output = f(view);
 

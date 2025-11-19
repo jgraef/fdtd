@@ -1,6 +1,7 @@
 use std::ops::{
     Index,
     IndexMut,
+    Range,
     RangeBounds,
 };
 
@@ -13,6 +14,7 @@ use nalgebra::{
 use crate::util::{
     PointIter,
     iter_points,
+    normalize_point_bounds,
 };
 
 #[derive(Clone, Debug)]
@@ -227,6 +229,40 @@ impl Strider {
 
     fn is_inside(&self, point: &Point3<usize>) -> bool {
         point.x < self.size.x && point.y < self.size.y && point.z < self.size.z
+    }
+
+    pub fn to_contiguous_index_range(
+        &self,
+        range: impl RangeBounds<Point3<usize>>,
+    ) -> Result<Range<usize>, Range<usize>> {
+        // i think this works lol, but we should write some tests
+
+        let points = normalize_point_bounds(range, self.size);
+
+        let checked_dec = |x: Point3<usize>| {
+            Some(Point3::new(
+                x.x.checked_sub(1)?,
+                x.y.checked_sub(1)?,
+                x.z.checked_sub(1)?,
+            ))
+        };
+
+        let start_index = self.to_index_unchecked(&points.start);
+        let indices = Range {
+            start: start_index,
+            end: self.to_index_unchecked(&checked_dec(points.end).ok_or(start_index..start_index)?)
+                + 1,
+        };
+
+        let num_points = (points.end - points.start).product();
+        let num_indices = indices.end - indices.start;
+
+        if num_points == num_indices {
+            Ok(indices)
+        }
+        else {
+            Err(indices)
+        }
     }
 }
 

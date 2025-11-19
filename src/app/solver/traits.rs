@@ -49,7 +49,7 @@ pub trait SolverInstance {
     fn create_state(&self) -> Self::State;
     fn update(&self, state: &mut Self::State);
 
-    fn read_state<'a, R>(&'a self, state: &'a mut Self::State, reader: &'a R) -> R::Value<'a>
+    fn read_state<'a, R>(&'a self, state: &'a Self::State, reader: &'a R) -> R::Value<'a>
     where
         R: ReadState<Self>,
     {

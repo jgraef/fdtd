@@ -1,5 +1,6 @@
 use std::{
     convert::Infallible,
+    ops::Range,
     time::Duration,
 };
 
@@ -21,7 +22,9 @@ use crate::{
             StopCondition,
         },
         fdtd::{
+            AccessFieldRegion,
             FdtdSolverConfig,
+            FieldComponent,
             Resolution,
             lattice::Strider,
             util::{
@@ -32,13 +35,16 @@ use crate::{
             },
         },
         traits::{
+            ReadState,
             Solver,
             SolverInstance,
         },
     },
-    fdtd::WhichFieldValue,
     physics::material::MaterialDistribution,
-    util::wgpu::TypedArrayBuffer,
+    util::{
+        normalize_point_bounds,
+        wgpu::TypedArrayBuffer,
+    },
 };
 
 #[derive(Clone, Debug)]
@@ -276,45 +282,6 @@ impl FdtdWgpuSolverInstance {
         state.tick += 1;
         state.time += self.resolution.temporal;
     }
-
-    // todo: this is only temporary
-    pub(crate) fn field_values(
-        &self,
-        state: &FdtdWgpuSolverState,
-        which: WhichFieldValue,
-    ) -> Vec<(f64, f64)> {
-        let swap_buffer_index = SwapBufferIndex::from_tick(state.tick);
-
-        let field_buffers = &state.field_buffers[swap_buffer_index];
-        let buffer = match which {
-            WhichFieldValue::Electric => &field_buffers.e,
-            WhichFieldValue::Magnetic => &field_buffers.h,
-            WhichFieldValue::Epsilon => return vec![],
-        };
-
-        buffer
-            .read(&self.solver.device, &self.solver.queue, |view| {
-                view.iter()
-                    .enumerate()
-                    .filter_map(|(i, value)| {
-                        self.strider.from_index(i).map(|point| {
-                            let point = point
-                                .cast::<f64>()
-                                .coords
-                                .component_mul(&self.resolution.spatial);
-                            let value = value.value;
-                            let value = match which {
-                                WhichFieldValue::Electric => value.y,
-                                WhichFieldValue::Magnetic => value.z,
-                                WhichFieldValue::Epsilon => unreachable!(),
-                            };
-                            (point.x, value as f64)
-                        })
-                    })
-                    .collect()
-            })
-            .unwrap()
-    }
 }
 
 impl SolverInstance for FdtdWgpuSolverInstance {
@@ -455,6 +422,101 @@ impl FdtdWgpuSolverState {
         self.time
     }
 }
+
+impl ReadState<FdtdWgpuSolverInstance> for AccessFieldRegion {
+    type Value<'a>
+        = Result<WgpuFieldRegionIter, wgpu::BufferAsyncError>
+    where
+        Self: 'a,
+        FdtdWgpuSolverInstance: 'a;
+
+    fn read_state<'a>(
+        &'a self,
+        instance: &'a FdtdWgpuSolverInstance,
+        state: &'a FdtdWgpuSolverState,
+    ) -> Result<WgpuFieldRegionIter, wgpu::BufferAsyncError> {
+        let range = normalize_point_bounds(self.range, *instance.strider.size());
+
+        let fetch_data = |index_range: Range<usize>, check_inside: Option<Range<Point3<usize>>>| {
+            let start_index = index_range.start;
+
+            let swap_buffer_index = SwapBufferIndex::from_tick(state.tick);
+
+            let field_buffers = &state.field_buffers[swap_buffer_index];
+            let buffer = match self.field_component {
+                FieldComponent::E => &field_buffers.e,
+                FieldComponent::H => &field_buffers.h,
+            };
+
+            // unfortunately we have to copy to a vec and can't return something that holds
+            // the buffer view. this is because we would need to store a borrow
+            // to something that is also in that struct, requiring a self-referential
+            // struct. we could use a crate for this though.
+            let data = buffer.read(
+                &instance.solver.device,
+                &instance.solver.queue,
+                index_range,
+                |view| view.iter().map(|data| data.value).collect::<Vec<_>>(),
+            )?;
+
+            Ok(WgpuFieldRegionIter {
+                strider: instance.strider,
+                start_index,
+                data: data.into_iter().enumerate(),
+                check_inside,
+            })
+        };
+
+        match instance.strider.to_contiguous_index_range(range.clone()) {
+            Ok(index_range) => fetch_data(index_range, Some(range)),
+            Err(index_range) => {
+                // todo: run a compute shader that projects the selected region into a first
+                // staging buffer, then copy to the second staging buffer like in the contiguous
+                // case. we could also skip the projection compute shader if the
+                // holes are small.
+
+                // for now we'll just fetch the whole range and ignore points that lie outside
+                fetch_data(index_range, None)
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct WgpuFieldRegionIter {
+    strider: Strider,
+    start_index: usize,
+    data: std::iter::Enumerate<std::vec::IntoIter<Vector3<f32>>>,
+    check_inside: Option<Range<Point3<usize>>>,
+}
+
+impl Iterator for WgpuFieldRegionIter {
+    type Item = (Point3<usize>, Vector3<f32>);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            let (region_index, data) = self.data.next()?;
+            let point = self
+                .strider
+                .from_index(region_index + self.start_index)
+                .unwrap();
+
+            if self
+                .check_inside
+                .as_ref()
+                .is_none_or(|check_against| check_against.contains(&point))
+            {
+                return Some((point, data));
+            }
+        }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.data.size_hint()
+    }
+}
+
+impl ExactSizeIterator for WgpuFieldRegionIter {}
 
 #[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]
 #[repr(C)]
