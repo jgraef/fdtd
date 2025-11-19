@@ -18,6 +18,10 @@ pub fn unpadded_buffer_size<T>(num_elements: usize) -> u64 {
 
 pub const BUFFER_COPY_ALIGN_MASK: u64 = wgpu::COPY_BUFFER_ALIGNMENT - 1;
 
+pub fn align_copy_start_offset(offset: u64) -> u64 {
+    offset & !BUFFER_COPY_ALIGN_MASK
+}
+
 pub fn pad_buffer_size_for_copy(unpadded_size: u64) -> u64 {
     // https://github.com/gfx-rs/wgpu/blob/836c97056fb2c32852d1d8f6f45fefba1d1d6d26/wgpu/src/util/device.rs#L52
     // Valid vulkan usage is
@@ -151,23 +155,11 @@ where
             return Ok(f(&[]));
         }
 
-        let offset_range = Range {
-            start: (std::mem::size_of::<T>() * index_range.start) as u64,
-            end: (std::mem::size_of::<T>() * index_range.end) as u64,
-        };
-
-        if !is_buffer_copy_aligned(offset_range.start) || !is_buffer_copy_aligned(offset_range.end)
-        {
-            todo!(
-                "start or end index not buffer aligned: index range: {index_range:?}; offset range: {offset_range:?}"
-            );
-        }
-
-        let staging_buffer_size = offset_range.end - offset_range.start;
+        let copy_alignment = CopyAlignment::from_typed_source_range::<T>(index_range.clone());
 
         let staging = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("read_staging"),
-            size: staging_buffer_size,
+            size: copy_alignment.copy_size,
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
@@ -178,10 +170,10 @@ where
 
         command_encoder.copy_buffer_to_buffer(
             &self.buffer,
-            offset_range.start,
+            copy_alignment.copy_source_start,
             &staging,
             0,
-            staging_buffer_size,
+            copy_alignment.copy_size,
         );
 
         let result_buf = Arc::new(Mutex::new(None));
@@ -206,7 +198,7 @@ where
         let result = result_buf.lock().take();
         result.expect("map_buffer_on_submit hasn't finished yet")?;
 
-        let mapped = staging.get_mapped_range(..staging_buffer_size);
+        let mapped = staging.get_mapped_range(copy_alignment.destination_range);
         let view: &[T] = bytemuck::cast_slice(mapped.as_ref());
         assert_eq!(view.len(), index_range.end - index_range.start);
 
@@ -216,5 +208,45 @@ where
         staging.unmap();
 
         Ok(output)
+    }
+}
+
+pub struct CopyAlignment {
+    pub copy_source_start: u64,
+    pub copy_size: u64,
+    pub destination_range: Range<u64>,
+}
+
+impl CopyAlignment {
+    pub fn from_typed_source_range<T>(index_range: Range<usize>) -> Self {
+        let unaligned_copy_source = Range {
+            start: (std::mem::size_of::<T>() * index_range.start) as u64,
+            end: (std::mem::size_of::<T>() * index_range.end) as u64,
+        };
+        Self::from_unaligned_source(unaligned_copy_source)
+    }
+
+    pub fn from_unaligned_source(unaligned_copy_source: Range<u64>) -> Self {
+        //let unaligned_copy_size = unaligned_copy_source_end -
+        // unaligned_copy_source_start;
+
+        let aligned_copy_source_start = align_copy_start_offset(unaligned_copy_source.start);
+        let aligned_copy_size =
+            pad_buffer_size_for_copy(unaligned_copy_source.end - aligned_copy_source_start);
+
+        let aligned_copy_destination_start =
+            unaligned_copy_source.start - aligned_copy_source_start;
+        //let aligned_copy_destination_end = aligned_copy_destination_start +
+        // unaligned_copy_size;
+        let aligned_copy_destination_end = unaligned_copy_source.end - aligned_copy_source_start;
+
+        Self {
+            copy_source_start: aligned_copy_source_start,
+            copy_size: aligned_copy_size,
+            destination_range: Range {
+                start: aligned_copy_destination_start,
+                end: aligned_copy_destination_end,
+            },
+        }
     }
 }
