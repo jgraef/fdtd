@@ -10,7 +10,10 @@ use nalgebra::{
     Vector4,
 };
 
-use crate::util::iter_points;
+use crate::util::{
+    PointIter,
+    iter_points,
+};
 
 #[derive(Clone, Debug)]
 pub struct Lattice<T> {
@@ -171,18 +174,41 @@ impl Strider {
         self.strides.w
     }
 
-    pub fn iter(
-        &self,
-        range: impl RangeBounds<Point3<usize>>,
-    ) -> impl Iterator<Item = (usize, Point3<usize>)> + 'static {
-        let this = *self;
-        iter_points(range, self.size).map(move |point| (this.to_index_unchecked(&point), point))
+    pub fn iter(&self, range: impl RangeBounds<Point3<usize>>) -> StriderPointIter {
+        StriderPointIter {
+            points: iter_points(range, self.size),
+            strider: *self,
+        }
     }
 
     fn is_inside(&self, point: &Point3<usize>) -> bool {
         point.x < self.size.x && point.y < self.size.y && point.z < self.size.z
     }
 }
+
+#[derive(Clone, Copy, Debug)]
+pub struct StriderPointIter {
+    points: PointIter,
+    strider: Strider,
+}
+
+impl Iterator for StriderPointIter {
+    type Item = (usize, Point3<usize>);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let point = self.points.next()?;
+        let index = self.strider.to_index_unchecked(&point);
+        Some((index, point))
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.points.size_hint()
+    }
+}
+
+// the where bound is just so we get a compiler error if PointIter happens to be
+// not an ExactSizeIterator anymore.
+impl ExactSizeIterator for StriderPointIter where PointIter: ExactSizeIterator {}
 
 pub fn strides_for_size(size: &Vector3<usize>) -> Vector4<usize> {
     let mut strides = Vector4::zeros();

@@ -73,7 +73,7 @@ impl SolverRunner {
     ) {
         match &common_config.parallelization {
             None => run_fdtd_with_solver(scene, common_config, fdtd_config, &FdtdCpuSolver),
-            Some(Parallelization::MultiThreaded) => {
+            Some(Parallelization::MultiThreaded { num_threads: _ }) => {
                 /*run_fdtd_with_solver(
                     scene,
                     common_config,

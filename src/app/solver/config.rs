@@ -94,7 +94,7 @@ pub trait EvaluateStopCondition: SolverInstance {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Parallelization {
-    MultiThreaded,
+    MultiThreaded { num_threads: Option<usize> },
     Wgpu,
 }
 

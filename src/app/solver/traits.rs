@@ -44,22 +44,32 @@ pub trait Solver {
 
 pub trait SolverInstance {
     type State;
-    type Point;
+    type Point: 'static;
 
     fn create_state(&self) -> Self::State;
     fn update(&self, state: &mut Self::State);
 
-    // todo: accessors for field values
+    fn read_state<'a, R>(&'a self, state: &'a mut Self::State, reader: &'a R) -> R::Iter<'a>
+    where
+        R: ReadState<Self>,
+    {
+        reader.read_state(self, state)
+    }
+
     // todo: needs methods for converting from/to solver coordinates
 }
 
-pub trait Observer<I>
+pub trait ReadState<I>
 where
-    I: SolverInstance,
+    I: SolverInstance + ?Sized,
 {
-    type Output;
+    type Value: 'static;
+    type Iter<'a>: Iterator<Item = (I::Point, &'a Self::Value)>
+    where
+        Self: 'a,
+        I: 'a;
 
-    fn observe(&self, instance: &I, state: &I::State) -> Self::Output;
+    fn read_state<'a>(&'a self, instance: &'a I, state: &'a I::State) -> Self::Iter<'a>;
 }
 
 #[derive(Clone, Copy, Debug)]

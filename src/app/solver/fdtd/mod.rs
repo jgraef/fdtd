@@ -5,7 +5,15 @@ pub(crate) mod legacy;
 mod util;
 pub mod wgpu;
 
-use nalgebra::Vector3;
+use std::ops::{
+    Bound,
+    RangeBounds,
+};
+
+use nalgebra::{
+    Point3,
+    Vector3,
+};
 use serde::{
     Deserialize,
     Serialize,
@@ -91,4 +99,25 @@ impl Resolution {
         );
         Self { spatial, temporal }
     }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct ReadRegionState {
+    pub(super) range: (Bound<Point3<usize>>, Bound<Point3<usize>>),
+    pub(super) field_component: FieldComponent,
+}
+
+impl ReadRegionState {
+    pub fn new(range: impl RangeBounds<Point3<usize>>, field_component: FieldComponent) -> Self {
+        Self {
+            range: (range.start_bound().cloned(), range.end_bound().cloned()),
+            field_component,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum FieldComponent {
+    E,
+    H,
 }
