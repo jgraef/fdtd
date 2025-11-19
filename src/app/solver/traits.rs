@@ -1,45 +1,44 @@
-use std::time::Duration;
+use crate::physics::material::Material;
 
-use crate::{
-    app::solver::config::{
-        EvaluateStopCondition,
-        StopCondition,
-    },
-    physics::material::MaterialDistribution,
-};
-
-pub trait Solver {
+pub trait SolverBackend {
+    // todo: this should be a type parameter on the trait, no?
     type Config;
+
     type Point;
+
     type Instance: SolverInstance<Point = Self::Point>;
+
     type Error: std::error::Error;
 
-    fn create_instance<M>(
+    fn create_instance<D>(
         &self,
         config: &Self::Config,
-        material: M,
+        domain_description: D,
     ) -> Result<Self::Instance, Self::Error>
     where
-        M: MaterialDistribution<Self::Point>;
+        D: DomainDescription<Self::Point>;
 
     fn memory_required(&self, config: &Self::Config) -> Option<usize> {
         let _ = config;
         None
     }
+}
 
-    /// Convenience method to create instance and state
-    fn create_stateful_instance<M>(
-        &self,
-        config: &Self::Config,
-        material: M,
-    ) -> Result<StatefulInstance<Self::Instance>, Self::Error>
-    where
-        M: MaterialDistribution<Self::Point>,
-    {
-        let instance = self.create_instance(config, material)?;
-        let state = instance.create_state();
-        Ok(StatefulInstance { instance, state })
-    }
+// note: this was originally called `MaterialDistribution`, and could well be
+// still. But we might need to add other things that are not directly related to
+// the material, so we'll keep it named this. If it turns out we only need the
+// material properties, we can rename it again.
+//
+// we could also let create_instance return a builder object, which then has
+// methods on it:
+//  - fill_with(&mut self, impl FnMut(&P) -> Material) // similar to this trait
+//  - set(&mut self, point: &P, material: P) // set individual cells
+// this could also provide a good point to query required memory (although that
+// improvement it minimal). and in the future we could add other configuration
+// options. i think probably only the domain size needs to be known a priori to
+// allocate buffers.
+pub trait DomainDescription<P> {
+    fn material(&self, point: &P) -> Material;
 }
 
 pub trait SolverInstance {
@@ -49,6 +48,9 @@ pub trait SolverInstance {
     fn create_state(&self) -> Self::State;
     fn update(&self, state: &mut Self::State);
 
+    // note: `read/write_state` are way too general. rather make traits to
+    // read/write field values, but we would need to know what exact usage pattern
+    // we have for this (i.e.. how we project data out of the simulation domain).
     fn read_state<'a, R>(&'a self, state: &'a Self::State, reader: &'a R) -> R::Value<'a>
     where
         R: ReadState<Self>,
@@ -88,36 +90,4 @@ where
         I: 'a;
 
     fn write_state<'a>(&'a self, instance: &'a I, state: &'a mut I::State) -> Self::Value<'a>;
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct StatefulInstance<I>
-where
-    I: SolverInstance,
-{
-    pub instance: I,
-    pub state: I::State,
-}
-
-impl<I> StatefulInstance<I>
-where
-    I: SolverInstance,
-{
-    pub fn update(&mut self) {
-        self.instance.update(&mut self.state);
-    }
-}
-
-impl<I> StatefulInstance<I>
-where
-    I: SolverInstance + EvaluateStopCondition,
-{
-    pub fn evaluate_stop_condition(
-        &self,
-        stop_condition: &StopCondition,
-        time_elapsed: Duration,
-    ) -> bool {
-        self.instance
-            .evaluate_stop_condition(&self.state, stop_condition, time_elapsed)
-    }
 }

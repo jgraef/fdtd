@@ -48,7 +48,8 @@ use crate::{
             wgpu,
         },
         traits::{
-            Solver,
+            DomainDescription,
+            SolverBackend,
             SolverInstance,
         },
     },
@@ -269,17 +270,10 @@ impl CpuOrGpu {
         device: &::wgpu::Device,
         queue: &::wgpu::Queue,
     ) -> Self {
-        let solver = wgpu::FdtdWgpuSolver::new(device, queue);
+        let solver = wgpu::FdtdWgpuBackend::new(device, queue);
 
         let instance = solver
-            .create_instance(&config, |x: &Point3<usize>| {
-                let x = x.cast::<f32>();
-                let mut material = Material::VACUUM;
-                if x.x >= 440.0 && x.x <= 460.0 {
-                    material.relative_permittivity = 3.9;
-                }
-                material
-            })
+            .create_instance(&config, TestDomainDescription)
             .unwrap();
         // note: source hardcoded in shader
 
@@ -382,4 +376,17 @@ enum WhichFieldValue {
     Electric,
     Magnetic,
     Epsilon,
+}
+
+struct TestDomainDescription;
+
+impl DomainDescription<Point3<usize>> for TestDomainDescription {
+    fn material(&self, point: &Point3<usize>) -> Material {
+        let point = point.cast::<f32>();
+        let mut material = Material::VACUUM;
+        if point.x >= 440.0 && point.x <= 460.0 {
+            material.relative_permittivity = 3.9;
+        }
+        material
+    }
 }

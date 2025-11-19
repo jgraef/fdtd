@@ -35,12 +35,12 @@ use crate::{
             },
         },
         traits::{
+            DomainDescription,
             ReadState,
-            Solver,
+            SolverBackend,
             SolverInstance,
         },
     },
-    physics::material::MaterialDistribution,
     util::{
         normalize_point_bounds,
         wgpu::TypedArrayBuffer,
@@ -48,7 +48,7 @@ use crate::{
 };
 
 #[derive(Clone, Debug)]
-pub struct FdtdWgpuSolver {
+pub struct FdtdWgpuBackend {
     device: wgpu::Device,
     queue: wgpu::Queue,
     limits: ComputeLimits,
@@ -57,7 +57,7 @@ pub struct FdtdWgpuSolver {
     pipeline_layout: wgpu::PipelineLayout,
 }
 
-impl FdtdWgpuSolver {
+impl FdtdWgpuBackend {
     pub fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
         let limits = ComputeLimits::from_limits(&device.limits());
 
@@ -103,27 +103,31 @@ impl FdtdWgpuSolver {
     }
 }
 
-impl Solver for FdtdWgpuSolver {
+impl SolverBackend for FdtdWgpuBackend {
     type Config = FdtdSolverConfig;
     type Point = Point3<usize>;
     type Instance = FdtdWgpuSolverInstance;
     type Error = Infallible;
 
-    fn create_instance<M>(
+    fn create_instance<D>(
         &self,
         config: &Self::Config,
-        material: M,
+        domain_description: D,
     ) -> Result<Self::Instance, Self::Error>
     where
-        M: MaterialDistribution<Self::Point>,
+        D: DomainDescription<Self::Point>,
     {
-        Ok(FdtdWgpuSolverInstance::new(self, config, material))
+        Ok(FdtdWgpuSolverInstance::new(
+            self,
+            config,
+            domain_description,
+        ))
     }
 }
 
 #[derive(Clone, Debug)]
 pub struct FdtdWgpuSolverInstance {
-    solver: FdtdWgpuSolver,
+    backend: FdtdWgpuBackend,
     resolution: Resolution,
     strider: Strider,
     config_buffer: wgpu::Buffer,
@@ -137,9 +141,9 @@ pub struct FdtdWgpuSolverInstance {
 
 impl FdtdWgpuSolverInstance {
     fn new(
-        solver: &FdtdWgpuSolver,
+        backend: &FdtdWgpuBackend,
         config: &FdtdSolverConfig,
-        material: impl MaterialDistribution<Point3<usize>>,
+        domain_description: impl DomainDescription<Point3<usize>>,
     ) -> Self {
         let strider = config.strider();
         let num_cells = strider.len();
@@ -147,7 +151,7 @@ impl FdtdWgpuSolverInstance {
 
         let config_data = ConfigData::new(&strider, &config.resolution, 0.0);
 
-        let config_buffer = solver
+        let config_buffer = backend
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("fdtd/uniform"),
@@ -156,7 +160,7 @@ impl FdtdWgpuSolverInstance {
             });
 
         let material_buffer = TypedArrayBuffer::from_fn(
-            &solver.device,
+            &backend.device,
             "fdtd/material",
             num_cells,
             wgpu::BufferUsages::STORAGE,
@@ -167,7 +171,7 @@ impl FdtdWgpuSolverInstance {
                         UpdateCoefficients::new(
                             &config.resolution,
                             &config.physical_constants,
-                            &material.at(&point),
+                            &domain_description.material(&point),
                         )
                     })
                     .unwrap_or_default()
@@ -175,9 +179,9 @@ impl FdtdWgpuSolverInstance {
             },
         );
 
-        let workgroup_size = solver.limits.work_group_size_for(num_cells);
+        let workgroup_size = backend.limits.work_group_size_for(num_cells);
 
-        let dispatches = solver
+        let dispatches = backend
             .limits
             .divide_work_into_dispatches(num_cells, &workgroup_size)
             .collect();
@@ -190,12 +194,12 @@ impl FdtdWgpuSolverInstance {
             ("workgroup_size_z", workgroup_size.z.into()),
         ];
         let create_pipeline = |label, entrypoint| {
-            solver
+            backend
                 .device
                 .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                     label: Some(label),
-                    layout: Some(&solver.pipeline_layout),
-                    module: &solver.shader_module,
+                    layout: Some(&backend.pipeline_layout),
+                    module: &backend.shader_module,
                     entry_point: Some(entrypoint),
                     compilation_options: wgpu::PipelineCompilationOptions {
                         constants: &shader_constants,
@@ -209,7 +213,7 @@ impl FdtdWgpuSolverInstance {
         let update_h_pipeline = create_pipeline("fdtd/update/h", "update_h");
 
         Self {
-            solver: solver.clone(),
+            backend: backend.clone(),
             resolution: config.resolution,
             strider,
             config_buffer,
@@ -227,12 +231,12 @@ impl FdtdWgpuSolverInstance {
         // update time
         // todo: would be nice if we could combine this with the command encoder
         let config_data = ConfigData::new(&self.strider, &self.resolution, state.time as f32);
-        self.solver
+        self.backend
             .queue
             .write_buffer(&self.config_buffer, 0, bytemuck::bytes_of(&config_data));
 
         let mut command_encoder =
-            self.solver
+            self.backend
                 .device
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                     label: Some("fdtd/update"),
@@ -270,8 +274,8 @@ impl FdtdWgpuSolverInstance {
             );
         }
 
-        let submission_index = self.solver.queue.submit([command_encoder.finish()]);
-        self.solver
+        let submission_index = self.backend.queue.submit([command_encoder.finish()]);
+        self.backend
             .device
             .poll(wgpu::PollType::Wait {
                 submission_index: Some(submission_index),
@@ -324,7 +328,7 @@ impl FdtdWgpuSolverState {
             SwapBuffer::from_fn(|_| {
                 let buffer = |label| {
                     TypedArrayBuffer::from_fn(
-                        &pipeline.solver.device,
+                        &pipeline.backend.device,
                         label,
                         pipeline.num_cells,
                         wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
@@ -341,11 +345,11 @@ impl FdtdWgpuSolverState {
         let update_h_field_bind_group = SwapBuffer::from_fn(|current| {
             let previous = current.other();
             pipeline
-                .solver
+                .backend
                 .device
                 .create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some(&format!("fdtd/bind_group/{current:?}")),
-                    layout: &pipeline.solver.bind_group_layout,
+                    layout: &pipeline.backend.bind_group_layout,
                     entries: &[
                         wgpu::BindGroupEntry {
                             binding: 0,
@@ -374,11 +378,11 @@ impl FdtdWgpuSolverState {
         let update_e_field_bind_group = SwapBuffer::from_fn(|current| {
             let previous = current.other();
             pipeline
-                .solver
+                .backend
                 .device
                 .create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some(&format!("fdtd/bind_group/{current:?}")),
-                    layout: &pipeline.solver.bind_group_layout,
+                    layout: &pipeline.backend.bind_group_layout,
                     entries: &[
                         wgpu::BindGroupEntry {
                             binding: 0,
@@ -453,8 +457,8 @@ impl ReadState<FdtdWgpuSolverInstance> for AccessFieldRegion {
             // to something that is also in that struct, requiring a self-referential
             // struct. we could use a crate for this though.
             let data = buffer.read(
-                &instance.solver.device,
-                &instance.solver.queue,
+                &instance.backend.device,
+                &instance.backend.queue,
                 index_range,
                 |view| view.iter().map(|data| data.value).collect::<Vec<_>>(),
             )?;

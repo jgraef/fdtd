@@ -45,36 +45,34 @@ use crate::{
             },
         },
         traits::{
+            DomainDescription,
             ReadState,
-            Solver,
+            SolverBackend,
             SolverInstance,
             WriteState,
         },
     },
-    physics::{
-        PhysicalConstants,
-        material::MaterialDistribution,
-    },
+    physics::PhysicalConstants,
 };
 
 #[derive(Clone, Copy, Debug, Default)]
-pub struct FdtdCpuSolver;
+pub struct FdtdCpuBackend;
 
-impl Solver for FdtdCpuSolver {
+impl SolverBackend for FdtdCpuBackend {
     type Config = FdtdSolverConfig;
     type Point = Point3<usize>;
     type Instance = FdtdCpuSolverInstance;
     type Error = Infallible;
 
-    fn create_instance<M>(
+    fn create_instance<D>(
         &self,
         config: &Self::Config,
-        material: M,
+        domain_description: D,
     ) -> Result<Self::Instance, Self::Error>
     where
-        M: MaterialDistribution<Self::Point>,
+        D: DomainDescription<Self::Point>,
     {
-        Ok(FdtdCpuSolverInstance::new(config, material))
+        Ok(FdtdCpuSolverInstance::new(config, domain_description))
     }
 
     fn memory_required(&self, config: &Self::Config) -> Option<usize> {
@@ -94,7 +92,10 @@ pub struct FdtdCpuSolverInstance {
 }
 
 impl FdtdCpuSolverInstance {
-    fn new(config: &FdtdSolverConfig, material: impl MaterialDistribution<Point3<usize>>) -> Self {
+    fn new(
+        config: &FdtdSolverConfig,
+        domain_description: impl DomainDescription<Point3<usize>>,
+    ) -> Self {
         let strider = config.strider();
         let update_coefficients = Lattice::from_fn(&strider, |_index, point| {
             point
@@ -102,7 +103,7 @@ impl FdtdCpuSolverInstance {
                     UpdateCoefficients::new(
                         &config.resolution,
                         &config.physical_constants,
-                        &material.at(&point),
+                        &domain_description.material(&point),
                     )
                 })
                 .unwrap_or_default()

@@ -25,31 +25,29 @@ use crate::{
             fdtd::{
                 self,
                 FdtdSolverConfig,
-                cpu::FdtdCpuSolver,
-                wgpu::FdtdWgpuSolver,
+                cpu::FdtdCpuBackend,
+                wgpu::FdtdWgpuBackend,
             },
             traits::{
-                Solver,
+                DomainDescription,
+                SolverBackend,
                 SolverInstance,
             },
         },
     },
-    physics::material::{
-        Material,
-        MaterialDistribution,
-    },
+    physics::material::Material,
     util::format_size,
 };
 
 #[derive(Debug)]
 pub struct SolverRunner {
-    fdtd_wgpu: FdtdWgpuSolver,
+    fdtd_wgpu: FdtdWgpuBackend,
 }
 
 impl SolverRunner {
     pub fn new(wgpu_context: &WgpuContext) -> Self {
         Self {
-            fdtd_wgpu: FdtdWgpuSolver::new(&wgpu_context.device, &wgpu_context.queue),
+            fdtd_wgpu: FdtdWgpuBackend::new(&wgpu_context.device, &wgpu_context.queue),
         }
     }
 
@@ -72,7 +70,7 @@ impl SolverRunner {
         fdtd_config: &SolverConfigFdtd,
     ) {
         match &common_config.parallelization {
-            None => run_fdtd_with_solver(scene, common_config, fdtd_config, &FdtdCpuSolver),
+            None => run_fdtd_with_backend(scene, common_config, fdtd_config, &FdtdCpuBackend),
             Some(Parallelization::MultiThreaded { num_threads: _ }) => {
                 /*run_fdtd_with_solver(
                     scene,
@@ -83,21 +81,21 @@ impl SolverRunner {
                 todo!();
             }
             Some(Parallelization::Wgpu) => {
-                run_fdtd_with_solver(scene, common_config, fdtd_config, &self.fdtd_wgpu)
+                run_fdtd_with_backend(scene, common_config, fdtd_config, &self.fdtd_wgpu)
             }
         }
     }
 }
 
-fn run_fdtd_with_solver<S>(
+fn run_fdtd_with_backend<B>(
     scene: &mut Scene,
     common_config: &SolverConfigCommon,
     fdtd_config: &SolverConfigFdtd,
-    solver: &S,
+    backend: &B,
 ) where
-    S: Solver<Config = FdtdSolverConfig, Point = Point3<usize>>,
-    S::Instance: EvaluateStopCondition + Send + 'static,
-    <S::Instance as SolverInstance>::State: Send + 'static,
+    B: SolverBackend<Config = FdtdSolverConfig, Point = Point3<usize>>,
+    B::Instance: EvaluateStopCondition + Send + 'static,
+    <B::Instance as SolverInstance>::State: Send + 'static,
 {
     let time_start = Instant::now();
 
@@ -136,7 +134,7 @@ fn run_fdtd_with_solver<S>(
         size: Vector3::new(100.0, 100.0, 0.0),
     };*/
 
-    let memory_required = solver
+    let memory_required = backend
         .memory_required(&config)
         .expect("fdtd always returns memory required");
     tracing::debug!(
@@ -155,9 +153,9 @@ fn run_fdtd_with_solver<S>(
         return;
     }
 
-    let materials = SceneMaterials::new(scene);
+    let materials = SceneDomainDescription::new(scene);
 
-    let instance = solver
+    let instance = backend
         .create_instance(&config, materials)
         .expect("fdtd solver instance creation never fails");
 
@@ -197,12 +195,12 @@ where
     });
 }
 
-struct SceneMaterials<'a, 'b> {
+struct SceneDomainDescription<'a, 'b> {
     scene: &'a Scene,
     materials: hecs::ViewBorrow<'a, &'b Material>,
 }
 
-impl<'a, 'b> SceneMaterials<'a, 'b> {
+impl<'a, 'b> SceneDomainDescription<'a, 'b> {
     pub fn new(scene: &'a Scene) -> Self {
         // access to the material properties
         let materials = scene.entities.view::<&Material>();
@@ -211,8 +209,8 @@ impl<'a, 'b> SceneMaterials<'a, 'b> {
     }
 }
 
-impl<'a, 'b> MaterialDistribution<Point3<usize>> for SceneMaterials<'a, 'b> {
-    fn at(&self, point: &Point3<usize>) -> Material {
+impl<'a, 'b> DomainDescription<Point3<usize>> for SceneDomainDescription<'a, 'b> {
+    fn material(&self, point: &Point3<usize>) -> Material {
         // todo: map back to proper world coordinates
         let point = point.cast::<f32>();
 
