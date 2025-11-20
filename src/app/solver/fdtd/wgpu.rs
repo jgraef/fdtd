@@ -488,7 +488,7 @@ impl<'a> FieldView<Point3<usize>> for WgpuFieldView<'a> {
             strider: self.strider,
             start_index: self.start_index,
             view_index: 0,
-            view: self.view.clone(),
+            view: &self.view,
             check_inside: self.check_inside.clone(),
         }
     }
@@ -499,7 +499,7 @@ pub struct WgpuFieldIter<'a> {
     strider: &'a Strider,
     start_index: usize,
     view_index: usize,
-    view: TypedArrayBufferReadView<'a, Cell>,
+    view: &'a TypedArrayBufferReadView<'a, Cell>,
     check_inside: Option<Range<Point3<usize>>>,
 }
 

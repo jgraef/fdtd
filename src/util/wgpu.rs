@@ -406,7 +406,11 @@ impl TypedArrayBufferInner {
     }
 }
 
-#[derive(Clone, Debug)]
+// note: don't make this Clone. While it would be nice to have, the Drop impl
+// then needs to take into account if there are more outstanding mapped view,
+// e.g. by adding a reference count. At this point the user can just Arc the
+// whole view.
+#[derive(Debug)]
 pub struct TypedArrayBufferReadView<'a, T> {
     inner: Option<TypedBufferReadViewInner>,
     _phantom: PhantomData<&'a [T]>,
@@ -506,7 +510,7 @@ impl<'a, T> Drop for TypedArrayBufferReadView<'a, T> {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 struct TypedBufferReadViewInner {
     alignment: StagingBufferAlignment,
     staging_buffer: wgpu::Buffer,
