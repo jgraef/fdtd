@@ -472,7 +472,7 @@ impl<'a> FieldView<Point3<usize>> for WgpuFieldView<'a> {
         let check_passed = self
             .check_inside
             .as_ref()
-            .is_none_or(|check_against| check_against.contains(&point));
+            .is_none_or(|check_against| check_against.contains(point));
 
         check_passed.then(|| self.view[view_index].value.cast())
     }

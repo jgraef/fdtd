@@ -348,7 +348,7 @@ impl<'a> FieldView<Point3<usize>> for CpuFieldView<'a> {
 
     fn at(&self, point: &Point3<usize>) -> Option<Vector3<f64>> {
         if self.range.contains(point) {
-            let cell = self.lattice.get_point(&self.strider, point)?;
+            let cell = self.lattice.get_point(self.strider, point)?;
             Some(cell[self.swap_buffer_index].get_field_component(self.field_component))
         }
         else {
@@ -359,7 +359,7 @@ impl<'a> FieldView<Point3<usize>> for CpuFieldView<'a> {
     fn iter<'b>(&'b self) -> Self::Iter<'b> {
         CpuFieldIter {
             field_component: self.field_component,
-            lattice_iter: self.lattice.iter(&self.strider, self.range.clone()),
+            lattice_iter: self.lattice.iter(self.strider, self.range.clone()),
             swap_buffer_index: self.swap_buffer_index,
         }
     }

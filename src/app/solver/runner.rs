@@ -336,9 +336,6 @@ impl Observers {
                     field_component: observer.field_component,
                 });
             }
-
-            // for now only one
-            break;
         }
 
         // apply deferred commands
