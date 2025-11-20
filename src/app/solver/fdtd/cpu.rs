@@ -50,6 +50,7 @@ use crate::{
             ReadState,
             SolverBackend,
             SolverInstance,
+            Time,
             WriteState,
         },
     },
@@ -291,6 +292,16 @@ impl FdtdCpuSolverState {
     }
 }
 
+impl Time for FdtdCpuSolverState {
+    fn tick(&self) -> usize {
+        self.tick
+    }
+
+    fn time(&self) -> f64 {
+        self.time
+    }
+}
+
 impl ReadState<FdtdCpuSolverInstance> for AccessFieldRegion {
     type Value<'a>
         = CpuFieldRegionIter<'a>
@@ -337,14 +348,14 @@ pub struct CpuFieldRegionIter<'a> {
 }
 
 impl<'a> Iterator for CpuFieldRegionIter<'a> {
-    type Item = (Point3<usize>, &'a Vector3<f64>);
+    type Item = (Point3<usize>, Vector3<f64>);
 
     fn next(&mut self) -> Option<Self::Item> {
         let (_index, point, data) = self.lattice_iter.next()?;
         let data = &data[self.swap_buffer_index];
         let value = match self.field_component {
-            FieldComponent::E => &data.e,
-            FieldComponent::H => &data.h,
+            FieldComponent::E => data.e,
+            FieldComponent::H => data.h,
         };
         Some((point, value))
     }

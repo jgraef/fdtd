@@ -1,7 +1,8 @@
 pub mod boundary_condition;
 pub mod cpu;
 mod lattice;
-pub(crate) mod legacy;
+mod pml;
+pub mod source;
 mod util;
 pub mod wgpu;
 

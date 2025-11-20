@@ -4,6 +4,7 @@
 mod executor;
 
 use std::{
+    fmt::Debug,
     path::PathBuf,
     time::Duration,
 };
@@ -25,35 +26,36 @@ use egui_plot::{
 };
 use image::RgbaImage;
 use nalgebra::{
-    Isometry3,
     Point3,
-    UnitQuaternion,
     Vector3,
 };
 
 use crate::{
     app::solver::{
         fdtd::{
-            self,
             AccessFieldRegion,
             FdtdSolverConfig,
             FieldComponent,
             Resolution,
             SourceValues,
-            legacy::{
-                Simulation,
-                estimate_memory_usage,
-                geometry::Block,
-                source::{
-                    GaussianPulse,
-                    Source,
-                },
+            cpu::{
+                FdtdCpuBackend,
+                FdtdCpuSolverInstance,
+                FdtdCpuSolverState,
+            },
+            source::GaussianPulse,
+            wgpu::{
+                FdtdWgpuBackend,
+                FdtdWgpuSolverInstance,
+                FdtdWgpuSolverState,
             },
         },
         traits::{
             DomainDescription,
+            ReadState,
             SolverBackend,
             SolverInstance,
+            Time,
         },
     },
     fdtd::executor::Executor,
@@ -61,14 +63,13 @@ use crate::{
         PhysicalConstants,
         material::Material,
     },
+    util::format_size,
 };
 
 #[derive(Debug, clap::Parser)]
 pub struct Args {
     #[clap(long)]
     wgpu: bool,
-    #[clap(long)]
-    cpu_legacy: bool,
 }
 
 impl Args {
@@ -109,17 +110,14 @@ impl App {
             physical_constants: PhysicalConstants::REDUCED,
             size: Vector3::new(500.0, 0.0, 0.0),
         };
-        tracing::debug!(?config, memory_usage = estimate_memory_usage(&config));
 
-        let (simulation, backend_label) = if args.wgpu {
-            (CpuOrGpu::new_gpu(&config, &device, &queue), "wgpu")
-        }
-        else if args.cpu_legacy {
-            (CpuOrGpu::new_cpu_legacy(&config), "cpu-legacy")
+        let simulation = if args.wgpu {
+            Box::new(Simulation::wgpu(&config, &device, &queue)) as Box<dyn ErasedSimulation>
         }
         else {
-            (CpuOrGpu::new_cpu(&config), "cpu")
+            Box::new(Simulation::cpu(&config)) as Box<dyn ErasedSimulation>
         };
+        let backend_label = simulation.backend_label();
 
         let ticks_per_second = 100;
         let executor = Executor::new(simulation, Duration::from_millis(1000 / ticks_per_second));
@@ -208,236 +206,157 @@ impl eframe::App for App {
                 ui.spacing();
                 ui.label(format!("Time: {:?} s", simulation.time()));
                 ui.spacing();
-                ui.label(format!("Total energy: {}", simulation.total_energy()));
-                ui.spacing();
                 ui.label(format!("Step time: {step_time} ms"));
             });
 
             let field_plot = Plot::new("E field").legend(Legend::default());
             field_plot.show(ui, |plot_ui| {
                 plot_ui.set_plot_bounds_y(-2.0..=2.0);
-                plot_ui.line(Line::new(
-                    "E",
-                    simulation.field_values(WhichFieldValue::Electric),
-                ));
-                plot_ui.line(Line::new(
-                    "H",
-                    simulation.field_values(WhichFieldValue::Magnetic),
-                ));
-                plot_ui.line(Line::new(
-                    "ε_r",
-                    simulation.field_values(WhichFieldValue::Epsilon),
-                ))
+                plot_ui.line(Line::new("E", simulation.field_values(FieldComponent::E)));
+                plot_ui.line(Line::new("H", simulation.field_values(FieldComponent::H)));
             });
         });
     }
 }
 
-fn gaussian_pulse() -> GaussianPulse {
-    GaussianPulse {
-        electric_current_density_amplitude: Vector3::y(),
-        magnetic_current_density_amplitude: Vector3::z(),
-        time: 20.0,
-        duration: 10.0,
-    }
+trait ErasedSimulation: Time + BackendLabel + Debug + Send + Sync + 'static {
+    fn update(&mut self);
+    fn field_values(&self, field_component: FieldComponent) -> PlotPoints<'static>;
+    fn reset(&mut self);
 }
 
-fn create_sources(time: f64) -> [(Point3<usize>, SourceValues); 1] {
-    let point = Point3::new(50, 0, 0);
-
-    let mut gaussian_pulse = gaussian_pulse();
-    let j_source = gaussian_pulse.electric_current_density(time, &point.cast());
-    let m_source = gaussian_pulse.magnetic_current_density(time, &point.cast());
-
-    [(point, SourceValues { j_source, m_source })]
+trait BackendLabel {
+    fn backend_label(&self) -> &'static str;
 }
 
 #[derive(Debug)]
-enum CpuOrGpu {
-    CpuLegacy {
-        simulation: Simulation,
-    },
-    Cpu {
-        instance: fdtd::cpu::FdtdCpuSolverInstance,
-        state: fdtd::cpu::FdtdCpuSolverState,
-    },
-    Gpu {
-        instance: fdtd::wgpu::FdtdWgpuSolverInstance,
-        state: fdtd::wgpu::FdtdWgpuSolverState,
-    },
+struct Simulation<I, S> {
+    instance: I,
+    state: S,
+    source: GaussianPulse,
 }
 
-impl CpuOrGpu {
-    pub fn new_cpu_legacy(config: &FdtdSolverConfig) -> Self {
-        let mut simulation = Simulation::new(&config);
+impl<I, S> Simulation<I, S>
+where
+    I: SolverInstance<Point = Point3<usize>, Source = SourceValues, State = S>,
+    S: Time,
+{
+    pub fn new<B>(backend: &B, config: &B::Config) -> Self
+    where
+        B: SolverBackend<Instance = I, Point = Point3<usize>>,
+        B::Config: Debug,
+    {
+        let memory_required = backend
+            .memory_required(config)
+            .map(|size| format_size(size).to_string())
+            .unwrap_or_else(|| "unknown".to_owned());
+        tracing::debug!(?config, memory_required,);
 
-        simulation.add_material(
-            Block {
-                transform: Isometry3::from_parts(
-                    Vector3::new(450.0, 0.0, 0.0).into(),
-                    UnitQuaternion::identity(),
-                ),
-                dimensions: Vector3::new(20.0, 0.0, 0.0),
-            },
-            Material {
-                relative_permittivity: 3.9,
-                ..Default::default()
-            },
-        );
-
-        simulation.add_source(Point3::new(50.0, 0.0, 0.0), gaussian_pulse());
-
-        Self::CpuLegacy { simulation }
-    }
-
-    pub fn new_cpu(config: &FdtdSolverConfig) -> Self {
-        let instance = fdtd::cpu::FdtdCpuBackend
-            .create_instance(&config, TestDomainDescription)
+        let instance = backend
+            .create_instance(config, TestDomainDescription)
             .unwrap();
+
         let state = instance.create_state();
-        Self::Cpu { instance, state }
-    }
 
-    pub fn new_gpu(
-        config: &FdtdSolverConfig,
-        device: &::wgpu::Device,
-        queue: &::wgpu::Queue,
-    ) -> Self {
-        let solver = fdtd::wgpu::FdtdWgpuBackend::new(device, queue);
-
-        let instance = solver
-            .create_instance(&config, TestDomainDescription)
-            .unwrap();
-        let state = instance.create_state();
-        Self::Gpu { instance, state }
-    }
-
-    pub fn step(&mut self) {
-        match self {
-            CpuOrGpu::CpuLegacy { simulation } => simulation.step(),
-            CpuOrGpu::Cpu { instance, state } => {
-                instance.update(state, create_sources(state.time()))
-            }
-            CpuOrGpu::Gpu { instance, state } => {
-                instance.update(state, create_sources(state.time()))
-            }
-        }
-    }
-
-    pub fn reset(&mut self) {
-        match self {
-            CpuOrGpu::CpuLegacy { simulation } => simulation.reset(),
-            CpuOrGpu::Cpu {
-                instance, state, ..
-            } => {
-                *state = instance.create_state();
-            }
-            CpuOrGpu::Gpu {
-                instance, state, ..
-            } => {
-                *state = instance.create_state();
-            }
-        }
-    }
-
-    pub fn tick(&self) -> usize {
-        match self {
-            CpuOrGpu::CpuLegacy { simulation } => simulation.tick(),
-            CpuOrGpu::Cpu { state, .. } => state.tick(),
-            CpuOrGpu::Gpu { state, .. } => state.tick(),
-        }
-    }
-
-    pub fn time(&self) -> f64 {
-        match self {
-            CpuOrGpu::CpuLegacy { simulation } => simulation.time(),
-            CpuOrGpu::Cpu { state, .. } => state.time(),
-            CpuOrGpu::Gpu { state, .. } => state.time(),
-        }
-    }
-
-    pub fn total_energy(&self) -> f64 {
-        match self {
-            CpuOrGpu::CpuLegacy { simulation } => simulation.total_energy(),
-            CpuOrGpu::Gpu { .. } | CpuOrGpu::Cpu { .. } => {
-                // todo
-                0.0
-            }
-        }
-    }
-
-    pub fn field_values(&self, which: WhichFieldValue) -> PlotPoints<'static> {
-        let x_correction = match which {
-            WhichFieldValue::Electric => 0.5,
-            WhichFieldValue::Magnetic => 0.0,
-            WhichFieldValue::Epsilon => 0.5,
+        let source = GaussianPulse {
+            time: 20.0,
+            duration: 10.0,
         };
 
-        match self {
-            CpuOrGpu::CpuLegacy { simulation } => {
-                let get_value = |cell: &fdtd::legacy::simulation::Cell, swap_buffer_index| {
-                    match which {
-                        WhichFieldValue::Electric => cell.electric_field(swap_buffer_index).y,
-                        WhichFieldValue::Magnetic => cell.magnetic_field(swap_buffer_index).z,
-                        WhichFieldValue::Epsilon => cell.material().relative_permittivity,
-                    }
-                };
-
-                PlotPoints::Owned(
-                    simulation
-                        .field_values(
-                            Point3::origin(),
-                            fdtd::cpu::Axis::X,
-                            x_correction,
-                            get_value,
-                        )
-                        .map(|(x, y)| PlotPoint::new(x, y))
-                        .collect::<Vec<_>>(),
-                )
-            }
-            CpuOrGpu::Cpu { instance, state } => {
-                let (field_component, component_index) = match which {
-                    WhichFieldValue::Electric => (FieldComponent::E, 1),
-                    WhichFieldValue::Magnetic => (FieldComponent::H, 2),
-                    WhichFieldValue::Epsilon => return PlotPoints::Owned(vec![]),
-                };
-
-                PlotPoints::Owned(
-                    instance
-                        .read_state(state, &AccessFieldRegion::new(.., field_component))
-                        .map(|(x, y)| {
-                            // note: casting x like this doesn't account for resolution and offset
-                            PlotPoint::new(x.x as f64, y[component_index] as f64)
-                        })
-                        .collect::<Vec<_>>(),
-                )
-            }
-            CpuOrGpu::Gpu { instance, state } => {
-                let (field_component, component_index) = match which {
-                    WhichFieldValue::Electric => (FieldComponent::E, 1),
-                    WhichFieldValue::Magnetic => (FieldComponent::H, 2),
-                    WhichFieldValue::Epsilon => return PlotPoints::Owned(vec![]),
-                };
-
-                PlotPoints::Owned(
-                    instance
-                        .read_state(state, &AccessFieldRegion::new(.., field_component))
-                        .map(|(x, y)| {
-                            // note: casting x like this doesn't account for resolution and offset
-                            PlotPoint::new(x.x as f64, y[component_index] as f64)
-                        })
-                        .collect::<Vec<_>>(),
-                )
-            }
+        Self {
+            instance,
+            state,
+            source,
         }
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum WhichFieldValue {
-    Electric,
-    Magnetic,
-    Epsilon,
+impl Simulation<FdtdWgpuSolverInstance, FdtdWgpuSolverState> {
+    pub fn wgpu(config: &FdtdSolverConfig, device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
+        let backend = FdtdWgpuBackend::new(device, queue);
+        Self::new(&backend, config)
+    }
+}
+
+impl Simulation<FdtdCpuSolverInstance, FdtdCpuSolverState> {
+    pub fn cpu(config: &FdtdSolverConfig) -> Self {
+        Self::new(&FdtdCpuBackend, config)
+    }
+}
+
+impl BackendLabel for Simulation<FdtdWgpuSolverInstance, FdtdWgpuSolverState> {
+    fn backend_label(&self) -> &'static str {
+        "wgpu"
+    }
+}
+
+impl BackendLabel for Simulation<FdtdCpuSolverInstance, FdtdCpuSolverState> {
+    fn backend_label(&self) -> &'static str {
+        "cpu"
+    }
+}
+
+impl<I, S> ErasedSimulation for Simulation<I, S>
+where
+    I: SolverInstance<Point = Point3<usize>, Source = SourceValues, State = S>
+        + Send
+        + Sync
+        + Debug
+        + 'static,
+    S: Time + Send + Sync + Debug + 'static,
+    AccessFieldRegion: ReadState<I>,
+    for<'a> <AccessFieldRegion as ReadState<I>>::Value<'a>:
+        IntoIterator<Item = (Point3<usize>, Vector3<f64>)>,
+    Self: BackendLabel,
+{
+    fn update(&mut self) {
+        let value = self.source.evaluate(self.state.time());
+        let sources = [(
+            Point3::new(50, 0, 0),
+            SourceValues {
+                j_source: Vector3::y() * value,
+                m_source: Vector3::z() * value,
+            },
+        )];
+
+        self.instance.update(&mut self.state, sources);
+    }
+
+    fn field_values(&self, field_component: FieldComponent) -> PlotPoints<'static> {
+        let component_index = match field_component {
+            FieldComponent::E => 1,
+            FieldComponent::H => 2,
+        };
+
+        PlotPoints::Owned(
+            self.instance
+                .read_state(&self.state, &AccessFieldRegion::new(.., field_component))
+                .into_iter()
+                .map(|(x, y)| {
+                    // note: casting x like this doesn't account for resolution and offset
+                    PlotPoint::new(x.x as f64, y[component_index] as f64)
+                })
+                .collect::<Vec<_>>(),
+        )
+    }
+
+    fn reset(&mut self) {
+        self.state = self.instance.create_state();
+    }
+}
+
+impl<I, S> Time for Simulation<I, S>
+where
+    I: SolverInstance<State = S>,
+    S: Time,
+{
+    fn time(&self) -> f64 {
+        self.state.time()
+    }
+
+    fn tick(&self) -> usize {
+        self.state.tick()
+    }
 }
 
 struct TestDomainDescription;

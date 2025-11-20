@@ -42,6 +42,7 @@ use crate::{
             ReadState,
             SolverBackend,
             SolverInstance,
+            Time,
         },
     },
     util::{
@@ -385,12 +386,14 @@ impl FdtdWgpuSolverState {
             time: 0.0,
         }
     }
+}
 
-    pub fn tick(&self) -> usize {
+impl Time for FdtdWgpuSolverState {
+    fn tick(&self) -> usize {
         self.tick
     }
 
-    pub fn time(&self) -> f64 {
+    fn time(&self) -> f64 {
         self.time
     }
 }
@@ -456,7 +459,7 @@ pub struct WgpuFieldRegionIter<'a> {
 }
 
 impl<'a> Iterator for WgpuFieldRegionIter<'a> {
-    type Item = (Point3<usize>, Vector3<f32>);
+    type Item = (Point3<usize>, Vector3<f64>);
 
     fn next(&mut self) -> Option<Self::Item> {
         while self.view_index < self.view.len() {
@@ -475,7 +478,7 @@ impl<'a> Iterator for WgpuFieldRegionIter<'a> {
             self.view_index += 1;
 
             if let Some(value) = value {
-                return Some((point, value));
+                return Some((point, value.cast()));
             }
         }
 

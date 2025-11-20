@@ -16,7 +16,7 @@ use parking_lot::{
     RwLockWriteGuard,
 };
 
-use crate::fdtd::CpuOrGpu;
+use crate::fdtd::ErasedSimulation;
 
 #[derive(Clone, Debug)]
 pub struct Executor {
@@ -25,7 +25,7 @@ pub struct Executor {
 }
 
 impl Executor {
-    pub fn new(simulation: CpuOrGpu, step_interval: Duration) -> Self {
+    pub fn new(simulation: Box<dyn ErasedSimulation>, step_interval: Duration) -> Self {
         let state = Arc::new(RwLock::new(State {
             simulation,
             running_state: None,
@@ -65,7 +65,10 @@ impl Executor {
         self.send_command(Command::Step);
     }
 
-    pub fn start(&self, on_update: Option<Box<dyn FnMut(&mut CpuOrGpu) + Send + Sync + 'static>>) {
+    pub fn start(
+        &self,
+        on_update: Option<Box<dyn FnMut(&mut dyn ErasedSimulation) + Send + Sync + 'static>>,
+    ) {
         self.send_command(Command::Start { on_update });
     }
 
@@ -81,7 +84,7 @@ impl Executor {
 
 #[derive(Debug)]
 struct State {
-    simulation: CpuOrGpu,
+    simulation: Box<dyn ErasedSimulation>,
     running_state: Option<RunningState>,
     step_interval: Duration,
     step_time: Duration,
@@ -91,12 +94,12 @@ struct State {
 struct RunningState {
     next_step: Instant,
     #[debug(ignore)]
-    on_update: Option<Box<dyn FnMut(&mut CpuOrGpu) + Send + Sync + 'static>>,
+    on_update: Option<Box<dyn FnMut(&mut dyn ErasedSimulation) + Send + Sync + 'static>>,
 }
 
 enum Command {
     Start {
-        on_update: Option<Box<dyn FnMut(&mut CpuOrGpu) + Send + Sync + 'static>>,
+        on_update: Option<Box<dyn FnMut(&mut dyn ErasedSimulation) + Send + Sync + 'static>>,
     },
     Stop,
     Step,
@@ -118,11 +121,11 @@ fn run_reactor(command_rx: mpsc::Receiver<Command>, state: Arc<RwLock<State>>) {
                         .expect("running state is None after upgrading the lock");
 
                     let t = Instant::now();
-                    state.simulation.step();
+                    state.simulation.update();
                     state.step_time = t.elapsed();
 
                     if let Some(on_update) = &mut running_state.on_update {
-                        on_update(&mut state.simulation);
+                        on_update(&mut *state.simulation);
                     }
 
                     next_step = now + state.step_interval;
@@ -170,8 +173,10 @@ fn run_reactor(command_rx: mpsc::Receiver<Command>, state: Arc<RwLock<State>>) {
                         }
                         Command::Stop => {}
                         Command::Step => {
-                            let mut state_guard = state.write();
-                            state_guard.simulation.step();
+                            let mut state = state.write();
+                            let t = Instant::now();
+                            state.simulation.update();
+                            state.step_time = t.elapsed();
                         }
                     }
                 }
@@ -191,8 +196,8 @@ impl<'a> ReadGuard<'a> {
         self.guard.running_state.is_some()
     }
 
-    pub fn simulation(&self) -> &CpuOrGpu {
-        &self.guard.simulation
+    pub fn simulation(&self) -> &dyn ErasedSimulation {
+        &*self.guard.simulation
     }
 
     pub fn step_time(&self) -> Duration {
@@ -205,7 +210,7 @@ pub struct WriteGuard<'a> {
 }
 
 impl<'a> WriteGuard<'a> {
-    pub fn simulation(&mut self) -> &mut CpuOrGpu {
-        &mut self.guard.simulation
+    pub fn simulation(&mut self) -> &mut dyn ErasedSimulation {
+        &mut *self.guard.simulation
     }
 }

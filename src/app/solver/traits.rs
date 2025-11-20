@@ -94,3 +94,8 @@ where
 
     fn write_state<'a>(&'a self, instance: &'a I, state: &'a mut I::State) -> Self::Value<'a>;
 }
+
+pub trait Time {
+    fn time(&self) -> f64;
+    fn tick(&self) -> usize;
+}
