@@ -198,18 +198,6 @@ where
         buffer
     }
 
-    #[deprecated]
-    pub fn read<R>(
-        &self,
-
-        queue: &wgpu::Queue,
-        range: impl RangeBounds<usize>,
-        mut f: impl FnMut(&[T]) -> R,
-    ) -> R {
-        let view = self.read_view(range, queue);
-        f(view.as_ref())
-    }
-
     pub fn read_view<'a>(
         &'a self,
         range: impl RangeBounds<usize>,

@@ -46,7 +46,10 @@ use crate::{
     },
     util::{
         normalize_point_bounds,
-        wgpu::TypedArrayBuffer,
+        wgpu::{
+            TypedArrayBuffer,
+            TypedArrayBufferReadView,
+        },
     },
 };
 
@@ -377,7 +380,7 @@ impl FdtdWgpuSolverState {
 
 impl ReadState<FdtdWgpuSolverInstance> for AccessFieldRegion {
     type Value<'a>
-        = WgpuFieldRegionIter
+        = WgpuFieldRegionIter<'a>
     where
         Self: 'a,
         FdtdWgpuSolverInstance: 'a;
@@ -386,7 +389,7 @@ impl ReadState<FdtdWgpuSolverInstance> for AccessFieldRegion {
         &'a self,
         instance: &'a FdtdWgpuSolverInstance,
         state: &'a FdtdWgpuSolverState,
-    ) -> WgpuFieldRegionIter {
+    ) -> WgpuFieldRegionIter<'a> {
         let range = normalize_point_bounds(self.range, *instance.strider.size());
 
         let fetch_data = |index_range: Range<usize>, check_inside: Option<Range<Point3<usize>>>| {
@@ -400,18 +403,13 @@ impl ReadState<FdtdWgpuSolverInstance> for AccessFieldRegion {
                 FieldComponent::H => &field_buffers.h,
             };
 
-            // unfortunately we have to copy to a vec and can't return something that holds
-            // the buffer view. this is because we would need to store a borrow
-            // to something that is also in that struct, requiring a self-referential
-            // struct. we could use a crate for this though.
-            let data = buffer.read(&instance.backend.queue, index_range, |view| {
-                view.iter().map(|data| data.value).collect::<Vec<_>>()
-            });
+            let view = buffer.read_view(index_range, &instance.backend.queue);
 
             WgpuFieldRegionIter {
                 strider: instance.strider,
                 start_index,
-                data: data.into_iter().enumerate(),
+                view_index: 0,
+                view,
                 check_inside,
             }
         };
@@ -432,40 +430,48 @@ impl ReadState<FdtdWgpuSolverInstance> for AccessFieldRegion {
 }
 
 #[derive(Debug)]
-pub struct WgpuFieldRegionIter {
+pub struct WgpuFieldRegionIter<'a> {
     strider: Strider,
     start_index: usize,
-    data: std::iter::Enumerate<std::vec::IntoIter<Vector3<f32>>>,
+    view_index: usize,
+    view: TypedArrayBufferReadView<'a, Cell>,
     check_inside: Option<Range<Point3<usize>>>,
 }
 
-impl Iterator for WgpuFieldRegionIter {
+impl<'a> Iterator for WgpuFieldRegionIter<'a> {
     type Item = (Point3<usize>, Vector3<f32>);
 
     fn next(&mut self) -> Option<Self::Item> {
-        loop {
-            let (region_index, data) = self.data.next()?;
+        while self.view_index < self.view.len() {
             let point = self
                 .strider
-                .from_index(region_index + self.start_index)
+                .from_index(self.view_index + self.start_index)
                 .unwrap();
 
-            if self
+            let check_passed = self
                 .check_inside
                 .as_ref()
-                .is_none_or(|check_against| check_against.contains(&point))
-            {
-                return Some((point, data));
+                .is_none_or(|check_against| check_against.contains(&point));
+
+            let value = check_passed.then(|| self.view[self.view_index].value);
+
+            self.view_index += 1;
+
+            if let Some(value) = value {
+                return Some((point, value));
             }
         }
+
+        None
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        self.data.size_hint()
+        let n = self.view.len() - self.view_index;
+        (n, Some(n))
     }
 }
 
-impl ExactSizeIterator for WgpuFieldRegionIter {}
+impl<'a> ExactSizeIterator for WgpuFieldRegionIter<'a> {}
 
 #[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]
 #[repr(C)]
