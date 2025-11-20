@@ -90,17 +90,16 @@ impl SolverRunner {
                     scene,
                     common_config,
                     fdtd_config,
-                    &FdtdCpuBackend::default(),
+                    &FdtdCpuBackend::single_threaded(),
                 )
             }
-            Some(Parallelization::MultiThreaded { num_threads: _ }) => {
-                /*run_fdtd_with_solver(
+            Some(Parallelization::MultiThreaded { num_threads }) => {
+                run_fdtd_with_backend(
                     scene,
                     common_config,
                     fdtd_config,
-                    &FdtdCpuSolver::multi_threaded(),
-                )*/
-                todo!();
+                    &FdtdCpuBackend::multi_threaded(*num_threads),
+                )
             }
             Some(Parallelization::Wgpu) => {
                 run_fdtd_with_backend(scene, common_config, fdtd_config, &self.fdtd_wgpu)

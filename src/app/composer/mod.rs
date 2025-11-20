@@ -344,7 +344,11 @@ impl ComposerState {
             };
 
             vec![
-                make_config("CPU", None),
+                make_config("CPU (single-threaded)", None),
+                make_config(
+                    "CPU (multi-threaded)",
+                    Some(Parallelization::MultiThreaded { num_threads: None }),
+                ),
                 make_config("GPU", Some(Parallelization::Wgpu)),
             ]
         };
