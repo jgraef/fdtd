@@ -47,6 +47,7 @@ use crate::{
     util::{
         normalize_point_bounds,
         wgpu::{
+            StagedTypedArrayBuffer,
             TypedArrayBuffer,
             TypedArrayBufferReadView,
         },
@@ -241,15 +242,27 @@ impl FdtdWgpuSolverInstance {
             .queue
             .write_buffer(&self.config_buffer, 0, bytemuck::bytes_of(&config_data));
 
-        // apply sources
-        //todo!();
+        // write source data
+
         // pretend data
         let sources: Vec<(Point3<usize>, SourceValues)> = vec![];
-        // reallocate source buffer if needed. if it is being allocated, use the
-        // constructor that fills it
-        for (point, source_value) in sources {
-            // todo
+
+        state.source_buffer.push(SourceData::default());
+        for (point, values) in &sources {
+            if let Some(index) = self.strider.to_index(point) {
+                state.source_buffer.push(SourceData::new(
+                    index as u32,
+                    values.j_source.cast(),
+                    values.m_source.cast(),
+                ));
+            }
         }
+        state
+            .source_buffer
+            .flush(&self.backend.queue, |new_buffer| {
+                state.update_bind_groups =
+                    UpdateBindGroups::new(&self, &state.field_buffers, new_buffer)
+            });
 
         let mut command_encoder =
             self.backend
@@ -331,7 +344,7 @@ impl EvaluateStopCondition for FdtdWgpuSolverInstance {
 #[derive(Debug)]
 pub struct FdtdWgpuSolverState {
     field_buffers: SwapBuffer<FieldBuffers>,
-    source_buffer: Option<TypedArrayBuffer<SourceData>>,
+    source_buffer: StagedTypedArrayBuffer<SourceData>,
     update_bind_groups: UpdateBindGroups,
     tick: usize,
     time: f64,
@@ -358,11 +371,18 @@ impl FdtdWgpuSolverState {
             })
         };
 
-        let update_bind_groups = UpdateBindGroups::new(instance, &field_buffers);
+        let source_buffer = StagedTypedArrayBuffer::with_capacity(
+            &instance.backend.device,
+            "fdtd/sources",
+            wgpu::BufferUsages::STORAGE,
+            32,
+        );
+        let update_bind_groups =
+            UpdateBindGroups::new(instance, &field_buffers, source_buffer.buffer.buffer().expect("source buffer should have a gpu buffer allocated because it is initialized with an non-zero initial capacity"));
 
         Self {
             field_buffers,
-            source_buffer: None,
+            source_buffer,
             update_bind_groups,
             tick: 0,
             time: 0.0,
@@ -560,7 +580,11 @@ struct UpdateBindGroups {
 }
 
 impl UpdateBindGroups {
-    fn new(instance: &FdtdWgpuSolverInstance, field_buffers: &SwapBuffer<FieldBuffers>) -> Self {
+    fn new(
+        instance: &FdtdWgpuSolverInstance,
+        field_buffers: &SwapBuffer<FieldBuffers>,
+        source_buffer: &wgpu::Buffer,
+    ) -> Self {
         // note: all the unwraps are okay, since we never allocate empty buffers.
 
         let update_h_field_bind_group = {

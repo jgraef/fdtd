@@ -62,7 +62,7 @@ use crate::{
             transform::Transform,
         },
     },
-    util::wgpu::TypedArrayBuffer,
+    util::wgpu::StagedTypedArrayBuffer,
 };
 
 /// Tag for entities that should be rendered
@@ -162,7 +162,7 @@ pub struct Renderer {
     /// This holds the handle to the GPU buffer for the instance data, a
     /// host staging buffer for the instance data, and the bind group for the
     /// GPU buffer.
-    instance_buffer: InstanceBuffer,
+    instance_buffer: StagedTypedArrayBuffer<InstanceData>,
 
     /// The bind group. This needs to be replace when the instance buffer grows.
     ///
@@ -396,7 +396,11 @@ impl Renderer {
             false,
         );
 
-        let instance_buffer = InstanceBuffer::new(&wgpu_context.device);
+        let instance_buffer = StagedTypedArrayBuffer::new(
+            &wgpu_context.device,
+            "instance buffer",
+            wgpu::BufferUsages::STORAGE,
+        );
 
         let texture_sampler = wgpu_context
             .device
@@ -492,7 +496,7 @@ impl Renderer {
 
         // this is the second time I have a bug with this. keep this assert!
         assert!(
-            self.instance_buffer.scratch.is_empty(),
+            self.instance_buffer.staging.is_empty(),
             "instance scratch buffer hasn't been cleared yet"
         );
 
@@ -536,7 +540,7 @@ impl Renderer {
 
         // send instance data to gpu
         self.instance_buffer
-            .upload(&self.wgpu_context.queue, |buffer| {
+            .flush(&self.wgpu_context.queue, |buffer| {
                 self.instance_bind_group = Some(create_instance_bind_group(
                     &self.wgpu_context.device,
                     &self.instance_bind_group_layout,
@@ -836,65 +840,6 @@ bitflags! {
         const SHOW_SOLID = 0b0010;
         const SHOW_WIREFRAME = 0b0100;
         const SHOW_OUTLINE = 0b1000;
-    }
-}
-
-#[derive(Debug)]
-struct InstanceBuffer {
-    buffer: TypedArrayBuffer<InstanceData>,
-    scratch: Vec<InstanceData>,
-}
-
-impl InstanceBuffer {
-    const INITIAL_CAPACITY: usize = 512;
-
-    fn new(device: &wgpu::Device) -> Self {
-        // note: allocate with non-zero initial capacity, so we actually get a buffer
-        // and can create a bind group
-        let buffer = TypedArrayBuffer::new(
-            device,
-            "instance buffer",
-            wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-        );
-
-        Self {
-            buffer,
-            scratch: vec![],
-        }
-    }
-
-    fn push(&mut self, item: InstanceData) {
-        self.scratch.push(item);
-    }
-
-    fn upload(&mut self, queue: &wgpu::Queue, mut on_reallocate: impl FnMut(&wgpu::Buffer)) {
-        if self.scratch.is_empty() {
-            // the below code works fine for an empty instance buffer, and it'll basically
-            // do nothing, but we can still exit early.
-            return;
-        }
-
-        let did_reallocate = self.buffer.reallocate_for_size(
-            self.scratch.len(),
-            queue,
-            Some(
-                |_old_view: Option<&[InstanceData]>,
-                 new_view: &mut [InstanceData],
-                 new_buffer: &wgpu::Buffer| {
-                    new_view.copy_from_slice(&self.scratch);
-                    on_reallocate(new_buffer);
-                },
-            ),
-            false,
-        );
-
-        if !did_reallocate {
-            // still need to write the data
-            let mut view = self.buffer.write_view(..self.scratch.len(), queue);
-            view.copy_from_slice(&self.scratch);
-        }
-
-        self.scratch.clear();
     }
 }
 

@@ -136,6 +136,14 @@ impl<T> TypedArrayBuffer<T> {
     pub fn is_empty(&self) -> bool {
         self.inner.is_none()
     }
+
+    pub fn usage(&self) -> wgpu::BufferUsages {
+        self.usage
+    }
+
+    pub fn device(&self) -> &wgpu::Device {
+        &self.device
+    }
 }
 
 impl<T> TypedArrayBuffer<T>
@@ -309,6 +317,33 @@ where
         else {
             false
         }
+    }
+
+    pub fn write_all(
+        &mut self,
+        queue: &wgpu::Queue,
+        data: &[T],
+        mut on_reallocate: impl FnMut(&wgpu::Buffer),
+    ) -> bool {
+        let did_reallocate = self.reallocate_for_size(
+            data.len(),
+            queue,
+            Some(
+                |_old_view: Option<&[T]>, new_view: &mut [T], new_buffer: &wgpu::Buffer| {
+                    new_view.copy_from_slice(data);
+                    on_reallocate(new_buffer);
+                },
+            ),
+            false,
+        );
+
+        if !did_reallocate {
+            // still need to write the data
+            let mut view = self.write_view(.., queue);
+            view.copy_from_slice(data);
+        }
+
+        did_reallocate
     }
 }
 
@@ -691,5 +726,82 @@ impl AsyncResultBuf {
     fn unwrap(&self) -> Result<(), wgpu::BufferAsyncError> {
         let result = self.buf.lock().take();
         result.expect("map_buffer_on_submit hasn't finished yet")
+    }
+}
+
+#[derive(Debug)]
+pub struct StagedTypedArrayBuffer<T> {
+    pub buffer: TypedArrayBuffer<T>,
+    pub staging: Vec<T>,
+}
+
+impl<T> StagedTypedArrayBuffer<T> {
+    pub fn new(device: &wgpu::Device, label: &str, usage: wgpu::BufferUsages) -> Self {
+        Self::with_capacity(device, label, usage, 0)
+    }
+
+    pub fn with_capacity(
+        device: &wgpu::Device,
+        label: &str,
+        usage: wgpu::BufferUsages,
+        initial_capacity: usize,
+    ) -> Self {
+        let buffer = TypedArrayBuffer::with_capacity(
+            device,
+            label,
+            usage | wgpu::BufferUsages::COPY_DST,
+            initial_capacity,
+        );
+        Self::from_buffer(buffer)
+    }
+
+    pub fn from_buffer(buffer: TypedArrayBuffer<T>) -> Self {
+        assert!(
+            buffer.usage.contains(wgpu::BufferUsages::COPY_DST),
+            "Buffer must contain BufferUsages::COPY_DST to be used as a staged buffer."
+        );
+        Self {
+            buffer,
+            staging: vec![],
+        }
+    }
+
+    pub fn push(&mut self, item: T) {
+        self.staging.push(item);
+    }
+}
+
+impl<T> StagedTypedArrayBuffer<T>
+where
+    T: Pod,
+{
+    pub fn from_data(
+        device: &wgpu::Device,
+        label: &str,
+        usage: wgpu::BufferUsages,
+        data: Vec<T>,
+    ) -> Self {
+        let buffer = TypedArrayBuffer::from_slice(
+            device,
+            label,
+            usage | wgpu::BufferUsages::COPY_DST,
+            &data,
+        );
+        Self {
+            buffer,
+            staging: data,
+        }
+    }
+
+    pub fn flush(&mut self, queue: &wgpu::Queue, on_reallocate: impl FnMut(&wgpu::Buffer)) {
+        if self.staging.is_empty() {
+            // the below code works fine for an empty instance buffer, and it'll basically
+            // do nothing, but we can still exit early.
+            return;
+        }
+
+        self.buffer.write_all(queue, &self.staging, on_reallocate);
+
+        self.staging.clear();
     }
 }
