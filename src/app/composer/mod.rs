@@ -959,6 +959,8 @@ impl<'a> CameraMut<'a> {
         up: &Vector3<f32>,
         margin: &Vector2<f32>,
     ) {
+        let scene_aabb = self.scene.aabb();
+
         let Ok((camera_transform, camera_projection)) =
             self.scene
                 .entities
@@ -971,11 +973,7 @@ impl<'a> CameraMut<'a> {
 
         let reference_transform = Isometry3::from_parts(Translation3::identity(), rotation);
 
-        let scene_aabb = self
-            .scene
-            .octtree
-            .root_aabb()
-            .transform_by(&reference_transform);
+        let scene_aabb = scene_aabb.transform_by(&reference_transform);
 
         let distance = camera_projection.distance_to_fit_aabb_into_fov(&scene_aabb, margin);
 
@@ -989,12 +987,13 @@ impl<'a> CameraMut<'a> {
     }
 
     pub fn point_to_scene_center(&mut self) {
+        let scene_center = self.scene.aabb().center();
+
         if let Ok(camera_transform) = self
             .scene
             .entities
             .query_one_mut::<&mut Transform>(self.camera_entity)
         {
-            let scene_center = self.scene.octtree.root_aabb().center();
             let eye = camera_transform.position();
 
             // normally up is always +Y

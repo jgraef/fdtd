@@ -68,7 +68,9 @@ pub struct Scene {
     #[debug("hecs::World {{ ... }}")]
     pub entities: hecs::World,
 
-    pub octtree: OctTree,
+    // we might need this pub anyway, because it might be required to e.g. borrow the world and
+    // operate on the octtree at the same time.
+    octtree: OctTree,
 
     /// General-purpose command buffer.
     ///
@@ -162,6 +164,10 @@ impl Scene {
             self.command_buffer.remove_one::<Changed<Transform>>(entity);
         }
         self.apply_deferred();
+    }
+
+    pub fn aabb(&self) -> Aabb {
+        self.octtree.root_aabb()
     }
 
     /// Computes the scene's AABB relative to an observer.
