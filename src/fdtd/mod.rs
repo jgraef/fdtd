@@ -47,6 +47,8 @@ use crate::{
                 FdtdCpuBackend,
                 FdtdCpuSolverInstance,
                 FdtdCpuSolverState,
+                MultiThreaded,
+                SingleThreaded,
             },
             source::{
                 GaussianPulse,
@@ -71,6 +73,9 @@ use crate::{
 pub struct Args {
     #[clap(long)]
     wgpu: bool,
+
+    #[clap(long, short = 'j')]
+    threads: Option<usize>,
 }
 
 impl Args {
@@ -98,7 +103,6 @@ pub struct App {
     ticks_per_second: u64,
     executor: Executor,
     screenshots_path: PathBuf,
-    backend_label: &'static str,
 }
 
 impl App {
@@ -115,10 +119,14 @@ impl App {
         let simulation = if args.wgpu {
             Box::new(Simulation::wgpu(&config, &device, &queue)) as Box<dyn ErasedSimulation>
         }
+        else if let Some(num_threads) = args.threads {
+            let num_threads = (num_threads != 0).then_some(num_threads);
+            Box::new(Simulation::cpu_multi_threaded(&config, num_threads))
+                as Box<dyn ErasedSimulation>
+        }
         else {
-            Box::new(Simulation::cpu(&config)) as Box<dyn ErasedSimulation>
+            Box::new(Simulation::cpu_single_threaded(&config)) as Box<dyn ErasedSimulation>
         };
-        let backend_label = simulation.backend_label();
 
         let ticks_per_second = 100;
         let executor = Executor::new(simulation, Duration::from_millis(1000 / ticks_per_second));
@@ -127,7 +135,6 @@ impl App {
             ticks_per_second,
             executor,
             screenshots_path: PathBuf::from("screenshots"),
-            backend_label,
         }
     }
 
@@ -194,8 +201,6 @@ impl eframe::App for App {
                 if ui.button("📷").clicked() {
                     ctx.send_viewport_cmd(ViewportCommand::Screenshot(UserData::default()));
                 }
-
-                ui.label(self.backend_label);
             });
 
             let guard = self.executor.read();
@@ -203,6 +208,8 @@ impl eframe::App for App {
             let simulation = guard.simulation();
 
             ui.horizontal(|ui| {
+                ui.label(simulation.label());
+                ui.spacing();
                 ui.label(format!("Tick: {}", simulation.tick()));
                 ui.spacing();
                 ui.label(format!("Time: {:?} s", simulation.time()));
@@ -220,14 +227,11 @@ impl eframe::App for App {
     }
 }
 
-trait ErasedSimulation: Time + BackendLabel + Debug + Send + Sync + 'static {
+trait ErasedSimulation: Time + Debug + Send + Sync + 'static {
     fn update(&mut self);
     fn field_values(&self, field_component: FieldComponent) -> PlotPoints<'static>;
     fn reset(&mut self);
-}
-
-trait BackendLabel {
-    fn backend_label(&self) -> &'static str;
+    fn label(&self) -> &str;
 }
 
 #[derive(Debug)]
@@ -235,6 +239,7 @@ struct Simulation<I, S> {
     instance: I,
     state: S,
     source: GaussianPulse,
+    label: String,
 }
 
 impl<I, S> Simulation<I, S>
@@ -242,7 +247,7 @@ where
     I: SolverInstance<Point = Point3<usize>, Source = SourceValues, State = S>,
     S: Time,
 {
-    pub fn new<B>(backend: &B, config: &B::Config) -> Self
+    pub fn new<B>(backend: &B, config: &B::Config, label: impl ToString) -> Self
     where
         B: SolverBackend<Instance = I, Point = Point3<usize>>,
         B::Config: Debug,
@@ -268,6 +273,7 @@ where
             instance,
             state,
             source,
+            label: label.to_string(),
         }
     }
 }
@@ -275,25 +281,26 @@ where
 impl Simulation<FdtdWgpuSolverInstance, FdtdWgpuSolverState> {
     pub fn wgpu(config: &FdtdSolverConfig, device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
         let backend = FdtdWgpuBackend::new(device, queue);
-        Self::new(&backend, config)
+        Self::new(&backend, config, "wgpu")
     }
 }
 
-impl Simulation<FdtdCpuSolverInstance, FdtdCpuSolverState> {
-    pub fn cpu(config: &FdtdSolverConfig) -> Self {
-        Self::new(&FdtdCpuBackend, config)
+impl Simulation<FdtdCpuSolverInstance<SingleThreaded>, FdtdCpuSolverState> {
+    pub fn cpu_single_threaded(config: &FdtdSolverConfig) -> Self {
+        Self::new(
+            &FdtdCpuBackend::single_threaded(),
+            config,
+            "cpu (single-threaded)",
+        )
     }
 }
 
-impl BackendLabel for Simulation<FdtdWgpuSolverInstance, FdtdWgpuSolverState> {
-    fn backend_label(&self) -> &'static str {
-        "wgpu"
-    }
-}
+impl Simulation<FdtdCpuSolverInstance<MultiThreaded>, FdtdCpuSolverState> {
+    pub fn cpu_multi_threaded(config: &FdtdSolverConfig, num_threads: Option<usize>) -> Self {
+        let backend = FdtdCpuBackend::multi_threaded(num_threads);
+        let label = format!("cpu ({} threads)", backend.num_threads());
 
-impl BackendLabel for Simulation<FdtdCpuSolverInstance, FdtdCpuSolverState> {
-    fn backend_label(&self) -> &'static str {
-        "cpu"
+        Self::new(&backend, config, label)
     }
 }
 
@@ -306,7 +313,6 @@ where
         + Debug
         + 'static,
     S: Time + Send + Sync + Debug + 'static,
-    Self: BackendLabel,
 {
     fn update(&mut self) {
         let value = self.source.evaluate(self.state.time());
@@ -342,6 +348,10 @@ where
 
     fn reset(&mut self) {
         self.state = self.instance.create_state();
+    }
+
+    fn label(&self) -> &str {
+        &self.label
     }
 }
 

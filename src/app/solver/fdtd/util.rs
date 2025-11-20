@@ -38,6 +38,17 @@ impl<T> SwapBuffer<T> {
             f(SwapBufferIndex { index })
         }))
     }
+
+    pub fn pair_mut(&mut self, index: SwapBufferIndex) -> (&mut T, &mut T) {
+        let (first, rest) = self.buffer.split_first_mut().unwrap();
+        let second = &mut rest[0];
+        if index.index == 0 {
+            (first, second)
+        }
+        else {
+            (second, first)
+        }
+    }
 }
 
 impl<T> Index<SwapBufferIndex> for SwapBuffer<T> {

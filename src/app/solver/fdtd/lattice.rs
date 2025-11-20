@@ -10,6 +10,11 @@ use nalgebra::{
     Vector3,
     Vector4,
 };
+use rayon::iter::{
+    IndexedParallelIterator,
+    IntoParallelRefMutIterator,
+    ParallelIterator,
+};
 
 use crate::util::{
     PointIter,
@@ -110,6 +115,20 @@ impl<T> Lattice<T> {
             data: &mut self.data,
         }
     }
+
+    // todo: range
+    pub fn par_iter_mut(
+        &mut self,
+        strider: &Strider,
+    ) -> impl ParallelIterator<Item = (usize, Point3<usize>, &mut T)>
+    where
+        T: Send + Sync,
+    {
+        self.data.par_iter_mut().enumerate().map(|(index, value)| {
+            let point = strider.point_unchecked(index);
+            (index, point, value)
+        })
+    }
 }
 
 impl<T> Index<usize> for Lattice<T> {
@@ -128,7 +147,7 @@ impl<T> IndexMut<usize> for Lattice<T> {
 
 #[derive(Clone, Copy, Debug)]
 pub struct LatticeIter<'a, T> {
-    strider_iter: StriderPointIter,
+    strider_iter: StriderIter,
     data: &'a [T],
 }
 
@@ -145,11 +164,11 @@ impl<'a, T> Iterator for LatticeIter<'a, T> {
     }
 }
 
-impl<'a, T> ExactSizeIterator for LatticeIter<'a, T> where StriderPointIter: ExactSizeIterator {}
+impl<'a, T> ExactSizeIterator for LatticeIter<'a, T> where StriderIter: ExactSizeIterator {}
 
 #[derive(Debug)]
 pub struct LatticeIterMut<'a, T> {
-    strider_iter: StriderPointIter,
+    strider_iter: StriderIter,
     data: &'a mut [T],
 }
 
@@ -172,7 +191,7 @@ impl<'a, T> Iterator for LatticeIterMut<'a, T> {
     }
 }
 
-impl<'a, T> ExactSizeIterator for LatticeIterMut<'a, T> where StriderPointIter: ExactSizeIterator {}
+impl<'a, T> ExactSizeIterator for LatticeIterMut<'a, T> where StriderIter: ExactSizeIterator {}
 
 #[derive(Clone, Copy, Debug)]
 pub struct Strider {
@@ -190,15 +209,17 @@ impl Strider {
         }
     }
 
-    pub fn point(&self, mut index: usize) -> Option<Point3<usize>> {
-        (index < self.strides.w).then(|| {
-            let z = index / self.strides.z;
-            index %= self.strides.z;
-            let y = index / self.strides.y;
-            index %= self.strides.y;
-            let x = index / self.strides.x;
-            Point3::new(x, y, z)
-        })
+    pub fn point_unchecked(&self, mut index: usize) -> Point3<usize> {
+        let z = index / self.strides.z;
+        index %= self.strides.z;
+        let y = index / self.strides.y;
+        index %= self.strides.y;
+        let x = index / self.strides.x;
+        Point3::new(x, y, z)
+    }
+
+    pub fn point(&self, index: usize) -> Option<Point3<usize>> {
+        (index < self.strides.w).then(|| self.point_unchecked(index))
     }
 
     fn index_unchecked(&self, point: &Point3<usize>) -> usize {
@@ -221,8 +242,8 @@ impl Strider {
         self.strides.w
     }
 
-    pub fn iter(&self, range: impl RangeBounds<Point3<usize>>) -> StriderPointIter {
-        StriderPointIter {
+    pub fn iter(&self, range: impl RangeBounds<Point3<usize>>) -> StriderIter {
+        StriderIter {
             points: iter_points(range, self.size),
             strider: *self,
         }
@@ -278,12 +299,12 @@ impl Strider {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct StriderPointIter {
+pub struct StriderIter {
     points: PointIter,
     strider: Strider,
 }
 
-impl Iterator for StriderPointIter {
+impl Iterator for StriderIter {
     type Item = (usize, Point3<usize>);
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -299,7 +320,7 @@ impl Iterator for StriderPointIter {
 
 // the where bound is just so we get a compiler error if PointIter happens to be
 // not an ExactSizeIterator anymore.
-impl ExactSizeIterator for StriderPointIter where PointIter: ExactSizeIterator {}
+impl ExactSizeIterator for StriderIter where PointIter: ExactSizeIterator {}
 
 pub fn strides_for_size(size: &Vector3<usize>) -> Vector4<usize> {
     let mut strides = Vector4::zeros();

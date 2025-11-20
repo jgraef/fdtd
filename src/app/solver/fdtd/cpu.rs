@@ -18,6 +18,7 @@ use num::{
     One,
     Zero,
 };
+use rayon::iter::ParallelIterator;
 
 use crate::{
     app::solver::{
@@ -60,13 +61,115 @@ use crate::{
     util::normalize_point_bounds,
 };
 
-#[derive(Clone, Copy, Debug, Default)]
-pub struct FdtdCpuBackend;
+/// Defines how a single/multi-threading iterates over the lattice in the state
+/// update.
+pub trait LatticeForEach: Send + Sync {
+    fn for_each<T, F>(&self, strider: &Strider, lattice: &mut Lattice<T>, f: F)
+    where
+        T: Send + Sync,
+        F: Fn(usize, Point3<usize>, &mut T) + Send + Sync;
+}
 
-impl SolverBackend for FdtdCpuBackend {
+/// Use single-threading
+#[derive(Clone, Copy, Debug, Default)]
+pub struct SingleThreaded;
+
+impl LatticeForEach for SingleThreaded {
+    fn for_each<T, F>(&self, strider: &Strider, lattice: &mut Lattice<T>, f: F)
+    where
+        T: Send + Sync,
+        F: Fn(usize, Point3<usize>, &mut T) + Send + Sync,
+    {
+        lattice
+            .iter_mut(strider, ..)
+            .for_each(|(index, point, value)| f(index, point, value))
+    }
+}
+
+/// Use multi-threading
+#[derive(Clone, Copy, Debug)]
+pub struct MultiThreaded {
+    /// How many threads to use
+    pub num_threads: usize,
+}
+
+impl LatticeForEach for MultiThreaded {
+    fn for_each<T, F>(&self, strider: &Strider, lattice: &mut Lattice<T>, f: F)
+    where
+        T: Send + Sync,
+        F: Fn(usize, Point3<usize>, &mut T) + Send + Sync,
+    {
+        lattice
+            .par_iter_mut(strider)
+            .for_each(|(index, point, value)| f(index, point, value))
+    }
+}
+
+impl MultiThreaded {
+    /// Use max number of threads (see [`rayon::max_num_threads`])
+    pub fn max_threads() -> Self {
+        Self {
+            num_threads: rayon::max_num_threads(),
+        }
+    }
+}
+
+impl Default for MultiThreaded {
+    /// Use default number of threads (see [`rayon::current_num_threads`])
+    fn default() -> Self {
+        Self {
+            num_threads: rayon::current_num_threads(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct FdtdCpuBackend<Threading = SingleThreaded> {
+    /// Whether to use single-threading or multi-threading
+    pub threading: Threading,
+}
+
+impl Default for FdtdCpuBackend<SingleThreaded> {
+    fn default() -> Self {
+        Self::single_threaded()
+    }
+}
+
+impl<Threading> FdtdCpuBackend<Threading> {
+    pub fn new(threading: Threading) -> Self {
+        Self { threading }
+    }
+}
+
+impl FdtdCpuBackend<SingleThreaded> {
+    pub fn single_threaded() -> Self {
+        Self {
+            threading: SingleThreaded,
+        }
+    }
+}
+
+impl FdtdCpuBackend<MultiThreaded> {
+    pub fn multi_threaded(num_threads: Option<usize>) -> Self {
+        Self {
+            threading: num_threads
+                .map(|num_threads| MultiThreaded { num_threads })
+                .unwrap_or_default(),
+        }
+    }
+
+    pub fn num_threads(&self) -> usize {
+        self.threading.num_threads
+    }
+}
+
+impl<Threading> SolverBackend for FdtdCpuBackend<Threading>
+where
+    Threading: LatticeForEach + Clone,
+{
     type Config = FdtdSolverConfig;
     type Point = Point3<usize>;
-    type Instance = FdtdCpuSolverInstance;
+    type Instance = FdtdCpuSolverInstance<Threading>;
     type Error = Infallible;
 
     fn create_instance<D>(
@@ -77,29 +180,35 @@ impl SolverBackend for FdtdCpuBackend {
     where
         D: DomainDescription<Self::Point>,
     {
-        Ok(FdtdCpuSolverInstance::new(config, domain_description))
+        Ok(FdtdCpuSolverInstance::new(
+            config,
+            domain_description,
+            self.threading.clone(),
+        ))
     }
 
     fn memory_required(&self, config: &Self::Config) -> Option<usize> {
-        let per_cell =
-            std::mem::size_of::<UpdateCoefficients>() + std::mem::size_of::<SwapBuffer<Cell>>();
+        let per_cell = std::mem::size_of::<UpdateCoefficients>()
+            + 4 * std::mem::size_of::<SwapBuffer<Vector3<usize>>>();
         Some(per_cell * config.num_cells())
     }
 }
 
 #[derive(Clone, Debug)]
-pub struct FdtdCpuSolverInstance {
+pub struct FdtdCpuSolverInstance<Threading = SingleThreaded> {
     strider: Strider,
     resolution: Resolution,
     physical_constants: PhysicalConstants,
     update_coefficients: Lattice<UpdateCoefficients>,
     boundary_conditions: [AnyBoundaryCondition; 3],
+    threading: Threading,
 }
 
-impl FdtdCpuSolverInstance {
+impl<Threading> FdtdCpuSolverInstance<Threading> {
     fn new(
         config: &FdtdSolverConfig,
         domain_description: impl DomainDescription<Point3<usize>>,
+        threading: Threading,
     ) -> Self {
         let strider = config.strider();
         let update_coefficients = Lattice::from_fn(&strider, |_index, point| {
@@ -122,9 +231,15 @@ impl FdtdCpuSolverInstance {
             physical_constants: config.physical_constants,
             update_coefficients,
             boundary_conditions,
+            threading,
         }
     }
+}
 
+impl<Threading> FdtdCpuSolverInstance<Threading>
+where
+    Threading: LatticeForEach,
+{
     fn update_impl(
         &self,
         state: &mut FdtdCpuSolverState,
@@ -135,110 +250,112 @@ impl FdtdCpuSolverInstance {
         // todo: integrate psi auxiliary fields
 
         let previous = SwapBufferIndex::from_tick(state.tick);
-        let current = previous.other();
+        let next = previous.other();
+
+        // reset previous source values
+        for (index, _source) in state.source_buffer.drain(..) {
+            state.source_field[index] = 0;
+        }
 
         // prepare sources
         assert!(state.source_buffer.is_empty());
         state.source_buffer.push(Default::default());
         for (point, source) in sources.into_iter() {
-            if let Some(cell) = state.lattice.get_point_mut(&self.strider, &point) {
-                cell[current].source_id = state.source_buffer.len();
-                state.source_buffer.push(source);
+            if let Some(index) = self.strider.index(&point) {
+                state.source_field[index] = state.source_buffer.len();
+                state.source_buffer.push((index, source));
             }
         }
 
         //let mut energy = 0.0;
 
         // update magnetic field
-        for (index, point) in self.strider.iter(..) {
-            let e_jacobian = jacobian(
-                &point,
-                &Vector3::repeat(1),
-                &Vector3::zeros(),
-                &self.strider,
-                &state.lattice,
-                |cell| cell[previous].e,
-                &self.resolution.spatial,
-                &self.boundary_conditions,
-            );
-            let e_curl = e_jacobian.curl();
+        let (h_field_next, h_field_previous) = state.h_field.pair_mut(next);
+        self.threading
+            .for_each(&self.strider, h_field_next, |index, point, h_field_next| {
+                let e_jacobian = jacobian(
+                    &point,
+                    &Vector3::repeat(1),
+                    &Vector3::zeros(),
+                    &self.strider,
+                    &state.e_field[previous],
+                    &self.resolution.spatial,
+                    &self.boundary_conditions,
+                );
+                let e_curl = e_jacobian.curl();
 
-            let cell = &mut state.lattice[index];
+                let source_id = state.source_field[index];
+                let m_source = if source_id != 0 {
+                    state.source_buffer[source_id].1.m_source
+                }
+                else {
+                    Default::default()
+                };
 
-            let m_source = if cell[current].source_id != 0 {
-                state.source_buffer[cell[current].source_id].m_source
-            }
-            else {
-                Default::default()
-            };
+                let psi = Vector3::zeros();
 
-            let psi = Vector3::zeros();
+                let update_coefficients = self.update_coefficients[index];
 
-            let update_coefficients = self.update_coefficients[index];
+                // note: the E and H field equations are almost identical, but here the curl is
+                // negative.
+                *h_field_next = update_coefficients.d_a * h_field_previous[index]
+                    + update_coefficients.d_b * (-e_curl - m_source + psi);
 
-            // note: the E and H field equations are almost identical, but here the curl is
-            // negative.
-            cell[current].h = update_coefficients.d_a * cell[previous].h
-                + update_coefficients.d_b * (-e_curl - m_source + psi);
-
-            // note: this is just for debugging
-            //energy += cell[current].h.norm_squared()
-            //    / (cell.material.relative_permeability
-            //        * self.physical_constants.vacuum_permeability);
-        }
+                // note: this is just for debugging
+                //energy += cell[current].h.norm_squared()
+                //    / (cell.material.relative_permeability
+                //        * self.physical_constants.vacuum_permeability);
+            });
 
         // update electric field
         //let time = state.time + 0.5 * self.resolution.temporal;
-        for (index, point) in self.strider.iter(..) {
-            let h_jacobian = jacobian(
-                &point,
-                &Vector3::zeros(),
-                &Vector3::repeat(1),
-                &self.strider,
-                &state.lattice,
-                |cell| {
-                    // NOTE: this is `current` not `previous`, because we have already updated the H
-                    // field with the new values in `current`.
-                    cell[current].h
-                },
-                &self.resolution.spatial,
-                &self.boundary_conditions,
-            );
-            let h_curl = h_jacobian.curl();
+        let (e_field_next, e_field_previous) = state.e_field.pair_mut(next);
+        self.threading
+            .for_each(&self.strider, e_field_next, |index, point, e_field_next| {
+                let h_jacobian = jacobian(
+                    &point,
+                    &Vector3::zeros(),
+                    &Vector3::repeat(1),
+                    &self.strider,
+                    // NOTE: this is `current` not `previous`, because we have already updated the
+                    // H field with the new values in `current`.
+                    &state.h_field[next],
+                    &self.resolution.spatial,
+                    &self.boundary_conditions,
+                );
+                let h_curl = h_jacobian.curl();
 
-            let cell = &mut state.lattice[index];
+                let source_id = state.source_field[index];
+                let j_source = if source_id != 0 {
+                    state.source_buffer[source_id].1.j_source
+                }
+                else {
+                    Default::default()
+                };
 
-            let j_source = if cell[current].source_id != 0 {
-                state.source_buffer[cell[current].source_id].j_source
-            }
-            else {
-                Default::default()
-            };
+                let psi = Vector3::zeros();
 
-            let psi = Vector3::zeros();
+                let update_coefficients = self.update_coefficients[index];
 
-            let update_coefficients = self.update_coefficients[index];
+                *e_field_next = update_coefficients.c_a * e_field_previous[index]
+                    + update_coefficients.c_b * (h_curl - j_source + psi);
 
-            cell[current].e = update_coefficients.c_a * cell[previous].e
-                + update_coefficients.c_b * (h_curl - j_source + psi);
-
-            cell[current].source_id = 0;
-
-            // note: this is just for debugging
-            //energy += cell[current].e.norm_squared()
-            //    * cell.material.relative_permittivity
-            //    * self.physical_constants.vacuum_permittivity;
-        }
+                // note: this is just for debugging
+                //energy += cell[current].e.norm_squared()
+                //    * cell.material.relative_permittivity
+                //    * self.physical_constants.vacuum_permittivity;
+            });
 
         state.tick += 1;
         state.time += self.resolution.temporal;
         //self.total_energy = 0.5 * energy * self.resolution.spatial.product();
-
-        state.source_buffer.clear();
     }
 }
 
-impl SolverInstance for FdtdCpuSolverInstance {
+impl<Threading> SolverInstance for FdtdCpuSolverInstance<Threading>
+where
+    Threading: LatticeForEach,
+{
     type State = FdtdCpuSolverState;
     type Point = Point3<usize>;
     type Source = SourceValues;
@@ -255,7 +372,10 @@ impl SolverInstance for FdtdCpuSolverInstance {
     }
 }
 
-impl EvaluateStopCondition for FdtdCpuSolverInstance {
+impl<Threading> EvaluateStopCondition for FdtdCpuSolverInstance<Threading>
+where
+    Threading: LatticeForEach,
+{
     fn evaluate_stop_condition(
         &self,
         state: &Self::State,
@@ -268,18 +388,20 @@ impl EvaluateStopCondition for FdtdCpuSolverInstance {
 
 #[derive(Clone, Debug)]
 pub struct FdtdCpuSolverState {
-    lattice: Lattice<SwapBuffer<Cell>>,
-    source_buffer: Vec<SourceValues>,
+    h_field: SwapBuffer<Lattice<Vector3<f64>>>,
+    e_field: SwapBuffer<Lattice<Vector3<f64>>>,
+    source_field: Lattice<usize>,
+    source_buffer: Vec<(usize, SourceValues)>,
     tick: usize,
     time: f64,
 }
 
 impl FdtdCpuSolverState {
     fn new(strider: &Strider) -> Self {
-        let lattice = Lattice::from_default(strider);
-
         Self {
-            lattice,
+            h_field: SwapBuffer::from_fn(|_| Lattice::from_default(strider)),
+            e_field: SwapBuffer::from_fn(|_| Lattice::from_default(strider)),
+            source_field: Lattice::from_default(strider),
             source_buffer: vec![],
             tick: 0,
             time: 0.0,
@@ -305,7 +427,10 @@ impl Time for FdtdCpuSolverState {
     }
 }
 
-impl Field for FdtdCpuSolverInstance {
+impl<Threading> Field for FdtdCpuSolverInstance<Threading>
+where
+    Threading: LatticeForEach,
+{
     type View<'a>
         = CpuFieldView<'a>
     where
@@ -321,23 +446,29 @@ impl Field for FdtdCpuSolverInstance {
         R: RangeBounds<Self::Point>,
     {
         let range = normalize_point_bounds(range, *self.strider.size());
+
+        let swap_buffer_index = SwapBufferIndex::from_tick(state.tick);
+
+        let swap_buffer = match field_component {
+            FieldComponent::H => &state.h_field,
+            FieldComponent::E => &state.e_field,
+        };
+
+        let lattice = &swap_buffer[swap_buffer_index];
+
         CpuFieldView {
-            field_component,
             range,
             strider: &self.strider,
-            swap_buffer_index: SwapBufferIndex::from_tick(state.tick),
-            lattice: &state.lattice,
+            lattice,
         }
     }
 }
 
 #[derive(Debug)]
 pub struct CpuFieldView<'a> {
-    field_component: FieldComponent,
     range: Range<Point3<usize>>,
     strider: &'a Strider,
-    swap_buffer_index: SwapBufferIndex,
-    lattice: &'a Lattice<SwapBuffer<Cell>>,
+    lattice: &'a Lattice<Vector3<f64>>,
 }
 
 impl<'a> FieldView<Point3<usize>> for CpuFieldView<'a> {
@@ -348,8 +479,8 @@ impl<'a> FieldView<Point3<usize>> for CpuFieldView<'a> {
 
     fn at(&self, point: &Point3<usize>) -> Option<Vector3<f64>> {
         if self.range.contains(point) {
-            let cell = self.lattice.get_point(self.strider, point)?;
-            Some(cell[self.swap_buffer_index].get_field_component(self.field_component))
+            let value = self.lattice.get_point(self.strider, point)?;
+            Some(*value)
         }
         else {
             None
@@ -358,27 +489,22 @@ impl<'a> FieldView<Point3<usize>> for CpuFieldView<'a> {
 
     fn iter<'b>(&'b self) -> Self::Iter<'b> {
         CpuFieldIter {
-            field_component: self.field_component,
             lattice_iter: self.lattice.iter(self.strider, self.range.clone()),
-            swap_buffer_index: self.swap_buffer_index,
         }
     }
 }
 
 #[derive(Clone, Copy, Debug)]
 pub struct CpuFieldIter<'a> {
-    field_component: FieldComponent,
-    lattice_iter: LatticeIter<'a, SwapBuffer<Cell>>,
-    swap_buffer_index: SwapBufferIndex,
+    lattice_iter: LatticeIter<'a, Vector3<f64>>,
 }
 
 impl<'a> Iterator for CpuFieldIter<'a> {
     type Item = (Point3<usize>, Vector3<f64>);
 
     fn next(&mut self) -> Option<Self::Item> {
-        let (_index, point, data) = self.lattice_iter.next()?;
-        let value = data[self.swap_buffer_index].get_field_component(self.field_component);
-        Some((point, value))
+        let (_index, point, value) = self.lattice_iter.next()?;
+        Some((point, *value))
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
@@ -387,7 +513,7 @@ impl<'a> Iterator for CpuFieldIter<'a> {
 }
 
 impl<'a> ExactSizeIterator for CpuFieldIter<'a> where
-    LatticeIter<'a, SwapBuffer<Cell>>: ExactSizeIterator
+    LatticeIter<'a, Vector3<f64>>: ExactSizeIterator
 {
 }
 
@@ -406,31 +532,31 @@ impl FieldMut for FdtdCpuSolverInstance {
     where
         R: RangeBounds<Self::Point>,
     {
+        let swap_buffer_index = SwapBufferIndex::from_tick(state.tick);
+
+        let swap_buffer = match field_component {
+            FieldComponent::H => &mut state.h_field,
+            FieldComponent::E => &mut state.e_field,
+        };
+
+        let lattice = &mut swap_buffer[swap_buffer_index];
+
         CpuFieldRegionIterMut {
-            field_component,
-            lattice_iter: state.lattice.iter_mut(&self.strider, range),
-            swap_buffer_index: SwapBufferIndex::from_tick(state.tick),
+            lattice_iter: lattice.iter_mut(&self.strider, range),
         }
     }
 }
 
 #[derive(Debug)]
 pub struct CpuFieldRegionIterMut<'a> {
-    field_component: FieldComponent,
-    lattice_iter: LatticeIterMut<'a, SwapBuffer<Cell>>,
-    swap_buffer_index: SwapBufferIndex,
+    lattice_iter: LatticeIterMut<'a, Vector3<f64>>,
 }
 
 impl<'a> Iterator for CpuFieldRegionIterMut<'a> {
     type Item = (Point3<usize>, &'a mut Vector3<f64>);
 
     fn next(&mut self) -> Option<Self::Item> {
-        let (_index, point, data) = self.lattice_iter.next()?;
-        let data = &mut data[self.swap_buffer_index];
-        let value = match self.field_component {
-            FieldComponent::E => &mut data.e,
-            FieldComponent::H => &mut data.h,
-        };
+        let (_index, point, value) = self.lattice_iter.next()?;
         Some((point, value))
     }
 
@@ -440,24 +566,8 @@ impl<'a> Iterator for CpuFieldRegionIterMut<'a> {
 }
 
 impl<'a> ExactSizeIterator for CpuFieldRegionIterMut<'a> where
-    LatticeIter<'a, SwapBuffer<Cell>>: ExactSizeIterator
+    LatticeIter<'a, Vector3<f64>>: ExactSizeIterator
 {
-}
-
-#[derive(Clone, Copy, Debug, Default)]
-struct Cell {
-    e: Vector3<f64>,
-    h: Vector3<f64>,
-    source_id: usize,
-}
-
-impl Cell {
-    fn get_field_component(&self, field_component: FieldComponent) -> Vector3<f64> {
-        match field_component {
-            FieldComponent::E => self.e,
-            FieldComponent::H => self.h,
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -511,13 +621,12 @@ impl Axis {
 
 /// See [`partial_derivate`] for details.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn jacobian<T>(
+pub(super) fn jacobian(
     x: &Point3<usize>,
     dx0: &Vector3<usize>,
     dx1: &Vector3<usize>,
     strider: &Strider,
-    grid: &Lattice<T>,
-    field: impl Fn(&T) -> Vector3<f64>,
+    lattice: &Lattice<Vector3<f64>>,
     spatial_resolution: &Vector3<f64>,
     boundary_conditions: &[AnyBoundaryCondition; 3],
 ) -> Jacobian {
@@ -529,8 +638,7 @@ pub(super) fn jacobian<T>(
                 dx0,
                 dx1,
                 strider,
-                grid,
-                &field,
+                lattice,
                 spatial_resolution,
                 boundary_conditions,
             ),
@@ -540,8 +648,7 @@ pub(super) fn jacobian<T>(
                 dx0,
                 dx1,
                 strider,
-                grid,
-                &field,
+                lattice,
                 spatial_resolution,
                 boundary_conditions,
             ),
@@ -551,8 +658,7 @@ pub(super) fn jacobian<T>(
                 dx0,
                 dx1,
                 strider,
-                grid,
-                &field,
+                lattice,
                 spatial_resolution,
                 boundary_conditions,
             ),
@@ -608,14 +714,13 @@ impl Jacobian {
 /// Since these are not available outside of the lattice, all derivatives along
 /// a boundary default to 0. This is effectively a Neumann boundary condition.
 #[allow(clippy::too_many_arguments)]
-fn partial_derivative<T>(
+fn partial_derivative(
     axis: Axis,
     x: &Point3<usize>,
     dx0: &Vector3<usize>,
     dx1: &Vector3<usize>,
     strider: &Strider,
-    grid: &Lattice<T>,
-    field: impl Fn(&T) -> Vector3<f64>,
+    lattice: &Lattice<Vector3<f64>>,
     spatial_resolution: &Vector3<f64>,
     boundary_conditions: &[AnyBoundaryCondition; 3],
 ) -> Vector3<f64> {
@@ -626,12 +731,12 @@ fn partial_derivative<T>(
     let dx = spatial_resolution[i];
 
     let f0 = if x.coords[i] >= dx0 {
-        grid.get_point(strider, &(x - e * dx0)).map(&field)
+        lattice.get_point(strider, &(x - e * dx0)).copied()
     }
     else {
         None
     };
-    let f1 = grid.get_point(strider, &(x + e * dx1)).map(&field);
+    let f1 = lattice.get_point(strider, &(x + e * dx1)).copied();
 
     // fixme: the boundary conditions should be invariant under dx
     boundary_conditions[i].apply_df(f0, f1) / dx
