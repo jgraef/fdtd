@@ -180,7 +180,7 @@ where
         loop {
             let time_elapsed = time_start.elapsed();
 
-            if instance.evaluate_stop_condition(&mut state, &stop_condition, time_elapsed) {
+            if instance.evaluate_stop_condition(&state, &stop_condition, time_elapsed) {
                 tracing::debug!("stop condition reached");
                 break;
             }

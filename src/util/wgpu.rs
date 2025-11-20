@@ -654,7 +654,7 @@ impl<'a> TypedArrayBufferWriteViewInner<'a> {
         command_encoder.copy_buffer_to_buffer(
             &self.staging_buffer,
             self.alignment.buffer_start,
-            &self.destination_buffer,
+            self.destination_buffer,
             self.alignment.staging_start,
             self.alignment.copy_size,
         );

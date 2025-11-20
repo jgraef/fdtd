@@ -50,7 +50,7 @@ impl<T> Lattice<T> {
         // instead of asking the strider to iterate for us, we need to make sure we
         // cover the whole buffer and leave no uninitialized places.
         for (i, v) in data.iter_mut().enumerate() {
-            let point = strider.from_index(i);
+            let point = strider.point(i);
             v.write(init(i, point));
         }
 
@@ -72,12 +72,12 @@ impl<T> Lattice<T> {
     }
 
     pub fn get_point(&self, strider: &Strider, point: &Point3<usize>) -> Option<&T> {
-        let index = strider.to_index(point)?;
+        let index = strider.index(point)?;
         Some(&self.data[index])
     }
 
     pub fn get_point_mut(&mut self, strider: &Strider, point: &Point3<usize>) -> Option<&mut T> {
-        let index = strider.to_index(point)?;
+        let index = strider.index(point)?;
         Some(&mut self.data[index])
     }
 
@@ -188,7 +188,7 @@ impl Strider {
         }
     }
 
-    pub fn from_index(&self, mut index: usize) -> Option<Point3<usize>> {
+    pub fn point(&self, mut index: usize) -> Option<Point3<usize>> {
         (index < self.strides.w).then(|| {
             let z = index / self.strides.z;
             index %= self.strides.z;
@@ -199,13 +199,12 @@ impl Strider {
         })
     }
 
-    fn to_index_unchecked(&self, point: &Point3<usize>) -> usize {
+    fn index_unchecked(&self, point: &Point3<usize>) -> usize {
         point.coords.dot(&self.strides.xyz())
     }
 
-    pub fn to_index(&self, point: &Point3<usize>) -> Option<usize> {
-        self.is_inside(point)
-            .then(|| self.to_index_unchecked(point))
+    pub fn index(&self, point: &Point3<usize>) -> Option<usize> {
+        self.is_inside(point).then(|| self.index_unchecked(point))
     }
 
     pub fn strides(&self) -> &Vector4<usize> {
@@ -231,7 +230,7 @@ impl Strider {
         point.x < self.size.x && point.y < self.size.y && point.z < self.size.z
     }
 
-    pub fn to_contiguous_index_range(
+    pub fn contiguous_index_range(
         &self,
         range: impl RangeBounds<Point3<usize>>,
     ) -> Result<Range<usize>, Range<usize>> {
@@ -247,10 +246,10 @@ impl Strider {
             ))
         };
 
-        let start_index = self.to_index_unchecked(&points.start);
+        let start_index = self.index_unchecked(&points.start);
         let indices = Range {
             start: start_index,
-            end: self.to_index_unchecked(&checked_dec(points.end).ok_or(start_index..start_index)?)
+            end: self.index_unchecked(&checked_dec(points.end).ok_or(start_index..start_index)?)
                 + 1,
         };
 
@@ -277,7 +276,7 @@ impl Iterator for StriderPointIter {
 
     fn next(&mut self) -> Option<Self::Item> {
         let point = self.points.next()?;
-        let index = self.strider.to_index_unchecked(&point);
+        let index = self.strider.index_unchecked(&point);
         Some((index, point))
     }
 

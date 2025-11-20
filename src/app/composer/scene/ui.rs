@@ -30,10 +30,7 @@ impl<'a> EntityPropertiesWindow<'a> {
         title: impl FnOnce(hecs::EntityRef<'_>) -> egui::WidgetText,
         add_contents: impl FnOnce(&mut egui::Ui, hecs::EntityRef<'_>, &mut hecs::CommandBuffer) -> R,
     ) -> Option<egui::InnerResponse<Option<R>>> {
-        let Some(entity) = *self.entity
-        else {
-            return None;
-        };
+        let entity = (*self.entity)?;
 
         let Ok(entity_ref) = self.scene.entities.entity(entity)
         else {
@@ -150,10 +147,8 @@ where
 
             ui.horizontal(|ui| {
                 ui.heading(type_name::<T>());
-                if self.deletable {
-                    if ui.small_button("Delete").clicked() {
-                        deletion_requested = true;
-                    }
+                if self.deletable && ui.small_button("Delete").clicked() {
+                    deletion_requested = true;
                 }
             });
 

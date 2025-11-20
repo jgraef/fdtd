@@ -39,6 +39,7 @@ impl PmlCell {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn new_graded(
         resolution: &Resolution,
         physical_constants: &PhysicalConstants,

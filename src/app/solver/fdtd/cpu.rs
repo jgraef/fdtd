@@ -109,7 +109,7 @@ impl FdtdCpuSolverInstance {
                 .unwrap_or_default()
         });
 
-        let boundary_conditions = default_boundary_conditions(&strider.size());
+        let boundary_conditions = default_boundary_conditions(strider.size());
 
         Self {
             strider,
@@ -435,6 +435,7 @@ impl Axis {
 }
 
 /// See [`partial_derivate`] for details.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn jacobian<T>(
     x: &Point3<usize>,
     dx0: &Vector3<usize>,
@@ -531,6 +532,7 @@ impl Jacobian {
 /// To compute the spatial partial derivatives adjacent field values are needed.
 /// Since these are not available outside of the lattice, all derivatives along
 /// a boundary default to 0. This is effectively a Neumann boundary condition.
+#[allow(clippy::too_many_arguments)]
 fn partial_derivative<T>(
     axis: Axis,
     x: &Point3<usize>,

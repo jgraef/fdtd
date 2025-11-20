@@ -241,7 +241,7 @@ impl SolverConfigUiWindow {
                 // sanity check if selection is out of bounds
                 if self
                     .selection
-                    .map_or(false, |selection| selection >= solver_configs.len())
+                    .is_some_and(|selection| selection >= solver_configs.len())
                 {
                     self.selection = solver_configs.len().checked_sub(1);
                 }

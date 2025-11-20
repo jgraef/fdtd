@@ -134,8 +134,8 @@ pub enum Boo<'a, T> {
 impl<'a, T> AsRef<T> for Boo<'a, T> {
     fn as_ref(&self) -> &T {
         match self {
-            Boo::Borrowed(value) => &**value,
-            Boo::Owned(value) => &value,
+            Boo::Borrowed(value) => value,
+            Boo::Owned(value) => value,
         }
     }
 }
@@ -145,7 +145,7 @@ impl<'a, T> Deref for Boo<'a, T> {
 
     fn deref(&self) -> &Self::Target {
         match self {
-            Boo::Borrowed(value) => &**value,
+            Boo::Borrowed(value) => value,
             Boo::Owned(value) => value,
         }
     }
@@ -181,8 +181,8 @@ pub enum Moo<'a, T> {
 impl<'a, T> AsRef<T> for Moo<'a, T> {
     fn as_ref(&self) -> &T {
         match self {
-            Moo::Mut(value) => &**value,
-            Moo::Owned(value) => &value,
+            Moo::Mut(value) => value,
+            Moo::Owned(value) => value,
         }
     }
 }
@@ -190,7 +190,7 @@ impl<'a, T> AsRef<T> for Moo<'a, T> {
 impl<'a, T> AsMut<T> for Moo<'a, T> {
     fn as_mut(&mut self) -> &mut T {
         match self {
-            Moo::Mut(value) => *value,
+            Moo::Mut(value) => value,
             Moo::Owned(value) => value,
         }
     }
@@ -201,7 +201,7 @@ impl<'a, T> Deref for Moo<'a, T> {
 
     fn deref(&self) -> &Self::Target {
         match self {
-            Moo::Mut(value) => &**value,
+            Moo::Mut(value) => value,
             Moo::Owned(value) => value,
         }
     }
@@ -210,7 +210,7 @@ impl<'a, T> Deref for Moo<'a, T> {
 impl<'a, T> DerefMut for Moo<'a, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         match self {
-            Moo::Mut(value) => *value,
+            Moo::Mut(value) => value,
             Moo::Owned(value) => value,
         }
     }

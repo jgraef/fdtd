@@ -779,7 +779,7 @@ impl<'a> Selection<'a> {
     }
 }
 
-pub const CLIPBOARD_PREFIX: &'static str = "data:application/x-fdtd;base64,";
+pub const CLIPBOARD_PREFIX: &str = "data:application/x-fdtd;base64,";
 
 #[derive(derive_more::Debug)]
 pub struct SelectionMut<'a> {
@@ -804,7 +804,7 @@ impl<'a> SelectionMut<'a> {
         {
             self.scene
                 .command_buffer
-                .insert(entity, (Selected, self.outline.clone()));
+                .insert(entity, (Selected, *self.outline));
         }
     }
 
@@ -822,7 +822,7 @@ impl<'a> SelectionMut<'a> {
             else if entity_ref.satisfies::<&Selectable>() {
                 self.scene
                     .command_buffer
-                    .insert(entity, (Selected, self.outline.clone()));
+                    .insert(entity, (Selected, *self.outline));
             }
         }
     }
@@ -832,7 +832,7 @@ impl<'a> SelectionMut<'a> {
         for (entity, ()) in self.scene.entities.query_mut::<()>().with::<&Selectable>() {
             self.scene
                 .command_buffer
-                .insert(entity, (Selected, self.outline.clone()));
+                .insert(entity, (Selected, *self.outline));
         }
     }
 

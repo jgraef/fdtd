@@ -159,6 +159,7 @@ impl egui::Plugin for EguiClipboardPlugin {
 
     fn output_hook(&mut self, output: &mut egui::FullOutput) {
         for command in &output.platform_output.commands {
+            #[allow(clippy::single_match)]
             match command {
                 egui::OutputCommand::CopyText(_) => {
                     tracing::debug!(?command, "clipboard-ext: platform command");

@@ -173,7 +173,7 @@ impl OctTree {
         transform: &Isometry3<f32>,
         entities: &'a hecs::World,
     ) -> impl Iterator<Item = (hecs::Entity, Contact)> {
-        let aabb = shape.compute_aabb(&transform);
+        let aabb = shape.compute_aabb(transform);
 
         let view = entities.view::<(&Transform, &SharedShape)>();
 

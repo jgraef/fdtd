@@ -96,7 +96,7 @@ impl Texture {
         // todo: see https://docs.rs/wgpu/latest/wgpu/struct.Queue.html#performance-considerations-2
 
         assert_eq!(
-            image_size(&image),
+            image_size(image),
             self.size,
             "provided image size doesn't match texture"
         );

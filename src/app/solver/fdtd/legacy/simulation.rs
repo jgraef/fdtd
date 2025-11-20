@@ -201,7 +201,7 @@ impl Simulation {
     pub fn new(config: &FdtdSolverConfig) -> Self {
         let strider = config.strider();
         let lattice = Lattice::from_default(&strider);
-        let boundary_conditions = default_boundary_conditions(&strider.size());
+        let boundary_conditions = default_boundary_conditions(strider.size());
 
         Self {
             physical_constants: config.physical_constants,
@@ -443,7 +443,7 @@ impl Simulation {
     {
         *axis.vector_component_mut(&mut x0.coords) = 0;
 
-        let n = *axis.vector_component(&self.strider.size());
+        let n = *axis.vector_component(self.strider.size());
         let e = axis.basis().into_inner();
         let resolution = *axis.vector_component(&self.resolution.spatial);
         let swap_buffer_index = self.swap_buffer_index();
@@ -451,7 +451,7 @@ impl Simulation {
         (0..n).map(move |i| {
             let x = x0 + i * e;
             let cell = self.lattice.get_point(&self.strider, &x).unwrap();
-            let value = f(&cell, swap_buffer_index);
+            let value = f(cell, swap_buffer_index);
             (i as f64 * resolution + x_correction, value)
         })
     }

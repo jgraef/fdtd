@@ -667,7 +667,7 @@ impl Pipeline {
                     label: Some(label),
                     layout: Some(&pipeline_layout),
                     vertex: wgpu::VertexState {
-                        module: &shader_module,
+                        module: shader_module,
                         entry_point: vertex_shader_entry_point,
                         compilation_options: Default::default(),
                         buffers: &[],
@@ -698,7 +698,7 @@ impl Pipeline {
                         alpha_to_coverage_enabled: false,
                     },
                     fragment: Some(wgpu::FragmentState {
-                        module: &shader_module,
+                        module: shader_module,
                         entry_point: fragment_shader_entry_point,
                         compilation_options: Default::default(),
                         targets: &[Some(wgpu::ColorTargetState {

@@ -173,7 +173,7 @@ impl FdtdWgpuSolverInstance {
             wgpu::BufferUsages::STORAGE,
             |index| {
                 strider
-                    .from_index(index)
+                    .point(index)
                     .map(|point| {
                         UpdateCoefficients::new(
                             &config.resolution,
@@ -249,7 +249,7 @@ impl FdtdWgpuSolverInstance {
 
         state.source_buffer.push(SourceData::default());
         for (point, values) in &sources {
-            if let Some(index) = self.strider.to_index(point) {
+            if let Some(index) = self.strider.index(point) {
                 state.source_buffer.push(SourceData::new(
                     index as u32,
                     values.j_source.cast(),
@@ -261,7 +261,7 @@ impl FdtdWgpuSolverInstance {
             .source_buffer
             .flush(&self.backend.queue, |new_buffer| {
                 state.update_bind_groups =
-                    UpdateBindGroups::new(&self, &state.field_buffers, new_buffer)
+                    UpdateBindGroups::new(self, &state.field_buffers, new_buffer)
             });
 
         let mut command_encoder =
@@ -434,7 +434,7 @@ impl ReadState<FdtdWgpuSolverInstance> for AccessFieldRegion {
             }
         };
 
-        match instance.strider.to_contiguous_index_range(range.clone()) {
+        match instance.strider.contiguous_index_range(range.clone()) {
             Ok(index_range) => fetch_data(index_range, Some(range)),
             Err(index_range) => {
                 // todo: run a compute shader that projects the selected region into a first
@@ -465,7 +465,7 @@ impl<'a> Iterator for WgpuFieldRegionIter<'a> {
         while self.view_index < self.view.len() {
             let point = self
                 .strider
-                .from_index(self.view_index + self.start_index)
+                .point(self.view_index + self.start_index)
                 .unwrap();
 
             let check_passed = self
@@ -757,11 +757,7 @@ impl ComputeLimits {
         work_size: usize,
         workgroup_size: &Vector3<u32>,
     ) -> impl Iterator<Item = Vector3<u32>> + 'static {
-        divide_work_into_dispatches(
-            work_size,
-            &workgroup_size,
-            &self.max_workgroups_per_dispatch,
-        )
+        divide_work_into_dispatches(work_size, workgroup_size, &self.max_workgroups_per_dispatch)
     }
 }
 
