@@ -1,4 +1,5 @@
 use std::{
+    convert::identity,
     ops::{
         Deref,
         DerefMut,
@@ -216,7 +217,12 @@ impl DrawCommand {
         if let Some(solid_pipeline) = &self.solid_pipeline
             && !self.buffer.draw_meshes.is_empty()
         {
-            render_pass.draw_meshes_with_pipeline(solid_pipeline, &self.buffer.draw_meshes, true);
+            render_pass.draw_meshes_with_pipeline(
+                solid_pipeline,
+                &self.buffer.draw_meshes,
+                true,
+                identity,
+            );
         }
 
         // wireframe mesh
@@ -227,6 +233,12 @@ impl DrawCommand {
                 wireframe_pipeline,
                 &self.buffer.draw_meshes,
                 false,
+                |Range { start, end }| {
+                    Range {
+                        start: 2 * start,
+                        end: 2 * end,
+                    }
+                },
             );
         }
 
@@ -241,6 +253,7 @@ impl DrawCommand {
                     .iter()
                     .map(|draw_outline| &self.buffer.draw_meshes[draw_outline.draw_mesh_index]),
                 false,
+                identity,
             );
         }
 
@@ -296,6 +309,7 @@ impl<'a> RenderPass<'a> {
         pipeline: &wgpu::RenderPipeline,
         draw_meshes: impl IntoIterator<Item = &'b DrawMesh>,
         set_stencil_reference: bool,
+        map_indices: impl Fn(Range<u32>) -> Range<u32>,
     ) {
         // set draw (solid) pipeline
         self.inner.set_pipeline(pipeline);
@@ -313,8 +327,9 @@ impl<'a> RenderPass<'a> {
                 self.set_stencil_reference(draw_command.stencil_reference);
             }
 
-            self.inner
-                .draw(draw_command.indices.clone(), draw_command.instances.clone());
+            let indices = map_indices(draw_command.indices.clone());
+
+            self.inner.draw(indices, draw_command.instances.clone());
         }
     }
 

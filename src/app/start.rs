@@ -43,7 +43,7 @@ pub(super) fn run_app(args: Args) -> Result<(), Error> {
     // these are more or less fixed
     let multisample_count = NonZero::new(4).unwrap(); // can really only be 1 or 4
     let depth_texture_format = Some(wgpu::TextureFormat::Depth24PlusStencil8);
-    let required_features = wgpu::Features::POLYGON_MODE_LINE;
+    let required_features = wgpu::Features::default();
     let required_limits = Default::default();
 
     // derive `NativeOptions` values from depth texture format

@@ -323,7 +323,7 @@ impl Renderer {
                     write_mask: 0xff,
                 }
             },
-            wgpu::PolygonMode::Fill,
+            wgpu::PrimitiveTopology::TriangleList,
             Some("vs_main_clear"),
             Some("fs_main_single_color"),
             false,
@@ -343,7 +343,7 @@ impl Renderer {
             wgpu::CompareFunction::Less,
             Some(Stencil::OUTLINE),
             None,
-            wgpu::PolygonMode::Fill,
+            wgpu::PrimitiveTopology::TriangleList,
             Some("vs_main_solid"),
             Some("fs_main_solid"),
         );
@@ -356,7 +356,7 @@ impl Renderer {
             wgpu::CompareFunction::LessEqual,
             None,
             None,
-            wgpu::PolygonMode::Line,
+            wgpu::PrimitiveTopology::LineList,
             Some("vs_main_wireframe"),
             Some("fs_main_single_color"),
         );
@@ -370,7 +370,7 @@ impl Renderer {
             None,
             // mask used, todo: don't hardcode values like this :D
             Some(Stencil::OUTLINE),
-            wgpu::PolygonMode::Fill,
+            wgpu::PrimitiveTopology::TriangleList,
             Some("vs_main_outline"),
             Some("fs_main_single_color"),
         );
@@ -390,7 +390,7 @@ impl Renderer {
                 bias: Default::default(),
             },
             Default::default(),
-            wgpu::PolygonMode::Fill,
+            wgpu::PrimitiveTopology::TriangleList,
             Some("vs_main_quad_with_texture"),
             Some("fs_main_quad_with_texture"),
             false,
@@ -640,7 +640,7 @@ impl Pipeline {
         bind_group_layouts: &[&wgpu::BindGroupLayout],
         depth_state: DepthState,
         stencil_state: wgpu::StencilState,
-        polygon_mode: wgpu::PolygonMode,
+        topology: wgpu::PrimitiveTopology,
         vertex_shader_entry_point: Option<&str>,
         fragment_shader_entry_point: Option<&str>,
         cull_back_faces: bool,
@@ -673,12 +673,12 @@ impl Pipeline {
                         buffers: &[],
                     },
                     primitive: wgpu::PrimitiveState {
-                        topology: wgpu::PrimitiveTopology::TriangleList,
+                        topology,
                         strip_index_format: None,
                         front_face,
                         cull_mode,
                         unclipped_depth: false,
-                        polygon_mode,
+                        polygon_mode: Default::default(),
                         conservative: false,
                     },
                     depth_stencil: wgpu_context.renderer_config.depth_texture_format.map(
@@ -726,13 +726,22 @@ impl Pipeline {
         depth_compare: wgpu::CompareFunction,
         write_to_stencil_buffer: Option<Stencil>,
         test_against_stencil_buffer: Option<Stencil>,
-        polygon_mode: wgpu::PolygonMode,
+        topology: wgpu::PrimitiveTopology,
         vertex_shader_entry_point: Option<&str>,
         fragment_shader_entry_point: Option<&str>,
     ) -> Self {
         // enable/disable back-face culling. the mesh shader will paint back-faces
         // bright pink, so we'll know if something is flipped.
         const CULL_BACK_FACES: bool = true;
+
+        let cull_back_faces = match topology {
+            wgpu::PrimitiveTopology::PointList
+            | wgpu::PrimitiveTopology::LineList
+            | wgpu::PrimitiveTopology::LineStrip => false,
+            wgpu::PrimitiveTopology::TriangleList | wgpu::PrimitiveTopology::TriangleStrip => {
+                CULL_BACK_FACES
+            }
+        };
 
         let mut stencil_state = wgpu::StencilState::default();
         if let Some(write_mask) = write_to_stencil_buffer {
@@ -767,10 +776,10 @@ impl Pipeline {
                 bias: Default::default(),
             },
             stencil_state,
-            polygon_mode,
+            topology,
             vertex_shader_entry_point,
             fragment_shader_entry_point,
-            CULL_BACK_FACES,
+            cull_back_faces,
         )
     }
 }

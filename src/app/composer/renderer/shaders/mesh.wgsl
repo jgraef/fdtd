@@ -177,7 +177,28 @@ fn fs_main_solid(input: VertexOutputSolid, @builtin(front_facing) front_face: bo
 fn vs_main_wireframe(input: VertexInput) -> VertexOutputSingleColor {
     let instance = instance_buffer[input.instance_index];
 
-    let vertex = get_vertex(input.vertex_index);
+    /*
+        0----2
+        |   /
+        | /
+        1
+
+        shader will be called with vertex_index = [0, 1, 2, 3, 4, 5] (2 * number of vertices)
+
+        vertex_index | draw vertex
+                   0 | 0
+                   1 | 1
+                   2 | 1
+                   3 | 2
+                   4 | 2
+                   5 | 0
+
+        `(i + 1) % 6 / 2` gives the vertex indices for lines of a single triangle.
+        `(i / 6) * 3` gives the vertex index for the first index of a triangle.
+    */
+
+    let vertex_index = ((input.vertex_index + 1) % 6) / 2 + (input.vertex_index / 6) * 3;
+    let vertex = get_vertex(vertex_index);
 
     var output: VertexOutputSingleColor;
     output.color = instance.material.wireframe;
