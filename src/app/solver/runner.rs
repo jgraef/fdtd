@@ -109,6 +109,16 @@ impl SolverRunner {
                     run_single_threaded();
                 }
                 else {
+                    #[cfg(not(feature = "rayon"))]
+                    {
+                        let _ = num_threads;
+                        tracing::warn!(
+                            "Compiled without rayon feature. Falling back to single-threaded"
+                        );
+                        run_single_threaded();
+                    }
+
+                    #[cfg(feature = "rayon")]
                     run_fdtd_with_backend(
                         scene,
                         common_config,

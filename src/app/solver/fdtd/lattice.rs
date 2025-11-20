@@ -10,11 +10,6 @@ use nalgebra::{
     Vector3,
     Vector4,
 };
-use rayon::iter::{
-    IndexedParallelIterator,
-    IntoParallelRefMutIterator,
-    ParallelIterator,
-};
 
 use crate::util::{
     PointIter,
@@ -117,13 +112,20 @@ impl<T> Lattice<T> {
     }
 
     // todo: range
+    #[cfg(feature = "rayon")]
     pub fn par_iter_mut(
         &mut self,
         strider: &Strider,
-    ) -> impl ParallelIterator<Item = (usize, Point3<usize>, &mut T)>
+    ) -> impl rayon::iter::ParallelIterator<Item = (usize, Point3<usize>, &mut T)>
     where
         T: Send + Sync,
     {
+        use rayon::iter::{
+            IndexedParallelIterator as _,
+            IntoParallelRefMutIterator as _,
+            ParallelIterator as _,
+        };
+
         self.data.par_iter_mut().enumerate().map(|(index, value)| {
             let point = strider.point_unchecked(index);
             (index, point, value)

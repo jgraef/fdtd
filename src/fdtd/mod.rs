@@ -29,7 +29,6 @@ use nalgebra::{
     Point3,
     Vector3,
 };
-use rayon::ThreadPoolBuildError;
 
 use crate::{
     app::solver::{
@@ -48,7 +47,6 @@ use crate::{
                 FdtdCpuBackend,
                 FdtdCpuSolverInstance,
                 FdtdCpuSolverState,
-                MultiThreaded,
                 SingleThreaded,
             },
             source::{
@@ -117,16 +115,29 @@ impl App {
             size: Vector3::new(500.0, 0.0, 0.0),
         };
 
+        let single_threaded =
+            || Box::new(Simulation::cpu_single_threaded(&config)) as Box<dyn ErasedSimulation>;
+
         let simulation = if args.wgpu {
             Box::new(Simulation::wgpu(&config, &device, &queue)) as Box<dyn ErasedSimulation>
         }
         else if let Some(num_threads) = args.threads {
-            let num_threads = (num_threads != 0).then_some(num_threads);
-            Box::new(Simulation::cpu_multi_threaded(&config, num_threads)?)
-                as Box<dyn ErasedSimulation>
+            #[cfg(not(feature = "rayon"))]
+            {
+                let _ = num_threads;
+                tracing::warn!("Compiled without rayon feature. Falling back to single-threaded");
+                single_threaded()
+            }
+
+            #[cfg(feature = "rayon")]
+            {
+                let num_threads = (num_threads != 0).then_some(num_threads);
+                Box::new(Simulation::cpu_multi_threaded(&config, num_threads)?)
+                    as Box<dyn ErasedSimulation>
+            }
         }
         else {
-            Box::new(Simulation::cpu_single_threaded(&config)) as Box<dyn ErasedSimulation>
+            single_threaded()
         };
 
         let ticks_per_second = 100;
@@ -296,11 +307,17 @@ impl Simulation<FdtdCpuSolverInstance<SingleThreaded>, FdtdCpuSolverState> {
     }
 }
 
-impl Simulation<FdtdCpuSolverInstance<MultiThreaded>, FdtdCpuSolverState> {
+#[cfg(feature = "rayon")]
+impl
+    Simulation<
+        FdtdCpuSolverInstance<crate::app::solver::fdtd::cpu::MultiThreaded>,
+        FdtdCpuSolverState,
+    >
+{
     pub fn cpu_multi_threaded(
         config: &FdtdSolverConfig,
         num_threads: Option<usize>,
-    ) -> Result<Self, ThreadPoolBuildError> {
+    ) -> Result<Self, rayon::ThreadPoolBuildError> {
         let backend = FdtdCpuBackend::multi_threaded(num_threads)?;
         let label = format!("cpu ({} threads)", backend.num_threads());
 
