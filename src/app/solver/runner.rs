@@ -13,6 +13,9 @@ use crate::{
             scene::Scene,
         },
         solver::{
+            DomainDescription,
+            SolverBackend,
+            SolverInstance,
             config::{
                 EvaluateStopCondition,
                 Parallelization,
@@ -27,11 +30,6 @@ use crate::{
                 FdtdSolverConfig,
                 cpu::FdtdCpuBackend,
                 wgpu::FdtdWgpuBackend,
-            },
-            traits::{
-                DomainDescription,
-                SolverBackend,
-                SolverInstance,
             },
         },
     },

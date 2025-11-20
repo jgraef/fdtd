@@ -18,8 +18,8 @@ use crate::{
             transform::Transform,
         },
         solver::{
+            SolverInstance,
             fdtd,
-            traits::SolverInstance,
         },
     },
     physics::{

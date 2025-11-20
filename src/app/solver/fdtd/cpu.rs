@@ -18,6 +18,14 @@ use num::{
 
 use crate::{
     app::solver::{
+        DomainDescription,
+        Field,
+        FieldComponent,
+        FieldMut,
+        SolverBackend,
+        SolverInstance,
+        SourceValues,
+        Time,
         config::{
             EvaluateStopCondition,
             StopCondition,
@@ -42,18 +50,6 @@ use crate::{
                 UpdateCoefficients,
                 evaluate_stop_condition,
             },
-        },
-        maxwell::{
-            Field,
-            FieldComponent,
-            FieldMut,
-            SourceValues,
-        },
-        traits::{
-            DomainDescription,
-            SolverBackend,
-            SolverInstance,
-            Time,
         },
     },
     physics::PhysicalConstants,

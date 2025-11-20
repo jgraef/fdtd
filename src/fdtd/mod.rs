@@ -32,6 +32,13 @@ use nalgebra::{
 
 use crate::{
     app::solver::{
+        DomainDescription,
+        Field,
+        FieldComponent,
+        SolverBackend,
+        SolverInstance,
+        SourceValues,
+        Time,
         fdtd::{
             FdtdSolverConfig,
             Resolution,
@@ -46,17 +53,6 @@ use crate::{
                 FdtdWgpuSolverInstance,
                 FdtdWgpuSolverState,
             },
-        },
-        maxwell::{
-            Field,
-            FieldComponent,
-            SourceValues,
-        },
-        traits::{
-            DomainDescription,
-            SolverBackend,
-            SolverInstance,
-            Time,
         },
     },
     fdtd::executor::Executor,

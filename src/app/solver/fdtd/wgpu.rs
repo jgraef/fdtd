@@ -22,6 +22,13 @@ use wgpu::util::DeviceExt;
 
 use crate::{
     app::solver::{
+        DomainDescription,
+        Field,
+        FieldComponent,
+        SolverBackend,
+        SolverInstance,
+        SourceValues,
+        Time,
         config::{
             EvaluateStopCondition,
             StopCondition,
@@ -36,17 +43,6 @@ use crate::{
                 UpdateCoefficients,
                 evaluate_stop_condition,
             },
-        },
-        maxwell::{
-            Field,
-            FieldComponent,
-            SourceValues,
-        },
-        traits::{
-            DomainDescription,
-            SolverBackend,
-            SolverInstance,
-            Time,
         },
     },
     util::{
