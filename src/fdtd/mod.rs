@@ -35,6 +35,7 @@ use crate::{
         DomainDescription,
         Field,
         FieldComponent,
+        FieldView,
         SolverBackend,
         SolverInstance,
         SourceValues,
@@ -47,7 +48,10 @@ use crate::{
                 FdtdCpuSolverInstance,
                 FdtdCpuSolverState,
             },
-            source::GaussianPulse,
+            source::{
+                GaussianPulse,
+                SourceFunction,
+            },
             wgpu::{
                 FdtdWgpuBackend,
                 FdtdWgpuSolverInstance,
@@ -323,10 +327,11 @@ where
             FieldComponent::H => 2,
         };
 
+        let field = self.instance.field(&self.state, .., field_component);
+
         PlotPoints::Owned(
-            self.instance
-                .field(&self.state, .., field_component)
-                .into_iter()
+            field
+                .iter()
                 .map(|(x, y)| {
                     // note: casting x like this doesn't account for resolution and offset
                     PlotPoint::new(x.x as f64, y[component_index] as f64)

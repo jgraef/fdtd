@@ -1,6 +1,9 @@
 use std::{
     convert::Infallible,
-    ops::RangeBounds,
+    ops::{
+        Range,
+        RangeBounds,
+    },
     time::Duration,
 };
 
@@ -22,6 +25,7 @@ use crate::{
         Field,
         FieldComponent,
         FieldMut,
+        FieldView,
         SolverBackend,
         SolverInstance,
         SourceValues,
@@ -53,6 +57,7 @@ use crate::{
         },
     },
     physics::PhysicalConstants,
+    util::normalize_point_bounds,
 };
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -301,8 +306,8 @@ impl Time for FdtdCpuSolverState {
 }
 
 impl Field for FdtdCpuSolverInstance {
-    type Iter<'a>
-        = CpuFieldRegionIter<'a>
+    type View<'a>
+        = CpuFieldView<'a>
     where
         Self: 'a;
 
@@ -311,16 +316,79 @@ impl Field for FdtdCpuSolverInstance {
         state: &'a Self::State,
         range: R,
         field_component: FieldComponent,
-    ) -> Self::Iter<'a>
+    ) -> Self::View<'a>
     where
         R: RangeBounds<Self::Point>,
     {
-        CpuFieldRegionIter {
+        let range = normalize_point_bounds(range, *self.strider.size());
+        CpuFieldView {
             field_component,
-            lattice_iter: state.lattice.iter(&self.strider, range),
+            range,
+            strider: &self.strider,
             swap_buffer_index: SwapBufferIndex::from_tick(state.tick),
+            lattice: &state.lattice,
         }
     }
+}
+
+#[derive(Debug)]
+pub struct CpuFieldView<'a> {
+    field_component: FieldComponent,
+    range: Range<Point3<usize>>,
+    strider: &'a Strider,
+    swap_buffer_index: SwapBufferIndex,
+    lattice: &'a Lattice<SwapBuffer<Cell>>,
+}
+
+impl<'a> FieldView<Point3<usize>> for CpuFieldView<'a> {
+    type Iter<'b>
+        = CpuFieldIter<'b>
+    where
+        Self: 'b;
+
+    fn at(&self, point: &Point3<usize>) -> Option<Vector3<f64>> {
+        if self.range.contains(point) {
+            let cell = self.lattice.get_point(&self.strider, point)?;
+            Some(cell[self.swap_buffer_index].get_field_component(self.field_component))
+        }
+        else {
+            None
+        }
+    }
+
+    fn iter<'b>(&'b self) -> Self::Iter<'b> {
+        CpuFieldIter {
+            field_component: self.field_component,
+            lattice_iter: self.lattice.iter(&self.strider, self.range.clone()),
+            swap_buffer_index: self.swap_buffer_index,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct CpuFieldIter<'a> {
+    field_component: FieldComponent,
+    lattice_iter: LatticeIter<'a, SwapBuffer<Cell>>,
+    swap_buffer_index: SwapBufferIndex,
+}
+
+impl<'a> Iterator for CpuFieldIter<'a> {
+    type Item = (Point3<usize>, Vector3<f64>);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let (_index, point, data) = self.lattice_iter.next()?;
+        let value = data[self.swap_buffer_index].get_field_component(self.field_component);
+        Some((point, value))
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.lattice_iter.size_hint()
+    }
+}
+
+impl<'a> ExactSizeIterator for CpuFieldIter<'a> where
+    LatticeIter<'a, SwapBuffer<Cell>>: ExactSizeIterator
+{
 }
 
 impl FieldMut for FdtdCpuSolverInstance {
@@ -344,36 +412,6 @@ impl FieldMut for FdtdCpuSolverInstance {
             swap_buffer_index: SwapBufferIndex::from_tick(state.tick),
         }
     }
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct CpuFieldRegionIter<'a> {
-    field_component: FieldComponent,
-    lattice_iter: LatticeIter<'a, SwapBuffer<Cell>>,
-    swap_buffer_index: SwapBufferIndex,
-}
-
-impl<'a> Iterator for CpuFieldRegionIter<'a> {
-    type Item = (Point3<usize>, Vector3<f64>);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let (_index, point, data) = self.lattice_iter.next()?;
-        let data = &data[self.swap_buffer_index];
-        let value = match self.field_component {
-            FieldComponent::E => data.e,
-            FieldComponent::H => data.h,
-        };
-        Some((point, value))
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        self.lattice_iter.size_hint()
-    }
-}
-
-impl<'a> ExactSizeIterator for CpuFieldRegionIter<'a> where
-    LatticeIter<'a, SwapBuffer<Cell>>: ExactSizeIterator
-{
 }
 
 #[derive(Debug)]
@@ -411,6 +449,15 @@ struct Cell {
     e: Vector3<f64>,
     h: Vector3<f64>,
     source_id: usize,
+}
+
+impl Cell {
+    fn get_field_component(&self, field_component: FieldComponent) -> Vector3<f64> {
+        match field_component {
+            FieldComponent::E => self.e,
+            FieldComponent::H => self.h,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]

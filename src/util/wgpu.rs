@@ -406,7 +406,7 @@ impl TypedArrayBufferInner {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct TypedArrayBufferReadView<'a, T> {
     inner: Option<TypedBufferReadViewInner>,
     _phantom: PhantomData<&'a [T]>,
@@ -467,7 +467,7 @@ impl<'a, T> TypedArrayBufferReadView<'a, T> {
             inner: Some(TypedBufferReadViewInner {
                 alignment,
                 staging_buffer,
-                staging_view,
+                staging_view: Arc::new(staging_view),
             }),
             _phantom: PhantomData,
         }
@@ -506,11 +506,11 @@ impl<'a, T> Drop for TypedArrayBufferReadView<'a, T> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct TypedBufferReadViewInner {
     alignment: StagingBufferAlignment,
     staging_buffer: wgpu::Buffer,
-    staging_view: wgpu::BufferView,
+    staging_view: Arc<wgpu::BufferView>,
 }
 
 #[derive(Debug)]

@@ -178,6 +178,7 @@ impl<'a, T> ExactSizeIterator for LatticeIterMut<'a, T> where StriderPointIter: 
 pub struct Strider {
     strides: Vector4<usize>,
     size: Vector3<usize>,
+    //offset: usize,
 }
 
 impl Strider {
@@ -185,6 +186,7 @@ impl Strider {
         Self {
             strides: strides_for_size(size),
             size: *size,
+            //offset: 0,
         }
     }
 
@@ -263,6 +265,16 @@ impl Strider {
             Err(indices)
         }
     }
+
+    /*pub fn region(&self, range: impl RangeBounds<Point3<usize>>) -> Self {
+        let range = normalize_point_bounds(range, self.size);
+        let offset = self.index(&range.start);
+        Self {
+            strides: self.strides,
+            size: range.end - range.start,
+            offset,
+        }
+    }*/
 }
 
 #[derive(Clone, Copy, Debug)]

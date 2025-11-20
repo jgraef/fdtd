@@ -71,7 +71,7 @@ pub trait Time {
 }
 
 pub trait Field: SolverInstance {
-    type Iter<'a>: Iterator<Item = (Self::Point, Vector3<f64>)>
+    type View<'a>: FieldView<Self::Point>
     where
         Self: 'a;
 
@@ -80,7 +80,7 @@ pub trait Field: SolverInstance {
         state: &'a Self::State,
         range: R,
         field_component: FieldComponent,
-    ) -> Self::Iter<'a>
+    ) -> Self::View<'a>
     where
         R: RangeBounds<Self::Point>;
 }
@@ -100,6 +100,15 @@ pub trait FieldMut: SolverInstance {
     ) -> Self::IterMut<'a>
     where
         R: RangeBounds<Self::Point>;
+}
+
+pub trait FieldView<P> {
+    type Iter<'a>: Iterator<Item = (P, Vector3<f64>)>
+    where
+        Self: 'a;
+
+    fn at(&self, point: &P) -> Option<Vector3<f64>>;
+    fn iter<'a>(&'a self) -> Self::Iter<'a>;
 }
 
 #[derive(Clone, Copy, Debug)]

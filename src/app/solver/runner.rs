@@ -4,18 +4,30 @@ use std::time::{
 };
 
 use colorgrad::Gradient;
-use nalgebra::Point3;
+use nalgebra::{
+    Point3,
+    Vector3,
+};
+use palette::Srgba;
 
 use crate::{
     app::{
         composer::{
-            renderer::WgpuContext,
+            renderer::{
+                WgpuContext,
+                texture::TextureWriter,
+            },
             scene::Scene,
         },
         solver::{
             DomainDescription,
+            Field,
+            FieldComponent,
+            FieldView,
             SolverBackend,
             SolverInstance,
+            SourceValues,
+            Time,
             config::{
                 EvaluateStopCondition,
                 Parallelization,
@@ -29,8 +41,13 @@ use crate::{
                 self,
                 FdtdSolverConfig,
                 cpu::FdtdCpuBackend,
+                source::{
+                    GaussianPulse,
+                    SourceFunction,
+                },
                 wgpu::FdtdWgpuBackend,
             },
+            util::WriteImage,
         },
     },
     physics::material::Material,
@@ -92,8 +109,9 @@ fn run_fdtd_with_backend<B>(
     backend: &B,
 ) where
     B: SolverBackend<Config = FdtdSolverConfig, Point = Point3<usize>>,
-    B::Instance: EvaluateStopCondition + Send + 'static,
-    <B::Instance as SolverInstance>::State: Send + 'static,
+    B::Instance:
+        EvaluateStopCondition + SolverInstance<Source = SourceValues> + Field + Send + 'static,
+    <B::Instance as SolverInstance>::State: Time + Send + 'static,
 {
     let time_start = Instant::now();
 
@@ -135,11 +153,13 @@ fn run_fdtd_with_backend<B>(
     let memory_required = backend
         .memory_required(&config)
         .expect("fdtd always returns memory required");
+    let lattice_size = config.size();
+
     tracing::debug!(
         ?size,
         resolution = ?config.resolution,
         memory_required = %format_size(memory_required),
-        lattice_size = ?config.size(),
+        ?lattice_size,
         "creating fdtd simulation"
     );
 
@@ -159,18 +179,54 @@ fn run_fdtd_with_backend<B>(
 
     let state = instance.create_state();
 
-    // todo: setup sources and observers
+    // create sources
+    // todo: from scene
+    let mut sources = Sources::default();
+    /*let source = fdtd::source::ContinousWave {
+        electric_current_density_amplitude: Vector3::z() / config.resolution.temporal,
+        magnetic_current_density_amplitude: Vector3::zeros(),
+        electric_current_density_phase: 0.0,
+        magnetic_current_density_phase: 0.0,
+        frequency: 2.0,
+    };*/
+    sources.add(
+        (lattice_size / 2).into(),
+        Vector3::z() / config.resolution.temporal,
+        Vector3::zeros(),
+        GaussianPulse {
+            time: config.resolution.temporal * 50.0,
+            duration: config.resolution.temporal * 10.0,
+        },
+    );
+
+    // create observers
+    let observers = Observers::from_scene(scene, &lattice_size);
 
     tracing::debug!("time to create simulation: {:?}", time_start.elapsed());
 
     // run simulation
-    spawn_solver(instance, state, fdtd_config.stop_condition);
+    spawn_solver(
+        instance,
+        state,
+        fdtd_config.stop_condition,
+        sources,
+        observers,
+    );
 }
 
-fn spawn_solver<I>(instance: I, mut state: I::State, stop_condition: StopCondition)
-where
-    I: SolverInstance + EvaluateStopCondition + Send + 'static,
-    I::State: Send + 'static,
+fn spawn_solver<I>(
+    instance: I,
+    mut state: I::State,
+    stop_condition: StopCondition,
+    sources: Sources,
+    mut observers: Observers,
+) where
+    I: SolverInstance<Point = Point3<usize>, Source = SourceValues>
+        + EvaluateStopCondition
+        + Field
+        + Send
+        + 'static,
+    I::State: Time + Send + 'static,
 {
     let _join_handle = std::thread::spawn(move || {
         let time_start = Instant::now();
@@ -185,7 +241,10 @@ where
 
             //tracing::debug!(tick = simulation.tick(), elapsed = ?time_elapsed);
 
-            instance.update(&mut state, []);
+            let time = state.time();
+            instance.update(&mut state, sources.generate(time));
+
+            observers.run(&instance, &state);
 
             //run_observers(&simulation);
             std::thread::sleep(Duration::from_millis(10));
@@ -224,51 +283,45 @@ impl<'a, 'b> DomainDescription<Point3<usize>> for SceneDomainDescription<'a, 'b>
     }
 }
 
-/*
-fn run_fdtd_old(
-    scene: &mut Scene,
-    common_config: &SolverConfigCommon,
-    fdtd_config: &SolverConfigFdtd,
-) {
+#[derive(Debug)]
+struct Observer {
+    texture_output: TextureWriter,
+    gradient: TestGradient,
+    field_component: FieldComponent,
+}
+
+impl Observer {
+    pub fn run<I>(&mut self, instance: &I, state: &I::State)
+    where
+        I: Field + SolverInstance<Point = Point3<usize>>,
     {
-        // for testing we'll add a source at the origin
-        // todo: remove this
+        let view = instance.field(state, .., self.field_component);
 
-        let mut source_position = aabb.center();
-        source_position.z = origin.z;
-        //let source_position = Point3::new(-40.0, -40.0, 0.0);
+        self.texture_output
+            .write_colors(|point| {
+                let point = Point3::new(point.x as usize, point.y as usize, 0);
 
-        /*let source = fdtd::source::ContinousWave {
-            electric_current_density_amplitude: Vector3::z() / config.resolution.temporal,
-            magnetic_current_density_amplitude: Vector3::zeros(),
-            electric_current_density_phase: 0.0,
-            magnetic_current_density_phase: 0.0,
-            frequency: 2.0,
-        };*/
-        let source = fdtd::legacy::source::GaussianPulse {
-            electric_current_density_amplitude: Vector3::z() / config.resolution.temporal,
-            magnetic_current_density_amplitude: Vector3::zeros(),
-            time: config.resolution.temporal * 50.0,
-            duration: config.resolution.temporal * 10.0,
-        };
+                let value = view.at(&point).unwrap();
+                let value = value.z.clamp(-1.0, 1.0) as f32;
 
-        tracing::debug!(position = ?source_position, ?source, "source");
+                let color: Srgba = self.gradient.at(value).to_array().into();
 
-        simulation.add_source(source_position.cast::<f64>(), source);
+                color
+            })
+            .unwrap();
     }
+}
 
-    let mut run_observers = {
-        let lattice_size = *simulation.strider().size();
+#[derive(Debug, Default)]
+struct Observers {
+    observers: Vec<Observer>,
+}
 
-        // create an "observer". later we want this to be defined by the user and just
-        // attach our TextureOutput to it. We need to create the texture output since
-        // only we know the texture size. write to wgpu texture
-
-        // for now we'll grab just one, since we can't define what to render anyway
-
+impl Observers {
+    pub fn from_scene(scene: &mut Scene, lattice_size: &Vector3<usize>) -> Self {
         let mut observers = vec![];
 
-        for (entity, observer) in scene.entities.query_mut::<&Observer>() {
+        for (entity, observer) in scene.entities.query_mut::<&super::observer::Observer>() {
             // todo: use observer extents
 
             if observer.display_as_texture {
@@ -277,26 +330,11 @@ fn run_fdtd_old(
                 scene
                     .command_buffer
                     .insert_one(entity, texture_output.clone());
-                observers.push(texture_output);
-            }
-
-            if let Some(path) = &observer.write_to_gif {
-                let create_gif_output = || {
-                    Ok::<_, Error>(GifOutput::new(
-                        BufWriter::new(File::create(path)?),
-                        lattice_size.xy().cast(),
-                        Duration::from_millis(10),
-                    )?)
-                };
-
-                match create_gif_output() {
-                    Ok(_output) => {
-                        // todo: add to observers. will need `Box<dyn _>`
-                    }
-                    Err(error) => {
-                        tracing::error!(path = %path.display(), "failed to create GIF output: {}", error);
-                    }
-                }
+                observers.push(Observer {
+                    texture_output,
+                    gradient: TestGradient,
+                    field_component: observer.field_component,
+                });
             }
 
             // for now only one
@@ -306,43 +344,61 @@ fn run_fdtd_old(
         // apply deferred commands
         scene.apply_deferred();
 
-        let gradient = TestGradient;
+        Self { observers }
+    }
 
-        // wrap image output into closure that takes the field values from the
-        // simulation and writes a frame with it everytime it's called
-        move |simulation: &fdtd::legacy::Simulation| {
-            let swap_buffer_index = simulation.swap_buffer_index();
-            let z = lattice_size.z / 2;
-
-            // only one for now
-            let Some(image_output) = observers.first_mut()
-            else {
-                return;
-            };
-
-            image_output
-                .write_colors(|point| {
-                    let point = point.cast();
-                    let cell = simulation
-                        .lattice()
-                        .get_point(simulation.strider(), &Point3::new(point.x, point.y, z))
-                        .unwrap();
-
-                    let e_field = cell.electric_field(swap_buffer_index);
-                    //(0.5 + 0.5 * e_field.y).clamp(0.0, 1.0) as f32
-                    let e_field = e_field.z.clamp(-1.0, 1.0) as f32;
-                    let eps = cell.material().relative_permittivity as f32;
-
-                    let mut color: Srgba = gradient.at(e_field).to_array().into();
-                    color.green = (eps / 20.0).clamp(0.0, 1.0);
-
-                    color
-                })
-                .unwrap();
+    pub fn run<I>(&mut self, instance: &I, state: &I::State)
+    where
+        I: Field + SolverInstance<Point = Point3<usize>>,
+    {
+        for observer in &mut self.observers {
+            observer.run(instance, state);
         }
-    };
+    }
 }
-     */
+
+#[derive(Debug)]
+struct Source {
+    function: Box<dyn SourceFunction>,
+    j_amplitude: Vector3<f64>,
+    m_amplitude: Vector3<f64>,
+    point: Point3<usize>,
+}
+
+#[derive(Debug, Default)]
+struct Sources {
+    sources: Vec<Source>,
+}
+
+impl Sources {
+    pub fn add(
+        &mut self,
+        point: Point3<usize>,
+        j_amplitude: Vector3<f64>,
+        m_amplitude: Vector3<f64>,
+        function: impl SourceFunction,
+    ) {
+        self.sources.push(Source {
+            function: Box::new(function),
+            j_amplitude,
+            m_amplitude,
+            point,
+        });
+    }
+
+    pub fn generate(&self, time: f64) -> impl Iterator<Item = (Point3<usize>, SourceValues)> {
+        self.sources.iter().map(move |source| {
+            let value = source.function.evaluate(time);
+            (
+                source.point,
+                SourceValues {
+                    j_source: value * source.j_amplitude,
+                    m_source: value * source.m_amplitude,
+                },
+            )
+        })
+    }
+}
 
 #[derive(Clone, Debug)]
 struct TestGradient;

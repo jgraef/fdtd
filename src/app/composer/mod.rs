@@ -77,6 +77,7 @@ use crate::{
             ComposerConfig,
         },
         solver::{
+            FieldComponent,
             config::{
                 SolverConfig,
                 SolverConfigCommon,
@@ -721,6 +722,7 @@ impl PopulateScene for ExampleScene {
             Observer {
                 write_to_gif: None,
                 display_as_texture: true,
+                field_component: FieldComponent::E,
             },
             Transform::identity(),
             Quad {

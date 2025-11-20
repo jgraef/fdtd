@@ -1,4 +1,7 @@
-use std::f64::consts::TAU;
+use std::{
+    f64::consts::TAU,
+    fmt::Debug,
+};
 
 #[derive(Clone, Copy, Debug)]
 pub struct GaussianPulse {
@@ -6,8 +9,8 @@ pub struct GaussianPulse {
     pub duration: f64,
 }
 
-impl GaussianPulse {
-    pub fn evaluate(&self, time: f64) -> f64 {
+impl SourceFunction for GaussianPulse {
+    fn evaluate(&self, time: f64) -> f64 {
         (-((time - self.time) / self.duration).powi(2)).exp()
     }
 }
@@ -18,8 +21,12 @@ pub struct ContinousWave {
     pub frequency: f64,
 }
 
-impl ContinousWave {
-    pub fn evaluate(&self, time: f64) -> f64 {
+impl SourceFunction for ContinousWave {
+    fn evaluate(&self, time: f64) -> f64 {
         (TAU * self.frequency * time + self.phase).cos()
     }
+}
+
+pub trait SourceFunction: Debug + Send + Sync + 'static {
+    fn evaluate(&self, time: f64) -> f64;
 }

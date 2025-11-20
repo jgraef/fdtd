@@ -25,6 +25,7 @@ use crate::{
         DomainDescription,
         Field,
         FieldComponent,
+        FieldView,
         SolverBackend,
         SolverInstance,
         SourceValues,
@@ -399,8 +400,8 @@ impl Time for FdtdWgpuSolverState {
 }
 
 impl Field for FdtdWgpuSolverInstance {
-    type Iter<'a>
-        = WgpuFieldRegionIter<'a>
+    type View<'a>
+        = WgpuFieldView<'a>
     where
         Self: 'a;
 
@@ -409,7 +410,7 @@ impl Field for FdtdWgpuSolverInstance {
         state: &'a Self::State,
         range: R,
         field_component: FieldComponent,
-    ) -> Self::Iter<'a>
+    ) -> WgpuFieldView<'a>
     where
         R: RangeBounds<Self::Point>,
     {
@@ -428,12 +429,11 @@ impl Field for FdtdWgpuSolverInstance {
 
             let view = buffer.read_view(index_range, &self.backend.queue);
 
-            WgpuFieldRegionIter {
-                strider: self.strider,
-                start_index,
-                view_index: 0,
-                view,
+            WgpuFieldView {
+                strider: &self.strider,
                 check_inside,
+                start_index,
+                view,
             }
         };
 
@@ -453,15 +453,51 @@ impl Field for FdtdWgpuSolverInstance {
 }
 
 #[derive(Debug)]
-pub struct WgpuFieldRegionIter<'a> {
-    strider: Strider,
+pub struct WgpuFieldView<'a> {
+    strider: &'a Strider,
+    start_index: usize,
+    view: TypedArrayBufferReadView<'a, Cell>,
+    check_inside: Option<Range<Point3<usize>>>,
+}
+
+impl<'a> FieldView<Point3<usize>> for WgpuFieldView<'a> {
+    type Iter<'b>
+        = WgpuFieldIter<'b>
+    where
+        Self: 'b;
+
+    fn at(&self, point: &Point3<usize>) -> Option<Vector3<f64>> {
+        let view_index = self.strider.index(point)? - self.start_index;
+
+        let check_passed = self
+            .check_inside
+            .as_ref()
+            .is_none_or(|check_against| check_against.contains(&point));
+
+        check_passed.then(|| self.view[view_index].value.cast())
+    }
+
+    fn iter<'b>(&'b self) -> Self::Iter<'b> {
+        WgpuFieldIter {
+            strider: self.strider,
+            start_index: self.start_index,
+            view_index: 0,
+            view: self.view.clone(),
+            check_inside: self.check_inside.clone(),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct WgpuFieldIter<'a> {
+    strider: &'a Strider,
     start_index: usize,
     view_index: usize,
     view: TypedArrayBufferReadView<'a, Cell>,
     check_inside: Option<Range<Point3<usize>>>,
 }
 
-impl<'a> Iterator for WgpuFieldRegionIter<'a> {
+impl<'a> Iterator for WgpuFieldIter<'a> {
     type Item = (Point3<usize>, Vector3<f64>);
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -494,7 +530,7 @@ impl<'a> Iterator for WgpuFieldRegionIter<'a> {
     }
 }
 
-impl<'a> ExactSizeIterator for WgpuFieldRegionIter<'a> {}
+impl<'a> ExactSizeIterator for WgpuFieldIter<'a> {}
 
 #[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]
 #[repr(C)]
