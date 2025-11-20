@@ -404,12 +404,9 @@ impl ReadState<FdtdWgpuSolverInstance> for AccessFieldRegion {
             // the buffer view. this is because we would need to store a borrow
             // to something that is also in that struct, requiring a self-referential
             // struct. we could use a crate for this though.
-            let data = buffer.read(
-                &instance.backend.device,
-                &instance.backend.queue,
-                index_range,
-                |view| view.iter().map(|data| data.value).collect::<Vec<_>>(),
-            );
+            let data = buffer.read(&instance.backend.queue, index_range, |view| {
+                view.iter().map(|data| data.value).collect::<Vec<_>>()
+            });
 
             WgpuFieldRegionIter {
                 strider: instance.strider,
