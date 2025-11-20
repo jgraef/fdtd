@@ -73,9 +73,7 @@ impl App {
                 context.config.recently_opened_files_limit,
             );
 
-            composer
-                .open_file(&context.config, path)
-                .unwrap_or_else(|error| error_dialog.display_error(error));
+            error_dialog.ok_or_show(composer.open_file(&context.config, path));
         }
 
         Self {
@@ -129,8 +127,7 @@ impl eframe::App for App {
                             user_data: _,
                             image,
                         } => {
-                            self.save_screenshot(image)
-                                .unwrap_or_else(|error| self.error_dialog.display_error(error));
+                            self.error_dialog.ok_or_show(self.save_screenshot(image));
                         }
                         _ => {}
                     }
@@ -199,9 +196,8 @@ impl eframe::App for App {
                             self.config.recently_opened_files_limit,
                         );
 
-                        self.composer
-                            .open_file(&self.config, path)
-                            .unwrap_or_else(|error| self.error_dialog.display_error(error));
+                        self.error_dialog
+                            .ok_or_show(self.composer.open_file(&self.config, path));
                     }
                     FileDialogAction::SaveAs => {
                         tracing::debug!("todo: save as");
@@ -260,7 +256,22 @@ pub struct ErrorDialog {
 }
 
 impl ErrorDialog {
-    pub fn display_error(&mut self, error: Error) {
+    pub fn ok_or_show<T, E>(&mut self, result: Result<T, E>) -> Option<T>
+    where
+        Error: From<E>,
+    {
+        result
+            .map_err(|error| {
+                self.set_error(error);
+            })
+            .ok()
+    }
+
+    pub fn set_error<E>(&mut self, error: E)
+    where
+        Error: From<E>,
+    {
+        let error = error.into();
         tracing::error!(?error);
         self.error = Some(error);
     }

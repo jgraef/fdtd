@@ -29,6 +29,7 @@ use nalgebra::{
     Point3,
     Vector3,
 };
+use rayon::ThreadPoolBuildError;
 
 use crate::{
     app::solver::{
@@ -90,7 +91,7 @@ impl Args {
                     self,
                     render_state.device.clone(),
                     render_state.queue.clone(),
-                )))
+                )?))
             }),
         )?;
 
@@ -106,7 +107,7 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(args: Args, device: ::wgpu::Device, queue: ::wgpu::Queue) -> Self {
+    pub fn new(args: Args, device: ::wgpu::Device, queue: ::wgpu::Queue) -> Result<Self, Error> {
         let config = FdtdSolverConfig {
             resolution: Resolution {
                 spatial: Vector3::repeat(1.0),
@@ -121,7 +122,7 @@ impl App {
         }
         else if let Some(num_threads) = args.threads {
             let num_threads = (num_threads != 0).then_some(num_threads);
-            Box::new(Simulation::cpu_multi_threaded(&config, num_threads))
+            Box::new(Simulation::cpu_multi_threaded(&config, num_threads)?)
                 as Box<dyn ErasedSimulation>
         }
         else {
@@ -131,11 +132,11 @@ impl App {
         let ticks_per_second = 100;
         let executor = Executor::new(simulation, Duration::from_millis(1000 / ticks_per_second));
 
-        Self {
+        Ok(Self {
             ticks_per_second,
             executor,
             screenshots_path: PathBuf::from("screenshots"),
-        }
+        })
     }
 
     fn save_screenshot(&self, image: &ColorImage) -> Result<(), Error> {
@@ -296,11 +297,14 @@ impl Simulation<FdtdCpuSolverInstance<SingleThreaded>, FdtdCpuSolverState> {
 }
 
 impl Simulation<FdtdCpuSolverInstance<MultiThreaded>, FdtdCpuSolverState> {
-    pub fn cpu_multi_threaded(config: &FdtdSolverConfig, num_threads: Option<usize>) -> Self {
-        let backend = FdtdCpuBackend::multi_threaded(num_threads);
+    pub fn cpu_multi_threaded(
+        config: &FdtdSolverConfig,
+        num_threads: Option<usize>,
+    ) -> Result<Self, ThreadPoolBuildError> {
+        let backend = FdtdCpuBackend::multi_threaded(num_threads)?;
         let label = format!("cpu ({} threads)", backend.num_threads());
 
-        Self::new(&backend, config, label)
+        Ok(Self::new(&backend, config, label))
     }
 }
 

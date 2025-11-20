@@ -4,6 +4,7 @@ use std::{
         Range,
         RangeBounds,
     },
+    sync::Arc,
     time::Duration,
 };
 
@@ -18,7 +19,12 @@ use num::{
     One,
     Zero,
 };
-use rayon::iter::ParallelIterator;
+use rayon::{
+    ThreadPool,
+    ThreadPoolBuildError,
+    ThreadPoolBuilder,
+    iter::ParallelIterator,
+};
 
 use crate::{
     app::solver::{
@@ -87,10 +93,9 @@ impl LatticeForEach for SingleThreaded {
 }
 
 /// Use multi-threading
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct MultiThreaded {
-    /// How many threads to use
-    pub num_threads: usize,
+    thread_pool: Option<Arc<ThreadPool>>,
 }
 
 impl LatticeForEach for MultiThreaded {
@@ -99,27 +104,48 @@ impl LatticeForEach for MultiThreaded {
         T: Send + Sync,
         F: Fn(usize, Point3<usize>, &mut T) + Send + Sync,
     {
-        lattice
-            .par_iter_mut(strider)
-            .for_each(|(index, point, value)| f(index, point, value))
+        let mut f = || {
+            lattice
+                .par_iter_mut(strider)
+                .for_each(|(index, point, value)| f(index, point, value))
+        };
+
+        if let Some(thread_pool) = &self.thread_pool {
+            thread_pool.install(f);
+        }
+        else {
+            f();
+        }
     }
 }
 
 impl MultiThreaded {
-    /// Use max number of threads (see [`rayon::max_num_threads`])
-    pub fn max_threads() -> Self {
+    /// Use default number of threads (see [`rayon::current_num_threads`])
+    pub fn from_default_thread_pool() -> Self {
+        Self { thread_pool: None }
+    }
+
+    pub fn from_num_threads(num_threads: usize) -> Result<Self, ThreadPoolBuildError> {
+        Ok(Self::from_thread_pool(
+            ThreadPoolBuilder::new().num_threads(num_threads).build()?,
+        ))
+    }
+
+    pub fn from_thread_pool(thread_pool: ThreadPool) -> Self {
         Self {
-            num_threads: rayon::max_num_threads(),
+            thread_pool: Some(Arc::new(thread_pool)),
         }
+    }
+
+    /// Use max number of threads (see [`rayon::max_num_threads`])
+    pub fn max_threads() -> Result<Self, ThreadPoolBuildError> {
+        Self::from_num_threads(rayon::max_num_threads())
     }
 }
 
 impl Default for MultiThreaded {
-    /// Use default number of threads (see [`rayon::current_num_threads`])
     fn default() -> Self {
-        Self {
-            num_threads: rayon::current_num_threads(),
-        }
+        Self::from_default_thread_pool()
     }
 }
 
@@ -150,16 +176,24 @@ impl FdtdCpuBackend<SingleThreaded> {
 }
 
 impl FdtdCpuBackend<MultiThreaded> {
-    pub fn multi_threaded(num_threads: Option<usize>) -> Self {
-        Self {
-            threading: num_threads
-                .map(|num_threads| MultiThreaded { num_threads })
-                .unwrap_or_default(),
+    pub fn multi_threaded(num_threads: Option<usize>) -> Result<Self, ThreadPoolBuildError> {
+        let threading = if let Some(num_threads) = num_threads {
+            MultiThreaded::from_num_threads(num_threads)?
         }
+        else {
+            MultiThreaded::from_default_thread_pool()
+        };
+
+        Ok(Self { threading })
     }
 
     pub fn num_threads(&self) -> usize {
-        self.threading.num_threads
+        self.threading
+            .thread_pool
+            .as_ref()
+            .map_or_else(rayon::current_num_threads, |thread_pool| {
+                thread_pool.current_num_threads()
+            })
     }
 }
 

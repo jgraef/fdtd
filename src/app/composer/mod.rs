@@ -35,6 +35,7 @@ use serde::{
 use crate::{
     Error,
     app::{
+        ErrorDialog,
         composer::{
             menubar::ComposerMenuElements,
             renderer::{
@@ -251,8 +252,14 @@ impl Composer {
         }
     }
 
-    pub fn menu_elements(&mut self) -> ComposerMenuElements<'_> {
-        ComposerMenuElements::new(self)
+    pub fn menu_elements<'a>(
+        &'a mut self,
+        error_dialog: &'a mut ErrorDialog,
+    ) -> ComposerMenuElements<'a> {
+        ComposerMenuElements {
+            composer: self,
+            error_dialog,
+        }
     }
 }
 

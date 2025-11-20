@@ -11,6 +11,7 @@ use nalgebra::{
 use palette::Srgba;
 
 use crate::{
+    Error,
     app::{
         composer::{
             renderer::{
@@ -69,13 +70,15 @@ impl SolverRunner {
     /// TODO: We probably just want one parameter that impls some trait. That
     /// trait defines how a solver_config and scene is turned into the problem
     /// description for the runner (e.g. a `fdtd::Simulation`).
-    pub fn run(&mut self, solver_config: &SolverConfig, scene: &mut Scene) {
+    pub fn run(&mut self, solver_config: &SolverConfig, scene: &mut Scene) -> Result<(), Error> {
         match &solver_config.specifics {
             SolverConfigSpecifics::Fdtd(fdtd_config) => {
-                self.run_fdtd(scene, &solver_config.common, fdtd_config);
+                self.run_fdtd(scene, &solver_config.common, fdtd_config)?;
             }
             SolverConfigSpecifics::Feec(_feec_config) => tracing::debug!("todo: feec solver"),
         }
+
+        Ok(())
     }
 
     fn run_fdtd(
@@ -83,28 +86,43 @@ impl SolverRunner {
         scene: &mut Scene,
         common_config: &SolverConfigCommon,
         fdtd_config: &SolverConfigFdtd,
-    ) {
+    ) -> Result<(), Error> {
+        let mut run_single_threaded = || {
+            run_fdtd_with_backend(
+                scene,
+                common_config,
+                fdtd_config,
+                &FdtdCpuBackend::single_threaded(),
+            )
+        };
+
         match &common_config.parallelization {
             None => {
-                run_fdtd_with_backend(
-                    scene,
-                    common_config,
-                    fdtd_config,
-                    &FdtdCpuBackend::single_threaded(),
-                )
+                run_single_threaded();
             }
             Some(Parallelization::MultiThreaded { num_threads }) => {
-                run_fdtd_with_backend(
-                    scene,
-                    common_config,
-                    fdtd_config,
-                    &FdtdCpuBackend::multi_threaded(*num_threads),
-                )
+                if num_threads.is_some_and(|num_threads| num_threads <= 1) {
+                    tracing::debug!(
+                        ?num_threads,
+                        "switching to single-threaded backend, because num_threads <= 1"
+                    );
+                    run_single_threaded();
+                }
+                else {
+                    run_fdtd_with_backend(
+                        scene,
+                        common_config,
+                        fdtd_config,
+                        &FdtdCpuBackend::multi_threaded(*num_threads)?,
+                    )
+                }
             }
             Some(Parallelization::Wgpu) => {
                 run_fdtd_with_backend(scene, common_config, fdtd_config, &self.fdtd_wgpu)
             }
         }
+
+        Ok(())
     }
 }
 

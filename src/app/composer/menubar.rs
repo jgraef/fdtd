@@ -4,6 +4,7 @@ use nalgebra::{
 };
 
 use crate::app::{
+    ErrorDialog,
     composer::{
         Composer,
         ComposerState,
@@ -16,14 +17,11 @@ use crate::app::{
 /// Composer proxy to build menubar.
 #[derive(Debug)]
 pub struct ComposerMenuElements<'a> {
-    composer: &'a mut Composer,
+    pub composer: &'a mut Composer,
+    pub error_dialog: &'a mut ErrorDialog,
 }
 
 impl<'a> ComposerMenuElements<'a> {
-    pub(super) fn new(composer: &'a mut Composer) -> Self {
-        Self { composer }
-    }
-
     fn has_file_open(&self) -> bool {
         self.composer.state.is_some()
     }
@@ -251,6 +249,7 @@ impl<'a> ComposerMenuElements<'a> {
                 .open_solver_config_window();
         }
     }
+
     pub fn solver_run_buttons(&mut self, ui: &mut egui::Ui) {
         let solver_button =
             |solver: &SolverConfig| egui::Button::new(("Run ", &solver.label, " Solver"));
@@ -267,9 +266,11 @@ impl<'a> ComposerMenuElements<'a> {
                     );
                     // for now we'll just send the config and scene to the runner to run it. but
                     // we'll need an intermediate step to rasterize/tesselate the scene
-                    self.composer
-                        .solver_runner
-                        .run(solver_config, &mut state.scene);
+                    self.error_dialog.ok_or_show(
+                        self.composer
+                            .solver_runner
+                            .run(solver_config, &mut state.scene),
+                    );
                 }
                 i += 1;
             }
