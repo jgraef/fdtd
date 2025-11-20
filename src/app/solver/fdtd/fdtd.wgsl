@@ -8,6 +8,7 @@ struct Config {
     strides: vec4u,
     resolution: vec4f,
     time: f32,
+    num_sources: u32,
 }
 
 @group(0) @binding(0)
@@ -18,7 +19,16 @@ override workgroup_size_y: u32 = 0;
 override workgroup_size_z: u32 = 0;
 
 @group(0) @binding(1)
-var<storage, read> material_coeff: array<vec4f>;
+var<storage, read> materials: array<vec4f>;
+
+struct Source {
+    j_source: vec3f,
+    index: u32,
+    m_source: vec3f,
+}
+
+@group(0) @binding(2)
+var<storage, read> sources: array<Source>;
 
 // note: our H and E field buffers will align the elements to 16 bytes anyway,
 // so we can use the 4 extra bytes to indicate if a source current is present.
@@ -27,16 +37,16 @@ struct Cell {
     source_id: u32,
 }
 
-@group(0) @binding(2)
+@group(0) @binding(3)
 var<storage, read_write> h_field_next: array<Cell>;
 
-@group(0) @binding(2)
+@group(0) @binding(4)
 var<storage, read_write> e_field_next: array<Cell>;
 
-@group(0) @binding(3)
+@group(0) @binding(5)
 var<storage, read> h_field_prev: array<Cell>;
 
-@group(0) @binding(4)
+@group(0) @binding(6)
 var<storage, read> e_field_prev: array<Cell>;
 
 
@@ -60,13 +70,21 @@ fn update_h(input: Input) {
     let e_curl = curl(dedx, dedy, dedz);
 
     // material coefficients: D_a, D_b
-    let coeff = material_coeff[index].zw;
+    let coeff = materials[index].zw;
+
+    // source
+    var m_source: vec3f;
+    let source_id = h_field_next[index].source_id;
+    if source_id != 0 {
+        m_source = sources[source_id].m_source;
+    }
 
     // todo: pml
     let psi = vec3f(0.0);
 
     // update rule
-    h_field_next[index].value = coeff.x * h_field_prev[index].value + coeff.y * (-e_curl - m_source(index, x) + psi);
+    let h = coeff.x * h_field_prev[index].value + coeff.y * (-e_curl - m_source + psi);
+    h_field_next[index] = Cell(h, 0);
 }
 
 
@@ -90,15 +108,38 @@ fn update_e(input: Input) {
     let h_curl = curl(dhdx, dhdy, dhdz);
 
     // material coefficients: C_a, C_b
-    let coeff = material_coeff[index].xy;
+    let coeff = materials[index].xy;
+
+    // source
+    var j_source: vec3f;
+    let source_id = e_field_next[index].source_id;
+    if source_id != 0 {
+        j_source = sources[source_id].j_source;
+    }
 
     // todo: pml
     let psi = vec3f(0.0);
 
     // update rule
-    e_field_next[index].value = coeff.x * e_field_prev[index].value + coeff.y * (h_curl - j_source(index, x) + psi);
+    let e = coeff.x * e_field_prev[index].value + coeff.y * (h_curl - j_source + psi);
+    e_field_next[index] = Cell(e, 0);
 }
 
+
+@compute @workgroup_size(workgroup_size_x, workgroup_size_y, workgroup_size_z)
+fn update_sources(input: Input) {
+    let source_id = input_to_index(input);
+
+    if source_id >= config.num_sources {
+        return;
+    }
+
+    let source = sources[source_id];
+
+    // put source id into cell, so it's quick to lookup the other way
+    e_field_next[source.index].source_id = source_id;
+    h_field_next[source.index].source_id = source_id;
+}
 
 // todo: source
 fn m_source(index: u32, x: vec3u) -> vec3f {
@@ -144,8 +185,8 @@ fn dedi(index: u32, x: vec3u, axis: u32) -> vec3f {
 
 fn dhdi(index: u32, x: vec3u, axis: u32) -> vec3f {
     if x[axis] + 1 < config.size[axis] {
-        let h1 = h_field_prev[index].value;
-        let h2 = h_field_prev[index + config.strides[axis]].value;
+        let h1 = h_field_next[index].value;
+        let h2 = h_field_next[index + config.strides[axis]].value;
         return (h2 - h1) / config.resolution[axis];
     }
     else {

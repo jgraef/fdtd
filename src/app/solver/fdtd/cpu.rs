@@ -26,6 +26,7 @@ use crate::{
             FdtdSolverConfig,
             FieldComponent,
             Resolution,
+            SourceValues,
             boundary_condition::{
                 AnyBoundaryCondition,
                 BoundaryCondition,
@@ -76,8 +77,8 @@ impl SolverBackend for FdtdCpuBackend {
     }
 
     fn memory_required(&self, config: &Self::Config) -> Option<usize> {
-        let per_cell = std::mem::size_of::<UpdateCoefficients>()
-            + std::mem::size_of::<SwapBuffer<FieldVectors>>();
+        let per_cell =
+            std::mem::size_of::<UpdateCoefficients>() + std::mem::size_of::<SwapBuffer<Cell>>();
         Some(per_cell * config.num_cells())
     }
 }
@@ -120,7 +121,11 @@ impl FdtdCpuSolverInstance {
         }
     }
 
-    fn update_impl(&self, state: &mut FdtdCpuSolverState) {
+    fn update_impl(
+        &self,
+        state: &mut FdtdCpuSolverState,
+        sources: impl IntoIterator<Item = (Point3<usize>, SourceValues)>,
+    ) {
         // note: CE page 68. we moved the delta_x from the coefficients into the sum,
         // which then becomes the curl plus source current density.
         // todo: integrate psi auxiliary fields
@@ -128,14 +133,17 @@ impl FdtdCpuSolverInstance {
         let previous = SwapBufferIndex::from_tick(state.tick);
         let current = previous.other();
 
-        //let mut energy = 0.0;
-
         // prepare sources
-        // todo: we might need to pass some info to `prepare` so it knows what time is
-        // for the magnetic and electric field
-        //for source in &mut self.sources {
-        //    source.prepare(self.time);
-        //}
+        assert!(state.source_buffer.is_empty());
+        state.source_buffer.push(Default::default());
+        for (point, source) in sources.into_iter() {
+            if let Some(cell) = state.lattice.get_point_mut(&self.strider, &point) {
+                cell[current].source_id = state.source_buffer.len();
+                state.source_buffer.push(source);
+            }
+        }
+
+        //let mut energy = 0.0;
 
         // update magnetic field
         for (index, point) in self.strider.iter(..) {
@@ -153,20 +161,12 @@ impl FdtdCpuSolverInstance {
 
             let cell = &mut state.lattice[index];
 
-            /*let m_source = if let Some(index) = cell.source {
-                let m_source = &mut self.sources[index];
-                let point_dx = Point3::from(
-                    point
-                        .map(|x| x as f64)
-                        .coords
-                        .component_mul(&self.resolution.spatial),
-                );
-                m_source.magnetic_current_density(self.time, &point_dx)
+            let m_source = if cell[current].source_id != 0 {
+                state.source_buffer[cell[current].source_id].m_source
             }
             else {
-                Vector3::zeros()
-            };*/
-            let m_source = Vector3::zeros();
+                Default::default()
+            };
 
             let psi = Vector3::zeros();
 
@@ -204,20 +204,12 @@ impl FdtdCpuSolverInstance {
 
             let cell = &mut state.lattice[index];
 
-            /*let j_source = if let Some(index) = cell.source {
-                let j_source = &mut self.sources[index];
-                let point_dx = Point3::from(
-                    point
-                        .map(|x| x as f64 + 0.5)
-                        .coords
-                        .component_mul(&self.resolution.spatial),
-                );
-                j_source.electric_current_density(time, &point_dx)
+            let j_source = if cell[current].source_id != 0 {
+                state.source_buffer[cell[current].source_id].j_source
             }
             else {
-                Vector3::zeros()
-            };*/
-            let j_source = Vector3::zeros();
+                Default::default()
+            };
 
             let psi = Vector3::zeros();
 
@@ -225,6 +217,8 @@ impl FdtdCpuSolverInstance {
 
             cell[current].e = update_coefficients.c_a * cell[previous].e
                 + update_coefficients.c_b * (h_curl - j_source + psi);
+
+            cell[current].source_id = 0;
 
             // note: this is just for debugging
             //energy += cell[current].e.norm_squared()
@@ -235,19 +229,25 @@ impl FdtdCpuSolverInstance {
         state.tick += 1;
         state.time += self.resolution.temporal;
         //self.total_energy = 0.5 * energy * self.resolution.spatial.product();
+
+        state.source_buffer.clear();
     }
 }
 
 impl SolverInstance for FdtdCpuSolverInstance {
     type State = FdtdCpuSolverState;
     type Point = Point3<usize>;
+    type Source = SourceValues;
 
     fn create_state(&self) -> Self::State {
         FdtdCpuSolverState::new(&self.strider)
     }
 
-    fn update(&self, state: &mut Self::State) {
-        self.update_impl(state);
+    fn update<S>(&self, state: &mut Self::State, sources: S)
+    where
+        S: IntoIterator<Item = (Point3<usize>, SourceValues)>,
+    {
+        self.update_impl(state, sources);
     }
 }
 
@@ -264,7 +264,8 @@ impl EvaluateStopCondition for FdtdCpuSolverInstance {
 
 #[derive(Clone, Debug)]
 pub struct FdtdCpuSolverState {
-    lattice: Lattice<SwapBuffer<FieldVectors>>,
+    lattice: Lattice<SwapBuffer<Cell>>,
+    source_buffer: Vec<SourceValues>,
     tick: usize,
     time: f64,
 }
@@ -275,9 +276,18 @@ impl FdtdCpuSolverState {
 
         Self {
             lattice,
+            source_buffer: vec![],
             tick: 0,
             time: 0.0,
         }
+    }
+
+    pub fn tick(&self) -> usize {
+        self.tick
+    }
+
+    pub fn time(&self) -> f64 {
+        self.time
     }
 }
 
@@ -322,7 +332,7 @@ impl WriteState<FdtdCpuSolverInstance> for AccessFieldRegion {
 #[derive(Clone, Copy, Debug)]
 pub struct CpuFieldRegionIter<'a> {
     field_component: FieldComponent,
-    lattice_iter: LatticeIter<'a, SwapBuffer<FieldVectors>>,
+    lattice_iter: LatticeIter<'a, SwapBuffer<Cell>>,
     swap_buffer_index: SwapBufferIndex,
 }
 
@@ -345,14 +355,14 @@ impl<'a> Iterator for CpuFieldRegionIter<'a> {
 }
 
 impl<'a> ExactSizeIterator for CpuFieldRegionIter<'a> where
-    LatticeIter<'a, SwapBuffer<FieldVectors>>: ExactSizeIterator
+    LatticeIter<'a, SwapBuffer<Cell>>: ExactSizeIterator
 {
 }
 
 #[derive(Debug)]
 pub struct CpuFieldRegionIterMut<'a> {
     field_component: FieldComponent,
-    lattice_iter: LatticeIterMut<'a, SwapBuffer<FieldVectors>>,
+    lattice_iter: LatticeIterMut<'a, SwapBuffer<Cell>>,
     swap_buffer_index: SwapBufferIndex,
 }
 
@@ -375,14 +385,15 @@ impl<'a> Iterator for CpuFieldRegionIterMut<'a> {
 }
 
 impl<'a> ExactSizeIterator for CpuFieldRegionIterMut<'a> where
-    LatticeIter<'a, SwapBuffer<FieldVectors>>: ExactSizeIterator
+    LatticeIter<'a, SwapBuffer<Cell>>: ExactSizeIterator
 {
 }
 
 #[derive(Clone, Copy, Debug, Default)]
-struct FieldVectors {
+struct Cell {
     e: Vector3<f64>,
     h: Vector3<f64>,
+    source_id: usize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]

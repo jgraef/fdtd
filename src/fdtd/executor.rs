@@ -30,6 +30,7 @@ impl Executor {
             simulation,
             running_state: None,
             step_interval,
+            step_time: Default::default(),
         }));
 
         let (command_tx, command_rx) = mpsc::channel();
@@ -83,6 +84,7 @@ struct State {
     simulation: CpuOrGpu,
     running_state: Option<RunningState>,
     step_interval: Duration,
+    step_time: Duration,
 }
 
 #[derive(derive_more::Debug)]
@@ -115,7 +117,10 @@ fn run_reactor(command_rx: mpsc::Receiver<Command>, state: Arc<RwLock<State>>) {
                         .as_mut()
                         .expect("running state is None after upgrading the lock");
 
+                    let t = Instant::now();
                     state.simulation.step();
+                    state.step_time = t.elapsed();
+
                     if let Some(on_update) = &mut running_state.on_update {
                         on_update(&mut state.simulation);
                     }
@@ -188,6 +193,10 @@ impl<'a> ReadGuard<'a> {
 
     pub fn simulation(&self) -> &CpuOrGpu {
         &self.guard.simulation
+    }
+
+    pub fn step_time(&self) -> Duration {
+        self.guard.step_time
     }
 }
 

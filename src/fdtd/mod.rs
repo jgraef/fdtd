@@ -34,18 +34,21 @@ use nalgebra::{
 use crate::{
     app::solver::{
         fdtd::{
+            self,
             AccessFieldRegion,
             FdtdSolverConfig,
             FieldComponent,
             Resolution,
-            cpu,
+            SourceValues,
             legacy::{
                 Simulation,
                 estimate_memory_usage,
                 geometry::Block,
-                source::GaussianPulse,
+                source::{
+                    GaussianPulse,
+                    Source,
+                },
             },
-            wgpu,
         },
         traits::{
             DomainDescription,
@@ -64,6 +67,8 @@ use crate::{
 pub struct Args {
     #[clap(long)]
     wgpu: bool,
+    #[clap(long)]
+    cpu_legacy: bool,
 }
 
 impl Args {
@@ -91,7 +96,7 @@ pub struct App {
     ticks_per_second: u64,
     executor: Executor,
     screenshots_path: PathBuf,
-    wgpu_enabled: bool,
+    backend_label: &'static str,
 }
 
 impl App {
@@ -106,13 +111,14 @@ impl App {
         };
         tracing::debug!(?config, memory_usage = estimate_memory_usage(&config));
 
-        let mut wgpu_enabled = false;
-        let simulation = if args.wgpu {
-            wgpu_enabled = true;
-            CpuOrGpu::new_gpu(&config, &device, &queue)
+        let (simulation, backend_label) = if args.wgpu {
+            (CpuOrGpu::new_gpu(&config, &device, &queue), "wgpu")
+        }
+        else if args.cpu_legacy {
+            (CpuOrGpu::new_cpu_legacy(&config), "cpu-legacy")
         }
         else {
-            CpuOrGpu::new_cpu(&config)
+            (CpuOrGpu::new_cpu(&config), "cpu")
         };
 
         let ticks_per_second = 100;
@@ -122,7 +128,7 @@ impl App {
             ticks_per_second,
             executor,
             screenshots_path: PathBuf::from("screenshots"),
-            wgpu_enabled,
+            backend_label,
         }
     }
 
@@ -190,18 +196,22 @@ impl eframe::App for App {
                     ctx.send_viewport_cmd(ViewportCommand::Screenshot(UserData::default()));
                 }
 
-                ui.label(if self.wgpu_enabled { "GPU" } else { "CPU" });
+                ui.label(self.backend_label);
             });
 
             let guard = self.executor.read();
+            let step_time = guard.step_time().as_millis();
             let simulation = guard.simulation();
 
             ui.horizontal(|ui| {
                 ui.label(format!("Tick: {}", simulation.tick()));
                 ui.spacing();
                 ui.label(format!("Time: {:?} s", simulation.time()));
+                ui.spacing();
+                ui.label(format!("Total energy: {}", simulation.total_energy()));
+                ui.spacing();
+                ui.label(format!("Step time: {step_time} ms"));
             });
-            ui.label(format!("Total energy: {}", simulation.total_energy()));
 
             let field_plot = Plot::new("E field").legend(Legend::default());
             field_plot.show(ui, |plot_ui| {
@@ -223,19 +233,42 @@ impl eframe::App for App {
     }
 }
 
+fn gaussian_pulse() -> GaussianPulse {
+    GaussianPulse {
+        electric_current_density_amplitude: Vector3::y(),
+        magnetic_current_density_amplitude: Vector3::z(),
+        time: 20.0,
+        duration: 10.0,
+    }
+}
+
+fn create_sources(time: f64) -> [(Point3<usize>, SourceValues); 1] {
+    let point = Point3::new(50, 0, 0);
+
+    let mut gaussian_pulse = gaussian_pulse();
+    let j_source = gaussian_pulse.electric_current_density(time, &point.cast());
+    let m_source = gaussian_pulse.magnetic_current_density(time, &point.cast());
+
+    [(point, SourceValues { j_source, m_source })]
+}
+
 #[derive(Debug)]
 enum CpuOrGpu {
-    Cpu {
+    CpuLegacy {
         simulation: Simulation,
     },
+    Cpu {
+        instance: fdtd::cpu::FdtdCpuSolverInstance,
+        state: fdtd::cpu::FdtdCpuSolverState,
+    },
     Gpu {
-        instance: wgpu::FdtdWgpuSolverInstance,
-        state: wgpu::FdtdWgpuSolverState,
+        instance: fdtd::wgpu::FdtdWgpuSolverInstance,
+        state: fdtd::wgpu::FdtdWgpuSolverState,
     },
 }
 
 impl CpuOrGpu {
-    pub fn new_cpu(config: &FdtdSolverConfig) -> Self {
+    pub fn new_cpu_legacy(config: &FdtdSolverConfig) -> Self {
         let mut simulation = Simulation::new(&config);
 
         simulation.add_material(
@@ -252,17 +285,17 @@ impl CpuOrGpu {
             },
         );
 
-        simulation.add_source(
-            Point3::new(50.0, 0.0, 0.0),
-            GaussianPulse {
-                electric_current_density_amplitude: Vector3::y(),
-                magnetic_current_density_amplitude: Vector3::z(),
-                time: 20.0,
-                duration: 10.0,
-            },
-        );
+        simulation.add_source(Point3::new(50.0, 0.0, 0.0), gaussian_pulse());
 
-        Self::Cpu { simulation }
+        Self::CpuLegacy { simulation }
+    }
+
+    pub fn new_cpu(config: &FdtdSolverConfig) -> Self {
+        let instance = fdtd::cpu::FdtdCpuBackend
+            .create_instance(&config, TestDomainDescription)
+            .unwrap();
+        let state = instance.create_state();
+        Self::Cpu { instance, state }
     }
 
     pub fn new_gpu(
@@ -270,28 +303,35 @@ impl CpuOrGpu {
         device: &::wgpu::Device,
         queue: &::wgpu::Queue,
     ) -> Self {
-        let solver = wgpu::FdtdWgpuBackend::new(device, queue);
+        let solver = fdtd::wgpu::FdtdWgpuBackend::new(device, queue);
 
         let instance = solver
             .create_instance(&config, TestDomainDescription)
             .unwrap();
-        // note: source hardcoded in shader
-
         let state = instance.create_state();
-
         Self::Gpu { instance, state }
     }
 
     pub fn step(&mut self) {
         match self {
-            CpuOrGpu::Cpu { simulation } => simulation.step(),
-            CpuOrGpu::Gpu { instance, state } => instance.update(state),
+            CpuOrGpu::CpuLegacy { simulation } => simulation.step(),
+            CpuOrGpu::Cpu { instance, state } => {
+                instance.update(state, create_sources(state.time()))
+            }
+            CpuOrGpu::Gpu { instance, state } => {
+                instance.update(state, create_sources(state.time()))
+            }
         }
     }
 
     pub fn reset(&mut self) {
         match self {
-            CpuOrGpu::Cpu { simulation } => simulation.reset(),
+            CpuOrGpu::CpuLegacy { simulation } => simulation.reset(),
+            CpuOrGpu::Cpu {
+                instance, state, ..
+            } => {
+                *state = instance.create_state();
+            }
             CpuOrGpu::Gpu {
                 instance, state, ..
             } => {
@@ -302,22 +342,24 @@ impl CpuOrGpu {
 
     pub fn tick(&self) -> usize {
         match self {
-            CpuOrGpu::Cpu { simulation } => simulation.tick(),
+            CpuOrGpu::CpuLegacy { simulation } => simulation.tick(),
+            CpuOrGpu::Cpu { state, .. } => state.tick(),
             CpuOrGpu::Gpu { state, .. } => state.tick(),
         }
     }
 
     pub fn time(&self) -> f64 {
         match self {
-            CpuOrGpu::Cpu { simulation } => simulation.time(),
+            CpuOrGpu::CpuLegacy { simulation } => simulation.time(),
+            CpuOrGpu::Cpu { state, .. } => state.time(),
             CpuOrGpu::Gpu { state, .. } => state.time(),
         }
     }
 
     pub fn total_energy(&self) -> f64 {
         match self {
-            CpuOrGpu::Cpu { simulation } => simulation.total_energy(),
-            CpuOrGpu::Gpu { .. } => {
+            CpuOrGpu::CpuLegacy { simulation } => simulation.total_energy(),
+            CpuOrGpu::Gpu { .. } | CpuOrGpu::Cpu { .. } => {
                 // todo
                 0.0
             }
@@ -332,9 +374,8 @@ impl CpuOrGpu {
         };
 
         match self {
-            CpuOrGpu::Cpu { simulation } => {
-                use crate::app::solver::fdtd::legacy::simulation::Cell;
-                let get_value = |cell: &Cell, swap_buffer_index| {
+            CpuOrGpu::CpuLegacy { simulation } => {
+                let get_value = |cell: &fdtd::legacy::simulation::Cell, swap_buffer_index| {
                     match which {
                         WhichFieldValue::Electric => cell.electric_field(swap_buffer_index).y,
                         WhichFieldValue::Magnetic => cell.magnetic_field(swap_buffer_index).z,
@@ -344,8 +385,30 @@ impl CpuOrGpu {
 
                 PlotPoints::Owned(
                     simulation
-                        .field_values(Point3::origin(), cpu::Axis::X, x_correction, get_value)
+                        .field_values(
+                            Point3::origin(),
+                            fdtd::cpu::Axis::X,
+                            x_correction,
+                            get_value,
+                        )
                         .map(|(x, y)| PlotPoint::new(x, y))
+                        .collect::<Vec<_>>(),
+                )
+            }
+            CpuOrGpu::Cpu { instance, state } => {
+                let (field_component, component_index) = match which {
+                    WhichFieldValue::Electric => (FieldComponent::E, 1),
+                    WhichFieldValue::Magnetic => (FieldComponent::H, 2),
+                    WhichFieldValue::Epsilon => return PlotPoints::Owned(vec![]),
+                };
+
+                PlotPoints::Owned(
+                    instance
+                        .read_state(state, &AccessFieldRegion::new(.., field_component))
+                        .map(|(x, y)| {
+                            // note: casting x like this doesn't account for resolution and offset
+                            PlotPoint::new(x.x as f64, y[component_index] as f64)
+                        })
                         .collect::<Vec<_>>(),
                 )
             }

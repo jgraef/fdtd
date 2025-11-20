@@ -339,7 +339,7 @@ where
 
         if !did_reallocate {
             // still need to write the data
-            let mut view = self.write_view(.., queue);
+            let mut view = self.write_view(..data.len(), queue);
             view.copy_from_slice(data);
         }
 

@@ -187,7 +187,7 @@ where
 
             //tracing::debug!(tick = simulation.tick(), elapsed = ?time_elapsed);
 
-            instance.update(&mut state);
+            instance.update(&mut state, []);
 
             //run_observers(&simulation);
             std::thread::sleep(Duration::from_millis(10));

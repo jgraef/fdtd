@@ -44,9 +44,12 @@ pub trait DomainDescription<P> {
 pub trait SolverInstance {
     type State;
     type Point: 'static;
+    type Source;
 
     fn create_state(&self) -> Self::State;
-    fn update(&self, state: &mut Self::State);
+    fn update<S>(&self, state: &mut Self::State, sources: S)
+    where
+        S: IntoIterator<Item = (Self::Point, Self::Source)>;
 
     // note: `read/write_state` are way too general. rather make traits to
     // read/write field values, but we would need to know what exact usage pattern

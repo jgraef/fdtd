@@ -122,7 +122,7 @@ pub enum FieldComponent {
     H,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct SourceValues {
     pub j_source: Vector3<f64>,
     pub m_source: Vector3<f64>,
