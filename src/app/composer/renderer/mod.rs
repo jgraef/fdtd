@@ -6,12 +6,7 @@ pub mod mesh;
 pub mod texture;
 
 use std::{
-    marker::PhantomData,
     num::NonZero,
-    ops::{
-        Deref,
-        DerefMut,
-    },
     sync::Arc,
 };
 
@@ -34,37 +29,40 @@ use serde::{
     Serialize,
 };
 
-use crate::app::composer::{
-    properties::{
-        PropertiesUi,
-        TrackChanges,
-        label_and_value,
+use crate::{
+    app::composer::{
+        properties::{
+            PropertiesUi,
+            TrackChanges,
+            label_and_value,
+        },
+        renderer::{
+            camera::{
+                CameraConfig,
+                CameraResources,
+            },
+            draw_commands::{
+                DrawCommand,
+                DrawCommandBuffer,
+                DrawCommandEnablePipelineFlags,
+                DrawCommandOptions,
+            },
+            light::{
+                Material,
+                MaterialData,
+            },
+            mesh::{
+                Mesh,
+                WindingOrder,
+            },
+            texture::Texture,
+        },
+        scene::{
+            Scene,
+            transform::Transform,
+        },
     },
-    renderer::{
-        camera::{
-            CameraConfig,
-            CameraResources,
-        },
-        draw_commands::{
-            DrawCommand,
-            DrawCommandBuffer,
-            DrawCommandEnablePipelineFlags,
-            DrawCommandOptions,
-        },
-        light::{
-            Material,
-            MaterialData,
-        },
-        mesh::{
-            Mesh,
-            WindingOrder,
-        },
-        texture::Texture,
-    },
-    scene::{
-        Scene,
-        transform::Transform,
-    },
+    util::wgpu::TypedArrayBuffer,
 };
 
 /// Tag for entities that should be rendered
@@ -159,21 +157,19 @@ pub struct Renderer {
     outline_pipeline: Pipeline,
     quad_with_texture_pipeline: Pipeline,
 
-    /// Scratch buffer for instance data (in GPU format)
-    instance_data: Vec<InstanceData>,
-
     /// The instance buffer.
     ///
-    /// [`InstanceBuffer`] will take care of the reallocation if the buffer
-    /// needs to grow.
-    instance_buffer: InstanceBuffer<InstanceData>,
+    /// This holds the handle to the GPU buffer for the instance data, a
+    /// host staging buffer for the instance data, and the bind group for the
+    /// GPU buffer.
+    instance_buffer: InstanceBuffer,
 
     /// The bind group. This needs to be replace when the instance buffer grows.
     ///
     /// This is purposefully not included in [`InstanceBuffer`], because we
     /// might want to put other stuff in this bind group as well (e.g. point
     /// lights).
-    instance_bind_group: wgpu::BindGroup,
+    instance_bind_group: Option<wgpu::BindGroup>,
 
     /// This stores all draw commands that are generated during `prepare_world`.
     /// Its `finish` method returns the finalized draw command (aggregate) for a
@@ -400,13 +396,7 @@ impl Renderer {
             false,
         );
 
-        let instance_buffer =
-            InstanceBuffer::new(256, wgpu::BufferUsages::STORAGE, &wgpu_context.device);
-        let instance_bind_group = create_instance_bind_group(
-            &wgpu_context.device,
-            &instance_bind_group_layout,
-            instance_buffer.buffer(),
-        );
+        let instance_buffer = InstanceBuffer::new(&wgpu_context.device);
 
         let texture_sampler = wgpu_context
             .device
@@ -432,8 +422,7 @@ impl Renderer {
             outline_pipeline,
             quad_with_texture_pipeline,
             instance_buffer,
-            instance_bind_group,
-            instance_data: vec![],
+            instance_bind_group: None,
             draw_command_buffer: Default::default(),
             texture_sampler,
         }
@@ -500,7 +489,12 @@ impl Renderer {
             first_instance += 1;
             instances
         };
-        assert!(self.instance_data.is_empty());
+
+        // this is the second time I have a bug with this. keep this assert!
+        assert!(
+            self.instance_buffer.scratch.is_empty(),
+            "instance scratch buffer hasn't been cleared yet"
+        );
 
         // prepare the actual draw commands
         let mut draw_command_builder = self.draw_command_buffer.builder();
@@ -517,7 +511,7 @@ impl Renderer {
             }
 
             // write per-instance data into a buffer
-            self.instance_data.push(InstanceData::new_mesh(
+            self.instance_buffer.push(InstanceData::new_mesh(
                 transform,
                 material,
                 flags,
@@ -534,30 +528,21 @@ impl Renderer {
             .query_mut::<(&Transform, &Quad, &Texture)>()
             .with::<&Render>()
         {
-            self.instance_data
+            self.instance_buffer
                 .push(InstanceData::new_quad(transform, &quad.half_extents));
 
             draw_command_builder.draw_quad_with_texture(instances(), texture);
         }
 
-        assert_eq!(first_instance as usize, self.instance_data.len());
-
         // send instance data to gpu
-        self.instance_buffer.write(
-            &self.instance_data,
-            &self.wgpu_context.device,
-            &self.wgpu_context.queue,
-            |buffer| {
-                self.instance_bind_group = create_instance_bind_group(
+        self.instance_buffer
+            .upload(&self.wgpu_context.queue, |buffer| {
+                self.instance_bind_group = Some(create_instance_bind_group(
                     &self.wgpu_context.device,
                     &self.instance_bind_group_layout,
                     buffer,
-                )
-            },
-        );
-
-        // clear instance data buffer
-        self.instance_data.clear();
+                ));
+            });
     }
 
     /// Prepares rendering a frame for a specific view.
@@ -855,107 +840,62 @@ bitflags! {
 }
 
 #[derive(Debug)]
-pub struct InstanceBuffer<T> {
-    buffer: wgpu::Buffer,
-    capacity: usize,
-    usage: wgpu::BufferUsages,
-    _phantom: PhantomData<[T]>,
+struct InstanceBuffer {
+    buffer: TypedArrayBuffer<InstanceData>,
+    scratch: Vec<InstanceData>,
 }
 
-impl<T> InstanceBuffer<T> {
-    pub fn new(initial_capacity: usize, usage: wgpu::BufferUsages, device: &wgpu::Device) -> Self {
+impl InstanceBuffer {
+    const INITIAL_CAPACITY: usize = 512;
+
+    fn new(device: &wgpu::Device) -> Self {
+        // note: allocate with non-zero initial capacity, so we actually get a buffer
+        // and can create a bind group
+        let buffer = TypedArrayBuffer::new(
+            device,
+            "instance buffer",
+            wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        );
+
         Self {
-            buffer: allocate_instance_buffer::<T>(initial_capacity, usage, device),
-            capacity: initial_capacity,
-            usage,
-            _phantom: PhantomData,
+            buffer,
+            scratch: vec![],
         }
     }
 
-    pub fn resize(&mut self, new_capacity: usize, device: &wgpu::Device) {
-        assert!(new_capacity != 0);
-        self.buffer = allocate_instance_buffer::<T>(new_capacity, self.usage, device);
+    fn push(&mut self, item: InstanceData) {
+        self.scratch.push(item);
     }
 
-    pub fn resize_if_necessary(
-        &mut self,
-        needed_capacity: usize,
-        device: &wgpu::Device,
-        on_resize: impl FnOnce(&wgpu::Buffer),
-    ) {
-        if needed_capacity > self.capacity {
-            self.resize((2 * self.capacity).max(needed_capacity), device);
-            on_resize(&self.buffer);
+    fn upload(&mut self, queue: &wgpu::Queue, mut on_reallocate: impl FnMut(&wgpu::Buffer)) {
+        if self.scratch.is_empty() {
+            // the below code works fine for an empty instance buffer, and it'll basically
+            // do nothing, but we can still exit early.
+            return;
         }
-    }
 
-    pub fn capacity(&self) -> usize {
-        self.capacity
-    }
+        let did_reallocate = self.buffer.reallocate_for_size(
+            self.scratch.len(),
+            queue,
+            Some(
+                |_old_view: Option<&[InstanceData]>,
+                 new_view: &mut [InstanceData],
+                 new_buffer: &wgpu::Buffer| {
+                    new_view.copy_from_slice(&self.scratch);
+                    on_reallocate(new_buffer);
+                },
+            ),
+            false,
+        );
 
-    pub fn buffer(&self) -> &wgpu::Buffer {
-        &self.buffer
-    }
-
-    pub fn write_view(&mut self, queue: &wgpu::Queue) -> InstanceBufferWriteView<'_, T> {
-        let size = NonZero::new(buffer_size::<T>(self.capacity)).unwrap();
-        let view = queue.write_buffer_with(&self.buffer, 0, size).unwrap();
-        InstanceBufferWriteView {
-            view,
-            _phantom: PhantomData,
+        if !did_reallocate {
+            // still need to write the data
+            let mut view = self.buffer.write_view(..self.scratch.len(), queue);
+            view.copy_from_slice(&self.scratch);
         }
+
+        self.scratch.clear();
     }
-}
-
-impl<T: Pod> InstanceBuffer<T> {
-    pub fn write(
-        &mut self,
-        data: &[T],
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        on_resize: impl FnOnce(&wgpu::Buffer),
-    ) {
-        self.resize_if_necessary(data.len(), device, on_resize);
-        queue.write_buffer(&self.buffer, 0, bytemuck::cast_slice(data));
-    }
-}
-
-pub struct InstanceBufferWriteView<'a, T> {
-    view: wgpu::QueueWriteBufferView,
-    _phantom: PhantomData<&'a [T]>,
-}
-
-impl<'a, T: Pod> Deref for InstanceBufferWriteView<'a, T> {
-    type Target = [T];
-
-    fn deref(&self) -> &Self::Target {
-        bytemuck::cast_slice(&self.view)
-    }
-}
-
-impl<'a, T: Pod> DerefMut for InstanceBufferWriteView<'a, T> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        bytemuck::cast_slice_mut(&mut self.view)
-    }
-}
-
-fn buffer_size<T>(num_elements: usize) -> u64 {
-    // fixme: this needs alignment/rounding
-    (std::mem::size_of::<T>() * num_elements) as u64
-}
-
-fn allocate_instance_buffer<T>(
-    capacity: usize,
-    usage: wgpu::BufferUsages,
-    device: &wgpu::Device,
-) -> wgpu::Buffer {
-    let size = buffer_size::<T>(capacity);
-    device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("instance buffer"),
-        size,
-        usage: usage | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    })
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]

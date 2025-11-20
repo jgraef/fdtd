@@ -185,7 +185,7 @@ pub struct DrawCommand {
     wireframe_pipeline: Option<wgpu::RenderPipeline>,
     outline_pipeline: Option<wgpu::RenderPipeline>,
     quad_with_texture_pipeline: Option<wgpu::RenderPipeline>,
-    instance_bind_group: wgpu::BindGroup,
+    instance_bind_group: Option<wgpu::BindGroup>,
 
     buffer: Arc<DrawCommandBuilderBuffer>,
 }
@@ -203,8 +203,14 @@ impl DrawCommand {
             render_pass.draw(0..3, 0..1);
         }
 
+        let Some(instance_bind_group) = &self.instance_bind_group
+        else {
+            // if there is no instance bind group, there's nothing else to render
+            return;
+        };
+
         // set instance buffer (this is shared between all draw calls)
-        render_pass.set_bind_group(1, &self.instance_bind_group, &[]);
+        render_pass.set_bind_group(1, instance_bind_group, &[]);
 
         // solid mesh
         if let Some(solid_pipeline) = &self.solid_pipeline

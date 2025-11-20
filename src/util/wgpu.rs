@@ -2,6 +2,7 @@ use std::{
     marker::PhantomData,
     ops::{
         Deref,
+        DerefMut,
         Range,
         RangeBounds,
     },
@@ -64,6 +65,7 @@ impl<T> TypedArrayBuffer<T> {
         device: &wgpu::Device,
         label: &str,
         capacity: usize,
+        num_elements: usize,
         usage: wgpu::BufferUsages,
         mapped_at_creation: bool,
     ) -> Self {
@@ -77,7 +79,7 @@ impl<T> TypedArrayBuffer<T> {
             _phantom: PhantomData,
         };
 
-        buffer.allocate_inner(capacity, mapped_at_creation);
+        buffer.allocate_inner(capacity, num_elements, mapped_at_creation);
 
         buffer
     }
@@ -85,15 +87,19 @@ impl<T> TypedArrayBuffer<T> {
     fn allocate_inner(
         &mut self,
         capacity: usize,
+        num_elements: usize,
         mapped_at_creation: bool,
     ) -> Option<TypedArrayBufferInner> {
         let old_inner = self.inner.take();
+
+        assert!(capacity >= num_elements);
 
         if capacity != 0 {
             self.inner = Some(TypedArrayBufferInner::new::<T>(
                 &self.device,
                 &self.label,
                 capacity,
+                num_elements,
                 self.usage,
                 mapped_at_creation,
             ));
@@ -102,13 +108,17 @@ impl<T> TypedArrayBuffer<T> {
         old_inner
     }
 
-    pub fn new(
+    pub fn new(device: &wgpu::Device, label: &str, usage: wgpu::BufferUsages) -> Self {
+        Self::with_capacity(device, label, usage, 0)
+    }
+
+    pub fn with_capacity(
         device: &wgpu::Device,
         label: &str,
         usage: wgpu::BufferUsages,
         capacity: usize,
     ) -> Self {
-        Self::new_impl(device, label, capacity, usage, false)
+        Self::new_impl(device, label, capacity, 0, usage, false)
     }
 
     pub fn buffer(&self) -> Option<&wgpu::Buffer> {
@@ -176,10 +186,9 @@ where
         usage: wgpu::BufferUsages,
         mut fill: impl FnMut(&mut [T]),
     ) -> Self {
-        let mut buffer = Self::new_impl(device, label, num_elements, usage, true);
+        let mut buffer = Self::new_impl(device, label, num_elements, num_elements, usage, true);
 
         if let Some(inner) = &mut buffer.inner {
-            inner.num_elements = num_elements;
             inner.with_mapped_mut(|view| fill(&mut view[..num_elements]))
         }
         else {
@@ -239,6 +248,24 @@ where
             })
     }
 
+    /// Reallocates the buffer for a larger size.
+    ///
+    /// This only actually reallocates if the current capacity is less than
+    /// `new_elements`.
+    ///
+    /// If a closure is passed as `on_reallocate`, it will be called with:
+    ///
+    /// 1. a mapped slice of the old data, if `pass_old_view` is `true` **and**
+    ///    the buffer supports [`wgpu::BufferUsages::COPY_SRC`]
+    /// 2. a mapped mut-slice of the new buffer. This is always present, as it's
+    ///    cheap to map the buffer on creation.
+    /// 3. the new [`wgpu::Buffer`]
+    ///
+    /// With this it's possible to copy data from the old buffer to the new one,
+    /// if desired. The new underlying [`wgpu::Buffer`] can also be used to
+    /// recreate any bind groups if necessary.
+    ///
+    /// This returns `true` if an reallocation did take place.
     pub fn reallocate_for_size<F>(
         &mut self,
         num_elements: usize,
@@ -247,7 +274,7 @@ where
         pass_old_view: bool,
     ) -> bool
     where
-        F: FnMut(Option<&[T]>, &mut [T]),
+        F: FnMut(Option<&[T]>, &mut [T], &wgpu::Buffer),
     {
         let current_capacity = self.capacity();
 
@@ -255,10 +282,13 @@ where
             // todo: make this a generic parameter?
             let new_capacity = (current_capacity * 2).max(num_elements);
 
-            let old_inner = self.allocate_inner(new_capacity, true);
+            let old_inner =
+                self.allocate_inner(new_capacity, num_elements, on_reallocate.is_some());
 
             if let Some(on_reallocate) = &mut on_reallocate {
-                let old_view = pass_old_view
+                let can_read = self.usage.contains(wgpu::BufferUsages::COPY_SRC);
+
+                let old_view = (pass_old_view && can_read)
                     .then(|| {
                         old_inner.as_ref().map(|inner| {
                             TypedArrayBufferReadView::new(
@@ -276,8 +306,13 @@ where
                     .as_ref()
                     .expect("we just reallocated with larger capacity");
 
+                // note: this unmaps the buffer
                 new_inner.with_mapped_mut(|new_view| {
-                    on_reallocate(old_view.as_deref(), &mut new_view[..num_elements]);
+                    on_reallocate(
+                        old_view.as_deref(),
+                        &mut new_view[..num_elements],
+                        &new_inner.buffer,
+                    );
                 });
             }
 
@@ -303,6 +338,7 @@ impl TypedArrayBufferInner {
         device: &wgpu::Device,
         label: &str,
         capacity: usize,
+        num_elements: usize,
         usage: wgpu::BufferUsages,
         mapped_at_creation: bool,
     ) -> Self {
@@ -325,7 +361,7 @@ impl TypedArrayBufferInner {
 
         Self {
             buffer,
-            num_elements: 0,
+            num_elements,
             capacity,
             unpadded_buffer_size,
             padded_buffer_size,
@@ -382,15 +418,14 @@ impl<'a, T> TypedArrayBufferReadView<'a, T> {
             alignment.copy_size,
         );
 
-        let result_buf = Arc::new(Mutex::new(None));
+        let result_buf = AsyncResultBuf::default();
 
-        command_encoder.map_buffer_on_submit(&staging_buffer, wgpu::MapMode::Read, .., {
-            let result_buf = result_buf.clone();
-            move |result| {
-                let mut result_buf = result_buf.lock();
-                *result_buf = Some(result);
-            }
-        });
+        command_encoder.map_buffer_on_submit(
+            &staging_buffer,
+            wgpu::MapMode::Read,
+            ..,
+            result_buf.callback(),
+        );
 
         let submission_index = queue.submit([command_encoder.finish()]);
 
@@ -401,10 +436,7 @@ impl<'a, T> TypedArrayBufferReadView<'a, T> {
             })
             .expect("device poll failed");
 
-        let result = result_buf.lock().take();
-        result
-            .expect("map_buffer_on_submit hasn't finished yet")
-            .unwrap();
+        result_buf.unwrap().unwrap();
 
         let staging_view = staging_buffer.get_mapped_range(..);
 
@@ -482,11 +514,11 @@ impl<'a, T> TypedArrayBufferWriteView<'a, T> {
         let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("write: staging"),
             size: alignment.copy_size,
-            usage: wgpu::BufferUsages::MAP_WRITE,
+            usage: wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::MAP_WRITE,
             mapped_at_creation: true,
         });
 
-        let staging_view = inner.buffer.get_mapped_range_mut(..);
+        let staging_view = staging_buffer.get_mapped_range_mut(..);
 
         Self {
             inner: Some(TypedArrayBufferWriteViewInner {
@@ -512,40 +544,6 @@ impl<'a, T> TypedArrayBufferWriteView<'a, T> {
         if let Some(inner) = self.inner.take() {
             inner.dispatch_copy();
         }
-    }
-}
-
-#[derive(Debug)]
-struct TypedArrayBufferWriteViewInner<'a> {
-    alignment: StagingBufferAlignment,
-    staging_buffer: wgpu::Buffer,
-    staging_view: wgpu::BufferViewMut,
-    destination_buffer: &'a wgpu::Buffer,
-    device: &'a wgpu::Device,
-    queue: wgpu::Queue,
-}
-
-impl<'a> TypedArrayBufferWriteViewInner<'a> {
-    fn dispatch_copy(&self) {
-        let mut command_encoder =
-            self.device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("write: copy from staging"),
-                });
-
-        self.dispatch_copy_with(&mut command_encoder);
-
-        self.queue.submit([command_encoder.finish()]);
-    }
-
-    fn dispatch_copy_with(&self, command_encoder: &mut wgpu::CommandEncoder) {
-        command_encoder.copy_buffer_to_buffer(
-            &self.staging_buffer,
-            self.alignment.buffer_start,
-            &self.destination_buffer,
-            self.alignment.staging_start,
-            self.alignment.copy_size,
-        );
     }
 }
 
@@ -575,11 +573,70 @@ where
     }
 }
 
+impl<'a, T> Deref for TypedArrayBufferWriteView<'a, T>
+where
+    T: Pod,
+{
+    type Target = [T];
+
+    fn deref(&self) -> &Self::Target {
+        self.as_ref()
+    }
+}
+
+impl<'a, T> DerefMut for TypedArrayBufferWriteView<'a, T>
+where
+    T: Pod,
+{
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.as_mut()
+    }
+}
+
 impl<'a, T> Drop for TypedArrayBufferWriteView<'a, T> {
     fn drop(&mut self) {
         if let Some(inner) = self.inner.take() {
             inner.dispatch_copy();
         }
+    }
+}
+
+#[derive(Debug)]
+struct TypedArrayBufferWriteViewInner<'a> {
+    alignment: StagingBufferAlignment,
+    staging_buffer: wgpu::Buffer,
+    staging_view: wgpu::BufferViewMut,
+    destination_buffer: &'a wgpu::Buffer,
+    device: &'a wgpu::Device,
+    queue: wgpu::Queue,
+}
+
+impl<'a> TypedArrayBufferWriteViewInner<'a> {
+    fn dispatch_copy(self) {
+        let mut command_encoder =
+            self.device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("write: copy from staging"),
+                });
+
+        let queue = self.dispatch_copy_with(&mut command_encoder);
+
+        queue.submit([command_encoder.finish()]);
+    }
+
+    fn dispatch_copy_with(self, command_encoder: &mut wgpu::CommandEncoder) -> wgpu::Queue {
+        drop(self.staging_view);
+        self.staging_buffer.unmap();
+
+        command_encoder.copy_buffer_to_buffer(
+            &self.staging_buffer,
+            self.alignment.buffer_start,
+            &self.destination_buffer,
+            self.alignment.staging_start,
+            self.alignment.copy_size,
+        );
+
+        self.queue
     }
 }
 
@@ -626,5 +683,25 @@ impl StagingBufferAlignment {
 
     pub fn is_aligned(&self) -> bool {
         self.staging_start == 0 && self.staging_end == self.copy_size
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+struct AsyncResultBuf {
+    buf: Arc<Mutex<Option<Result<(), wgpu::BufferAsyncError>>>>,
+}
+
+impl AsyncResultBuf {
+    fn callback(&self) -> impl FnOnce(Result<(), wgpu::BufferAsyncError>) + 'static {
+        let buf = self.buf.clone();
+        move |result| {
+            let mut buf = buf.lock();
+            *buf = Some(result);
+        }
+    }
+
+    fn unwrap(&self) -> Result<(), wgpu::BufferAsyncError> {
+        let result = self.buf.lock().take();
+        result.expect("map_buffer_on_submit hasn't finished yet")
     }
 }
