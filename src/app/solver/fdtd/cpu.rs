@@ -1,5 +1,6 @@
 use std::{
     convert::Infallible,
+    ops::RangeBounds,
     time::Duration,
 };
 
@@ -22,11 +23,8 @@ use crate::{
             StopCondition,
         },
         fdtd::{
-            AccessFieldRegion,
             FdtdSolverConfig,
-            FieldComponent,
             Resolution,
-            SourceValues,
             boundary_condition::{
                 AnyBoundaryCondition,
                 BoundaryCondition,
@@ -45,13 +43,17 @@ use crate::{
                 evaluate_stop_condition,
             },
         },
+        maxwell::{
+            Field,
+            FieldComponent,
+            FieldMut,
+            SourceValues,
+        },
         traits::{
             DomainDescription,
-            ReadState,
             SolverBackend,
             SolverInstance,
             Time,
-            WriteState,
         },
     },
     physics::PhysicalConstants,
@@ -302,39 +304,47 @@ impl Time for FdtdCpuSolverState {
     }
 }
 
-impl ReadState<FdtdCpuSolverInstance> for AccessFieldRegion {
-    type Value<'a>
+impl Field for FdtdCpuSolverInstance {
+    type Iter<'a>
         = CpuFieldRegionIter<'a>
     where
         Self: 'a;
 
-    fn read_state<'a>(
+    fn field<'a, R>(
         &'a self,
-        instance: &'a FdtdCpuSolverInstance,
-        state: &'a FdtdCpuSolverState,
-    ) -> CpuFieldRegionIter<'a> {
+        state: &'a Self::State,
+        range: R,
+        field_component: FieldComponent,
+    ) -> Self::Iter<'a>
+    where
+        R: RangeBounds<Self::Point>,
+    {
         CpuFieldRegionIter {
-            field_component: self.field_component,
-            lattice_iter: state.lattice.iter(&instance.strider, self.range),
+            field_component,
+            lattice_iter: state.lattice.iter(&self.strider, range),
             swap_buffer_index: SwapBufferIndex::from_tick(state.tick),
         }
     }
 }
 
-impl WriteState<FdtdCpuSolverInstance> for AccessFieldRegion {
-    type Value<'a>
+impl FieldMut for FdtdCpuSolverInstance {
+    type IterMut<'a>
         = CpuFieldRegionIterMut<'a>
     where
         Self: 'a;
 
-    fn write_state<'a>(
+    fn field_mut<'a, R>(
         &'a self,
-        instance: &'a FdtdCpuSolverInstance,
-        state: &'a mut FdtdCpuSolverState,
-    ) -> CpuFieldRegionIterMut<'a> {
+        state: &'a mut Self::State,
+        range: R,
+        field_component: FieldComponent,
+    ) -> Self::IterMut<'a>
+    where
+        R: RangeBounds<Self::Point>,
+    {
         CpuFieldRegionIterMut {
-            field_component: self.field_component,
-            lattice_iter: state.lattice.iter_mut(&instance.strider, self.range),
+            field_component,
+            lattice_iter: state.lattice.iter_mut(&self.strider, range),
             swap_buffer_index: SwapBufferIndex::from_tick(state.tick),
         }
     }

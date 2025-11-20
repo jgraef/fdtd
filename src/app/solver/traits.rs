@@ -51,48 +51,7 @@ pub trait SolverInstance {
     where
         S: IntoIterator<Item = (Self::Point, Self::Source)>;
 
-    // note: `read/write_state` are way too general. rather make traits to
-    // read/write field values, but we would need to know what exact usage pattern
-    // we have for this (i.e.. how we project data out of the simulation domain).
-    fn read_state<'a, R>(&'a self, state: &'a Self::State, reader: &'a R) -> R::Value<'a>
-    where
-        R: ReadState<Self>,
-    {
-        reader.read_state(self, state)
-    }
-
-    fn write_state<'a, W>(&'a self, state: &'a mut Self::State, writer: &'a W) -> W::Value<'a>
-    where
-        W: WriteState<Self>,
-    {
-        writer.write_state(self, state)
-    }
-
     // todo: needs methods for converting from/to solver coordinates
-}
-
-pub trait ReadState<I>
-where
-    I: SolverInstance + ?Sized,
-{
-    type Value<'a>
-    where
-        Self: 'a,
-        I: 'a;
-
-    fn read_state<'a>(&'a self, instance: &'a I, state: &'a I::State) -> Self::Value<'a>;
-}
-
-pub trait WriteState<I>
-where
-    I: SolverInstance + ?Sized,
-{
-    type Value<'a>
-    where
-        Self: 'a,
-        I: 'a;
-
-    fn write_state<'a>(&'a self, instance: &'a I, state: &'a mut I::State) -> Self::Value<'a>;
 }
 
 pub trait Time {

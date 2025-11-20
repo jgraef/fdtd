@@ -33,11 +33,8 @@ use nalgebra::{
 use crate::{
     app::solver::{
         fdtd::{
-            AccessFieldRegion,
             FdtdSolverConfig,
-            FieldComponent,
             Resolution,
-            SourceValues,
             cpu::{
                 FdtdCpuBackend,
                 FdtdCpuSolverInstance,
@@ -50,9 +47,13 @@ use crate::{
                 FdtdWgpuSolverState,
             },
         },
+        maxwell::{
+            Field,
+            FieldComponent,
+            SourceValues,
+        },
         traits::{
             DomainDescription,
-            ReadState,
             SolverBackend,
             SolverInstance,
             Time,
@@ -299,14 +300,12 @@ impl BackendLabel for Simulation<FdtdCpuSolverInstance, FdtdCpuSolverState> {
 impl<I, S> ErasedSimulation for Simulation<I, S>
 where
     I: SolverInstance<Point = Point3<usize>, Source = SourceValues, State = S>
+        + Field
         + Send
         + Sync
         + Debug
         + 'static,
     S: Time + Send + Sync + Debug + 'static,
-    AccessFieldRegion: ReadState<I>,
-    for<'a> <AccessFieldRegion as ReadState<I>>::Value<'a>:
-        IntoIterator<Item = (Point3<usize>, Vector3<f64>)>,
     Self: BackendLabel,
 {
     fn update(&mut self) {
@@ -330,7 +329,7 @@ where
 
         PlotPoints::Owned(
             self.instance
-                .read_state(&self.state, &AccessFieldRegion::new(.., field_component))
+                .field(&self.state, .., field_component)
                 .into_iter()
                 .map(|(x, y)| {
                     // note: casting x like this doesn't account for resolution and offset

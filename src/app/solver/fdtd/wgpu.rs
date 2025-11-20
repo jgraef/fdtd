@@ -1,6 +1,9 @@
 use std::{
     convert::Infallible,
-    ops::Range,
+    ops::{
+        Range,
+        RangeBounds,
+    },
     sync::Arc,
     time::Duration,
 };
@@ -24,11 +27,8 @@ use crate::{
             StopCondition,
         },
         fdtd::{
-            AccessFieldRegion,
             FdtdSolverConfig,
-            FieldComponent,
             Resolution,
-            SourceValues,
             lattice::Strider,
             util::{
                 SwapBuffer,
@@ -37,9 +37,13 @@ use crate::{
                 evaluate_stop_condition,
             },
         },
+        maxwell::{
+            Field,
+            FieldComponent,
+            SourceValues,
+        },
         traits::{
             DomainDescription,
-            ReadState,
             SolverBackend,
             SolverInstance,
             Time,
@@ -398,19 +402,22 @@ impl Time for FdtdWgpuSolverState {
     }
 }
 
-impl ReadState<FdtdWgpuSolverInstance> for AccessFieldRegion {
-    type Value<'a>
+impl Field for FdtdWgpuSolverInstance {
+    type Iter<'a>
         = WgpuFieldRegionIter<'a>
     where
-        Self: 'a,
-        FdtdWgpuSolverInstance: 'a;
+        Self: 'a;
 
-    fn read_state<'a>(
+    fn field<'a, R>(
         &'a self,
-        instance: &'a FdtdWgpuSolverInstance,
-        state: &'a FdtdWgpuSolverState,
-    ) -> WgpuFieldRegionIter<'a> {
-        let range = normalize_point_bounds(self.range, *instance.strider.size());
+        state: &'a Self::State,
+        range: R,
+        field_component: FieldComponent,
+    ) -> Self::Iter<'a>
+    where
+        R: RangeBounds<Self::Point>,
+    {
+        let range = normalize_point_bounds(range, *self.strider.size());
 
         let fetch_data = |index_range: Range<usize>, check_inside: Option<Range<Point3<usize>>>| {
             let start_index = index_range.start;
@@ -418,15 +425,15 @@ impl ReadState<FdtdWgpuSolverInstance> for AccessFieldRegion {
             let swap_buffer_index = SwapBufferIndex::from_tick(state.tick);
 
             let field_buffers = &state.field_buffers[swap_buffer_index];
-            let buffer = match self.field_component {
+            let buffer = match field_component {
                 FieldComponent::E => &field_buffers.e,
                 FieldComponent::H => &field_buffers.h,
             };
 
-            let view = buffer.read_view(index_range, &instance.backend.queue);
+            let view = buffer.read_view(index_range, &self.backend.queue);
 
             WgpuFieldRegionIter {
-                strider: instance.strider,
+                strider: self.strider,
                 start_index,
                 view_index: 0,
                 view,
@@ -434,7 +441,7 @@ impl ReadState<FdtdWgpuSolverInstance> for AccessFieldRegion {
             }
         };
 
-        match instance.strider.contiguous_index_range(range.clone()) {
+        match self.strider.contiguous_index_range(range.clone()) {
             Ok(index_range) => fetch_data(index_range, Some(range)),
             Err(index_range) => {
                 // todo: run a compute shader that projects the selected region into a first
