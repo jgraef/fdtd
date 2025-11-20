@@ -111,6 +111,12 @@ impl SolverBackend for FdtdWgpuBackend {
             domain_description,
         ))
     }
+
+    fn memory_required(&self, config: &Self::Config) -> Option<usize> {
+        let per_cell =
+            std::mem::size_of::<UpdateCoefficientsData>() + 2 * std::mem::size_of::<Cell>();
+        Some(config.size().product() * per_cell)
+    }
 }
 
 #[derive(Clone, Debug)]

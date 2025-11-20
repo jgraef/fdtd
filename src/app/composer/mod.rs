@@ -79,6 +79,7 @@ use crate::{
         solver::{
             FieldComponent,
             config::{
+                Parallelization,
                 SolverConfig,
                 SolverConfigCommon,
                 SolverConfigFdtd,
@@ -322,23 +323,31 @@ impl ComposerState {
         let undo_buffer = UndoBuffer::new(config.undo_limit, config.redo_limit);
 
         // some test solver configs
-        let solver_configs = vec![SolverConfig {
-            label: "Test FDTD".to_owned(),
-            common: SolverConfigCommon {
-                volume: Default::default(),
-                physical_constants: PhysicalConstants::REDUCED,
-                default_material: Material::VACUUM,
-                parallelization: None,
-            },
+        let solver_configs = {
+            let make_config = |name, parallelization| {
+                SolverConfig {
+                    label: format!("Test FDTD ({name})"),
+                    common: SolverConfigCommon {
+                        volume: Default::default(),
+                        physical_constants: PhysicalConstants::REDUCED,
+                        default_material: Material::VACUUM,
+                        parallelization,
+                    },
+                    specifics: SolverConfigSpecifics::Fdtd(SolverConfigFdtd {
+                        resolution: fdtd::Resolution {
+                            spatial: Vector3::repeat(0.01),
+                            temporal: 0.01,
+                        },
+                        stop_condition: StopCondition::Never,
+                    }),
+                }
+            };
 
-            specifics: SolverConfigSpecifics::Fdtd(SolverConfigFdtd {
-                resolution: fdtd::Resolution {
-                    spatial: Vector3::repeat(0.01),
-                    temporal: 0.01,
-                },
-                stop_condition: StopCondition::Never,
-            }),
-        }];
+            vec![
+                make_config("CPU", None),
+                make_config("GPU", Some(Parallelization::Wgpu)),
+            ]
+        };
 
         Self {
             config,

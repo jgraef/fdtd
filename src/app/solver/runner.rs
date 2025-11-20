@@ -150,15 +150,17 @@ fn run_fdtd_with_backend<B>(
         size: Vector3::new(100.0, 100.0, 0.0),
     };*/
 
-    let memory_required = backend
-        .memory_required(&config)
-        .expect("fdtd always returns memory required");
+    let memory_required = backend.memory_required(&config);
+    let memory_required_str = memory_required.map_or_else(
+        || "unknown".to_owned(),
+        |memory_required| format_size(memory_required).to_string(),
+    );
     let lattice_size = config.size();
 
     tracing::debug!(
         ?size,
         resolution = ?config.resolution,
-        memory_required = %format_size(memory_required),
+        memory_required = memory_required_str,
         ?lattice_size,
         "creating fdtd simulation"
     );
@@ -166,7 +168,7 @@ fn run_fdtd_with_backend<B>(
     // todo: remove this. we want a ui flow that prepares the solver-run anyway, so
     // we could display and warn about memory requirements there.
     // for now this is just a safe-guard that I don't crash my system xD
-    if memory_required > 200_000_000 {
+    if memory_required.is_some_and(|memory_required| memory_required > 200_000_000) {
         tracing::warn!("abort. too much memory required");
         return;
     }
