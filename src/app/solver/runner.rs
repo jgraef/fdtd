@@ -29,6 +29,8 @@ use crate::{
             SolverInstance,
             SourceValues,
             Time,
+            UpdatePass,
+            UpdatePassForcing,
             config::{
                 EvaluateStopCondition,
                 Parallelization,
@@ -136,16 +138,17 @@ impl SolverRunner {
     }
 }
 
-fn run_fdtd_with_backend<B>(
+fn run_fdtd_with_backend<Backend>(
     scene: &mut Scene,
     common_config: &SolverConfigCommon,
     fdtd_config: &SolverConfigFdtd,
-    backend: &B,
+    backend: &Backend,
 ) where
-    B: SolverBackend<Config = FdtdSolverConfig, Point = Point3<usize>>,
-    B::Instance:
-        EvaluateStopCondition + SolverInstance<Source = SourceValues> + Field + Send + 'static,
-    <B::Instance as SolverInstance>::State: Time + Send + 'static,
+    Backend: SolverBackend<FdtdSolverConfig, Point3<usize>>,
+    Backend::Instance:
+        EvaluateStopCondition + SolverInstance + Field<Point3<usize>> + Send + 'static,
+    <Backend::Instance as SolverInstance>::State: Time + Send + 'static,
+    for<'a> <Backend::Instance as SolverInstance>::UpdatePass<'a>: UpdatePassForcing<Point3<usize>>,
 {
     let time_start = Instant::now();
 
@@ -250,19 +253,16 @@ fn run_fdtd_with_backend<B>(
     );
 }
 
-fn spawn_solver<I>(
-    instance: I,
-    mut state: I::State,
+fn spawn_solver<Instance>(
+    instance: Instance,
+    mut state: Instance::State,
     stop_condition: StopCondition,
     sources: Sources,
     mut observers: Observers,
 ) where
-    I: SolverInstance<Point = Point3<usize>, Source = SourceValues>
-        + EvaluateStopCondition
-        + Field
-        + Send
-        + 'static,
-    I::State: Time + Send + 'static,
+    Instance: SolverInstance + EvaluateStopCondition + Field<Point3<usize>> + Send + 'static,
+    Instance::State: Time + Send + 'static,
+    for<'a> Instance::UpdatePass<'a>: UpdatePassForcing<Point3<usize>>,
 {
     let _join_handle = std::thread::spawn(move || {
         let time_start = Instant::now();
@@ -278,7 +278,9 @@ fn spawn_solver<I>(
             //tracing::debug!(tick = simulation.tick(), elapsed = ?time_elapsed);
 
             let time = state.time();
-            instance.update(&mut state, sources.generate(time));
+            let mut update_pass = instance.begin_update(&mut state);
+            sources.apply(time, &mut update_pass);
+            update_pass.finish();
 
             observers.run(&instance, &state);
 
@@ -329,7 +331,7 @@ struct Observer {
 impl Observer {
     pub fn run<I>(&mut self, instance: &I, state: &I::State)
     where
-        I: Field + SolverInstance<Point = Point3<usize>>,
+        I: Field<Point3<usize>>,
     {
         let view = instance.field(state, .., self.field_component);
 
@@ -382,7 +384,7 @@ impl Observers {
 
     pub fn run<I>(&mut self, instance: &I, state: &I::State)
     where
-        I: Field + SolverInstance<Point = Point3<usize>>,
+        I: Field<Point3<usize>>,
     {
         for observer in &mut self.observers {
             observer.run(instance, state);
@@ -419,17 +421,20 @@ impl Sources {
         });
     }
 
-    pub fn generate(&self, time: f64) -> impl Iterator<Item = (Point3<usize>, SourceValues)> {
-        self.sources.iter().map(move |source| {
+    pub fn apply<UpdatePass>(&self, time: f64, update_pass: &mut UpdatePass)
+    where
+        UpdatePass: UpdatePassForcing<Point3<usize>>,
+    {
+        for source in &self.sources {
             let value = source.function.evaluate(time);
-            (
-                source.point,
-                SourceValues {
+            update_pass.set_forcing(
+                &source.point,
+                &SourceValues {
                     j_source: value * source.j_amplitude,
                     m_source: value * source.m_amplitude,
                 },
-            )
-        })
+            );
+        }
     }
 }
 

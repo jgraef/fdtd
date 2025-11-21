@@ -1,6 +1,9 @@
+pub mod project;
+
 use std::{
     convert::Infallible,
     ops::{
+        Index,
         Range,
         RangeBounds,
     },
@@ -30,6 +33,8 @@ use crate::{
         SolverInstance,
         SourceValues,
         Time,
+        UpdatePass,
+        UpdatePassForcing,
         config::{
             EvaluateStopCondition,
             StopCondition,
@@ -44,6 +49,7 @@ use crate::{
                 UpdateCoefficients,
                 evaluate_stop_condition,
             },
+            wgpu::project::ProjectionPipeline,
         },
     },
     util::{
@@ -64,6 +70,7 @@ pub struct FdtdWgpuBackend {
     shader_module: wgpu::ShaderModule,
     bind_group_layout: wgpu::BindGroupLayout,
     pipeline_layout: wgpu::PipelineLayout,
+    projection: ProjectionPipeline,
 }
 
 impl FdtdWgpuBackend {
@@ -80,6 +87,8 @@ impl FdtdWgpuBackend {
             push_constant_ranges: &[],
         });
 
+        let projection = ProjectionPipeline::new(device);
+
         Self {
             device: device.clone(),
             queue: queue.clone(),
@@ -87,23 +96,22 @@ impl FdtdWgpuBackend {
             shader_module,
             bind_group_layout,
             pipeline_layout,
+            projection,
         }
     }
 }
 
-impl SolverBackend for FdtdWgpuBackend {
-    type Config = FdtdSolverConfig;
-    type Point = Point3<usize>;
+impl SolverBackend<FdtdSolverConfig, Point3<usize>> for FdtdWgpuBackend {
     type Instance = FdtdWgpuSolverInstance;
     type Error = Infallible;
 
     fn create_instance<D>(
         &self,
-        config: &Self::Config,
+        config: &FdtdSolverConfig,
         domain_description: D,
     ) -> Result<Self::Instance, Self::Error>
     where
-        D: DomainDescription<Self::Point>,
+        D: DomainDescription<Point3<usize>>,
     {
         Ok(FdtdWgpuSolverInstance::new(
             self,
@@ -112,7 +120,7 @@ impl SolverBackend for FdtdWgpuBackend {
         ))
     }
 
-    fn memory_required(&self, config: &Self::Config) -> Option<usize> {
+    fn memory_required(&self, config: &FdtdSolverConfig) -> Option<usize> {
         let per_cell =
             std::mem::size_of::<UpdateCoefficientsData>() + 2 * std::mem::size_of::<Cell>();
         Some(config.size().product() * per_cell)
@@ -223,115 +231,21 @@ impl FdtdWgpuSolverInstance {
             dispatches,
         }
     }
-
-    fn update_impl(
-        &self,
-        state: &mut FdtdWgpuSolverState,
-        sources: impl IntoIterator<Item = (Point3<usize>, SourceValues)>,
-    ) {
-        let swap_buffer_index = SwapBufferIndex::from_tick(state.tick + 1);
-
-        // write source data
-        assert!(state.source_buffer.staging.is_empty());
-        state.source_buffer.push(SourceData::default());
-        for (point, values) in sources {
-            if let Some(index) = self.strider.index(&point) {
-                state
-                    .source_buffer
-                    .push(SourceData::new(index, values.j_source, values.m_source));
-            }
-        }
-        let num_sources = state.source_buffer.staging.len();
-        state
-            .source_buffer
-            .flush(&self.backend.queue, |new_buffer| {
-                state.update_bind_groups =
-                    BINDINGS.bind_group(self, &state.field_buffers, new_buffer)
-            });
-
-        // update time
-        // todo: would be nice if we could combine this with the command encoder
-        let config_data = ConfigData::new(&self.strider, &self.resolution, state.time, num_sources);
-        self.backend
-            .queue
-            .write_buffer(&self.config_buffer, 0, bytemuck::bytes_of(&config_data));
-
-        let mut command_encoder =
-            self.backend
-                .device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("fdtd/update"),
-                });
-
-        // compute pass
-        {
-            let mut compute_pass =
-                command_encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                    label: Some("fdtd/update"),
-                    timestamp_writes: None,
-                });
-
-            compute_pass.set_bind_group(0, &state.update_bind_groups[swap_buffer_index], &[]);
-
-            // update sources
-            compute_pass.set_pipeline(&self.update_sources_pipeline);
-            for num_workgroups in self
-                .backend
-                .limits
-                .divide_work_into_dispatches(num_sources, &self.workgroup_size)
-            {
-                compute_pass.dispatch_workgroups(
-                    num_workgroups.x,
-                    num_workgroups.y,
-                    num_workgroups.z,
-                );
-            }
-
-            let mut dispatch_update = |pipeline| {
-                compute_pass.set_pipeline(pipeline);
-
-                for num_workgroups in &self.dispatches {
-                    compute_pass.dispatch_workgroups(
-                        num_workgroups.x,
-                        num_workgroups.y,
-                        num_workgroups.z,
-                    );
-                }
-            };
-
-            dispatch_update(&self.update_h_pipeline);
-
-            dispatch_update(&self.update_e_pipeline);
-        }
-
-        let submission_index = self.backend.queue.submit([command_encoder.finish()]);
-        self.backend
-            .device
-            .poll(wgpu::PollType::Wait {
-                submission_index: Some(submission_index),
-                timeout: None,
-            })
-            .unwrap();
-
-        state.tick += 1;
-        state.time += self.resolution.temporal;
-    }
 }
 
 impl SolverInstance for FdtdWgpuSolverInstance {
     type State = FdtdWgpuSolverState;
-    type Point = Point3<usize>;
-    type Source = SourceValues;
+    type UpdatePass<'a>
+        = FdtdWgpuUpdatePass<'a>
+    where
+        Self: 'a;
 
     fn create_state(&self) -> Self::State {
         FdtdWgpuSolverState::new(self)
     }
 
-    fn update<S>(&self, state: &mut Self::State, sources: S)
-    where
-        S: IntoIterator<Item = (Point3<usize>, SourceValues)>,
-    {
-        self.update_impl(state, sources);
+    fn begin_update<'a>(&'a self, state: &'a mut Self::State) -> FdtdWgpuUpdatePass<'a> {
+        FdtdWgpuUpdatePass::new(self, state)
     }
 }
 
@@ -405,7 +319,128 @@ impl Time for FdtdWgpuSolverState {
     }
 }
 
-impl Field for FdtdWgpuSolverInstance {
+#[derive(Debug)]
+pub struct FdtdWgpuUpdatePass<'a> {
+    instance: &'a FdtdWgpuSolverInstance,
+    state: &'a mut FdtdWgpuSolverState,
+}
+
+impl<'a> FdtdWgpuUpdatePass<'a> {
+    fn new(instance: &'a FdtdWgpuSolverInstance, state: &'a mut FdtdWgpuSolverState) -> Self {
+        // initialize source buffer
+        assert!(state.source_buffer.staging.is_empty());
+        state.source_buffer.push(SourceData::default());
+
+        Self { instance, state }
+    }
+}
+
+impl<'a> UpdatePassForcing<Point3<usize>> for FdtdWgpuUpdatePass<'a> {
+    fn set_forcing(&mut self, point: &Point3<usize>, value: &SourceValues) {
+        if let Some(index) = self.instance.strider.index(point) {
+            self.state
+                .source_buffer
+                .push(SourceData::new(index, value.j_source, value.m_source));
+        }
+    }
+}
+
+impl<'a> UpdatePass for FdtdWgpuUpdatePass<'a> {
+    fn finish(self) {
+        let swap_buffer_index = SwapBufferIndex::from_tick(self.state.tick + 1);
+
+        // write source data
+        let num_sources = self.state.source_buffer.staging.len();
+        self.state
+            .source_buffer
+            .flush(&self.instance.backend.queue, |new_buffer| {
+                self.state.update_bind_groups =
+                    BINDINGS.bind_group(self.instance, &self.state.field_buffers, new_buffer)
+            });
+
+        // update time
+        // todo: would be nice if we could combine this with the command encoder
+        let config_data = ConfigData::new(
+            &self.instance.strider,
+            &self.instance.resolution,
+            self.state.time,
+            num_sources,
+        );
+        self.instance.backend.queue.write_buffer(
+            &self.instance.config_buffer,
+            0,
+            bytemuck::bytes_of(&config_data),
+        );
+
+        let mut command_encoder =
+            self.instance
+                .backend
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("fdtd/update"),
+                });
+
+        // compute pass
+        {
+            let mut compute_pass =
+                command_encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("fdtd/update"),
+                    timestamp_writes: None,
+                });
+
+            compute_pass.set_bind_group(0, &self.state.update_bind_groups[swap_buffer_index], &[]);
+
+            // update sources
+            compute_pass.set_pipeline(&self.instance.update_sources_pipeline);
+            for num_workgroups in self
+                .instance
+                .backend
+                .limits
+                .divide_work_into_dispatches(num_sources, &self.instance.workgroup_size)
+            {
+                compute_pass.dispatch_workgroups(
+                    num_workgroups.x,
+                    num_workgroups.y,
+                    num_workgroups.z,
+                );
+            }
+
+            let mut dispatch_update = |pipeline| {
+                compute_pass.set_pipeline(pipeline);
+
+                for num_workgroups in &self.instance.dispatches {
+                    compute_pass.dispatch_workgroups(
+                        num_workgroups.x,
+                        num_workgroups.y,
+                        num_workgroups.z,
+                    );
+                }
+            };
+
+            dispatch_update(&self.instance.update_h_pipeline);
+            dispatch_update(&self.instance.update_e_pipeline);
+        }
+
+        let submission_index = self
+            .instance
+            .backend
+            .queue
+            .submit([command_encoder.finish()]);
+        self.instance
+            .backend
+            .device
+            .poll(wgpu::PollType::Wait {
+                submission_index: Some(submission_index),
+                timeout: None,
+            })
+            .unwrap();
+
+        self.state.tick += 1;
+        self.state.time += self.instance.resolution.temporal;
+    }
+}
+
+impl Field<Point3<usize>> for FdtdWgpuSolverInstance {
     type View<'a>
         = WgpuFieldView<'a>
     where
@@ -418,7 +453,7 @@ impl Field for FdtdWgpuSolverInstance {
         field_component: FieldComponent,
     ) -> WgpuFieldView<'a>
     where
-        R: RangeBounds<Self::Point>,
+        R: RangeBounds<Point3<usize>>,
     {
         let range = normalize_point_bounds(range, *self.strider.size());
 
@@ -428,11 +463,7 @@ impl Field for FdtdWgpuSolverInstance {
             let swap_buffer_index = SwapBufferIndex::from_tick(state.tick);
 
             let field_buffers = &state.field_buffers[swap_buffer_index];
-            let buffer = match field_component {
-                FieldComponent::E => &field_buffers.e,
-                FieldComponent::H => &field_buffers.h,
-            };
-
+            let buffer = &field_buffers[field_component];
             let view = buffer.read_view(index_range, &self.backend.queue);
 
             WgpuFieldView {
@@ -611,6 +642,17 @@ where
 struct FieldBuffers {
     e: TypedArrayBuffer<Cell>,
     h: TypedArrayBuffer<Cell>,
+}
+
+impl Index<FieldComponent> for FieldBuffers {
+    type Output = TypedArrayBuffer<Cell>;
+
+    fn index(&self, index: FieldComponent) -> &Self::Output {
+        match index {
+            FieldComponent::E => &self.e,
+            FieldComponent::H => &self.h,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Zeroable, Pod)]

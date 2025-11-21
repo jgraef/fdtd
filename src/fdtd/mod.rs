@@ -30,6 +30,8 @@ use nalgebra::{
     Vector3,
 };
 
+#[cfg(feature = "rayon")]
+use crate::app::solver::fdtd::cpu::MultiThreaded;
 use crate::{
     app::solver::{
         DomainDescription,
@@ -40,13 +42,14 @@ use crate::{
         SolverInstance,
         SourceValues,
         Time,
+        UpdatePass,
+        UpdatePassForcing,
         fdtd::{
             FdtdSolverConfig,
             Resolution,
             cpu::{
                 FdtdCpuBackend,
                 FdtdCpuSolverInstance,
-                FdtdCpuSolverState,
                 SingleThreaded,
             },
             source::{
@@ -56,7 +59,6 @@ use crate::{
             wgpu::{
                 FdtdWgpuBackend,
                 FdtdWgpuSolverInstance,
-                FdtdWgpuSolverState,
             },
         },
     },
@@ -247,22 +249,25 @@ trait ErasedSimulation: Time + Debug + Send + Sync + 'static {
 }
 
 #[derive(Debug)]
-struct Simulation<I, S> {
-    instance: I,
-    state: S,
+struct Simulation<Instance>
+where
+    Instance: SolverInstance,
+{
+    instance: Instance,
+    state: Instance::State,
     source: GaussianPulse,
     label: String,
 }
 
-impl<I, S> Simulation<I, S>
+impl<Instance> Simulation<Instance>
 where
-    I: SolverInstance<Point = Point3<usize>, Source = SourceValues, State = S>,
-    S: Time,
+    Instance: SolverInstance,
+    Instance::State: Time,
 {
-    pub fn new<B>(backend: &B, config: &B::Config, label: impl ToString) -> Self
+    pub fn new<Backend, Config>(backend: &Backend, config: &Config, label: impl ToString) -> Self
     where
-        B: SolverBackend<Instance = I, Point = Point3<usize>>,
-        B::Config: Debug,
+        Backend: SolverBackend<Config, Point3<usize>, Instance = Instance>,
+        Config: Debug,
     {
         let memory_required = backend
             .memory_required(config)
@@ -290,14 +295,14 @@ where
     }
 }
 
-impl Simulation<FdtdWgpuSolverInstance, FdtdWgpuSolverState> {
+impl Simulation<FdtdWgpuSolverInstance> {
     pub fn wgpu(config: &FdtdSolverConfig, device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
         let backend = FdtdWgpuBackend::new(device, queue);
         Self::new(&backend, config, "wgpu")
     }
 }
 
-impl Simulation<FdtdCpuSolverInstance<SingleThreaded>, FdtdCpuSolverState> {
+impl Simulation<FdtdCpuSolverInstance<SingleThreaded>> {
     pub fn cpu_single_threaded(config: &FdtdSolverConfig) -> Self {
         Self::new(
             &FdtdCpuBackend::single_threaded(),
@@ -308,12 +313,7 @@ impl Simulation<FdtdCpuSolverInstance<SingleThreaded>, FdtdCpuSolverState> {
 }
 
 #[cfg(feature = "rayon")]
-impl
-    Simulation<
-        FdtdCpuSolverInstance<crate::app::solver::fdtd::cpu::MultiThreaded>,
-        FdtdCpuSolverState,
-    >
-{
+impl Simulation<FdtdCpuSolverInstance<MultiThreaded>> {
     pub fn cpu_multi_threaded(
         config: &FdtdSolverConfig,
         num_threads: Option<usize>,
@@ -325,27 +325,24 @@ impl
     }
 }
 
-impl<I, S> ErasedSimulation for Simulation<I, S>
+impl<Instance> ErasedSimulation for Simulation<Instance>
 where
-    I: SolverInstance<Point = Point3<usize>, Source = SourceValues, State = S>
-        + Field
-        + Send
-        + Sync
-        + Debug
-        + 'static,
-    S: Time + Send + Sync + Debug + 'static,
+    Instance: SolverInstance + Field<Point3<usize>> + Send + Sync + Debug + 'static,
+    Instance::State: Time + Send + Sync + Debug + 'static,
+    for<'a> Instance::UpdatePass<'a>: UpdatePassForcing<Point3<usize>>,
 {
     fn update(&mut self) {
         let value = self.source.evaluate(self.state.time());
-        let sources = [(
-            Point3::new(50, 0, 0),
-            SourceValues {
+
+        let mut update_pass = self.instance.begin_update(&mut self.state);
+        update_pass.set_forcing(
+            &Point3::new(50, 0, 0),
+            &SourceValues {
                 j_source: Vector3::y() * value,
                 m_source: Vector3::z() * value,
             },
-        )];
-
-        self.instance.update(&mut self.state, sources);
+        );
+        update_pass.finish();
     }
 
     fn field_values(&self, field_component: FieldComponent) -> PlotPoints<'static> {
@@ -376,10 +373,10 @@ where
     }
 }
 
-impl<I, S> Time for Simulation<I, S>
+impl<Instance> Time for Simulation<Instance>
 where
-    I: SolverInstance<State = S>,
-    S: Time,
+    Instance: SolverInstance,
+    Instance::State: Time,
 {
     fn time(&self) -> f64 {
         self.state.time()

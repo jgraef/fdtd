@@ -7,29 +7,31 @@ pub mod util;
 
 use std::ops::RangeBounds;
 
-use nalgebra::Vector3;
+use nalgebra::{
+    Matrix4,
+    Vector3,
+};
 
 use crate::physics::material::Material;
 
-pub trait SolverBackend {
-    // todo: this should be a type parameter on the trait, no?
-    type Config;
-
-    type Point;
-
-    type Instance: SolverInstance<Point = Self::Point>;
+/// TODO: Reconcile the use of a config and domain description. Should they be
+/// the same thing? E.g. our FDTD implementation takes domain-specific
+/// parameters like size and spatial resolution in the config, but they belong
+/// more into the domain description.
+pub trait SolverBackend<Config, Point> {
+    type Instance: SolverInstance;
 
     type Error: std::error::Error;
 
     fn create_instance<D>(
         &self,
-        config: &Self::Config,
+        config: &Config,
         domain_description: D,
     ) -> Result<Self::Instance, Self::Error>
     where
-        D: DomainDescription<Self::Point>;
+        D: DomainDescription<Point>;
 
-    fn memory_required(&self, config: &Self::Config) -> Option<usize> {
+    fn memory_required(&self, config: &Config) -> Option<usize> {
         let _ = config;
         None
     }
@@ -52,19 +54,31 @@ pub trait DomainDescription<P> {
     fn material(&self, point: &P) -> Material;
 }
 
+/// todo: needs methods for converting from/to solver coordinates
 pub trait SolverInstance {
     type State;
-    type Point: 'static;
-    type Source;
+    type UpdatePass<'a>: UpdatePass
+    where
+        Self: 'a;
 
     fn create_state(&self) -> Self::State;
 
-    // todo: split this into an UpdatePass type?
-    fn update<S>(&self, state: &mut Self::State, sources: S)
-    where
-        S: IntoIterator<Item = (Self::Point, Self::Source)>;
+    fn begin_update<'a>(&'a self, state: &'a mut Self::State) -> Self::UpdatePass<'a>;
+}
 
-    // todo: needs methods for converting from/to solver coordinates
+pub trait UpdatePass
+where
+    Self: Sized,
+{
+    fn finish(self);
+}
+
+pub trait UpdatePassForcing<Point>: UpdatePass {
+    fn set_forcing(&mut self, point: &Point, value: &SourceValues);
+}
+
+pub trait UpdatePassProject<Projection>: UpdatePass {
+    fn add_projection(&mut self, projection: &Projection);
 }
 
 pub trait Time {
@@ -72,8 +86,8 @@ pub trait Time {
     fn tick(&self) -> usize;
 }
 
-pub trait Field: SolverInstance {
-    type View<'a>: FieldView<Self::Point>
+pub trait Field<Point>: SolverInstance {
+    type View<'a>: FieldView<Point>
     where
         Self: 'a;
 
@@ -84,13 +98,13 @@ pub trait Field: SolverInstance {
         field_component: FieldComponent,
     ) -> Self::View<'a>
     where
-        R: RangeBounds<Self::Point>;
+        R: RangeBounds<Point>;
 }
 
 // todo: remove. this is not good. we can't always guarantuee that we can hand
 // out `&mut Vector3<f64>`s
-pub trait FieldMut: SolverInstance {
-    type IterMut<'a>: Iterator<Item = (Self::Point, &'a mut Vector3<f64>)>
+pub trait FieldMut<Point>: SolverInstance {
+    type IterMut<'a>: Iterator<Item = (Point, &'a mut Vector3<f64>)>
     where
         Self: 'a;
 
@@ -101,7 +115,7 @@ pub trait FieldMut: SolverInstance {
         field_component: FieldComponent,
     ) -> Self::IterMut<'a>
     where
-        R: RangeBounds<Self::Point>;
+        R: RangeBounds<Point>;
 }
 
 pub trait FieldView<P> {
@@ -111,6 +125,19 @@ pub trait FieldView<P> {
 
     fn at(&self, point: &P) -> Option<Vector3<f64>>;
     fn iter<'a>(&'a self) -> Self::Iter<'a>;
+}
+
+pub trait FieldProject<Target>: SolverInstance {
+    type Projection;
+
+    fn create_projection(
+        &self,
+        state: &Self::State,
+        target: Target,
+        projection: &Matrix4<f32>,
+        field_component: FieldComponent,
+        vector_components: &Vector3<f32>,
+    ) -> Self::Projection;
 }
 
 #[derive(Clone, Copy, Debug)]

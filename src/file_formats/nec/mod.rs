@@ -1,3 +1,4 @@
+#![allow(clippy::todo)]
 //! [NEC][1] file format
 //!
 //! The [xnec2c implementation] for reference.

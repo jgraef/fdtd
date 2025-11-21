@@ -105,6 +105,6 @@ impl<'a> PopulateScene for PopulateSceneWithObjFile<'a> {
             ));
         }
 
-        todo!()
+        Ok(())
     }
 }

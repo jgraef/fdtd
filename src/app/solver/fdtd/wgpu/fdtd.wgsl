@@ -1,8 +1,3 @@
-struct Input {
-    @builtin(global_invocation_id) worker_id: vec3u,
-    @builtin(num_workgroups) num_workgroups: vec3u,
-}
-
 struct Config {
     size: vec4u,
     strides: vec4u,
@@ -13,10 +8,6 @@ struct Config {
 
 @group(0) @binding(0)
 var<uniform> config: Config;
-
-override workgroup_size_x: u32 = 0;
-override workgroup_size_y: u32 = 0;
-override workgroup_size_z: u32 = 0;
 
 @group(0) @binding(1)
 var<storage, read> materials: array<vec4f>;
@@ -48,6 +39,18 @@ var<storage, read> h_field_prev: array<Cell>;
 
 @group(0) @binding(6)
 var<storage, read> e_field_prev: array<Cell>;
+
+
+// override constants for the workgroup size being used
+override workgroup_size_x: u32 = 0;
+override workgroup_size_y: u32 = 0;
+override workgroup_size_z: u32 = 0;
+
+// compute shader input
+struct Input {
+    @builtin(global_invocation_id) worker_id: vec3u,
+    @builtin(num_workgroups) num_workgroups: vec3u,
+}
 
 
 @compute @workgroup_size(workgroup_size_x, workgroup_size_y, workgroup_size_z)

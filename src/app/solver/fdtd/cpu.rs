@@ -30,6 +30,8 @@ use crate::{
         SolverInstance,
         SourceValues,
         Time,
+        UpdatePass,
+        UpdatePassForcing,
         config::{
             EvaluateStopCondition,
             StopCondition,
@@ -199,22 +201,20 @@ impl FdtdCpuBackend<SingleThreaded> {
     }
 }
 
-impl<Threading> SolverBackend for FdtdCpuBackend<Threading>
+impl<Threading> SolverBackend<FdtdSolverConfig, Point3<usize>> for FdtdCpuBackend<Threading>
 where
     Threading: LatticeForEach + Clone,
 {
-    type Config = FdtdSolverConfig;
-    type Point = Point3<usize>;
     type Instance = FdtdCpuSolverInstance<Threading>;
     type Error = Infallible;
 
     fn create_instance<D>(
         &self,
-        config: &Self::Config,
+        config: &FdtdSolverConfig,
         domain_description: D,
     ) -> Result<Self::Instance, Self::Error>
     where
-        D: DomainDescription<Self::Point>,
+        D: DomainDescription<Point3<usize>>,
     {
         Ok(FdtdCpuSolverInstance::new(
             config,
@@ -223,7 +223,7 @@ where
         ))
     }
 
-    fn memory_required(&self, config: &Self::Config) -> Option<usize> {
+    fn memory_required(&self, config: &FdtdSolverConfig) -> Option<usize> {
         let per_cell = std::mem::size_of::<UpdateCoefficients>()
             + 4 * std::mem::size_of::<SwapBuffer<Vector3<usize>>>();
         Some(per_cell * config.num_cells())
@@ -272,139 +272,22 @@ impl<Threading> FdtdCpuSolverInstance<Threading> {
     }
 }
 
-impl<Threading> FdtdCpuSolverInstance<Threading>
-where
-    Threading: LatticeForEach,
-{
-    fn update_impl(
-        &self,
-        state: &mut FdtdCpuSolverState,
-        sources: impl IntoIterator<Item = (Point3<usize>, SourceValues)>,
-    ) {
-        // note: CE page 68. we moved the delta_x from the coefficients into the sum,
-        // which then becomes the curl plus source current density.
-        // todo: integrate psi auxiliary fields
-
-        let previous = SwapBufferIndex::from_tick(state.tick);
-        let next = previous.other();
-
-        // reset previous source values
-        for (index, _source) in state.source_buffer.drain(..) {
-            state.source_field[index] = 0;
-        }
-
-        // prepare sources
-        assert!(state.source_buffer.is_empty());
-        state.source_buffer.push(Default::default());
-        for (point, source) in sources.into_iter() {
-            if let Some(index) = self.strider.index(&point) {
-                state.source_field[index] = state.source_buffer.len();
-                state.source_buffer.push((index, source));
-            }
-        }
-
-        //let mut energy = 0.0;
-
-        // update magnetic field
-        let (h_field_next, h_field_previous) = state.h_field.pair_mut(next);
-        self.threading
-            .for_each(&self.strider, h_field_next, |index, point, h_field_next| {
-                let e_jacobian = jacobian(
-                    &point,
-                    &Vector3::repeat(1),
-                    &Vector3::zeros(),
-                    &self.strider,
-                    &state.e_field[previous],
-                    &self.resolution.spatial,
-                    &self.boundary_conditions,
-                );
-                let e_curl = e_jacobian.curl();
-
-                let source_id = state.source_field[index];
-                let m_source = if source_id != 0 {
-                    state.source_buffer[source_id].1.m_source
-                }
-                else {
-                    Default::default()
-                };
-
-                let psi = Vector3::zeros();
-
-                let update_coefficients = self.update_coefficients[index];
-
-                // note: the E and H field equations are almost identical, but here the curl is
-                // negative.
-                *h_field_next = update_coefficients.d_a * h_field_previous[index]
-                    + update_coefficients.d_b * (-e_curl - m_source + psi);
-
-                // note: this is just for debugging
-                //energy += cell[current].h.norm_squared()
-                //    / (cell.material.relative_permeability
-                //        * self.physical_constants.vacuum_permeability);
-            });
-
-        // update electric field
-        //let time = state.time + 0.5 * self.resolution.temporal;
-        let (e_field_next, e_field_previous) = state.e_field.pair_mut(next);
-        self.threading
-            .for_each(&self.strider, e_field_next, |index, point, e_field_next| {
-                let h_jacobian = jacobian(
-                    &point,
-                    &Vector3::zeros(),
-                    &Vector3::repeat(1),
-                    &self.strider,
-                    // NOTE: this is `current` not `previous`, because we have already updated the
-                    // H field with the new values in `current`.
-                    &state.h_field[next],
-                    &self.resolution.spatial,
-                    &self.boundary_conditions,
-                );
-                let h_curl = h_jacobian.curl();
-
-                let source_id = state.source_field[index];
-                let j_source = if source_id != 0 {
-                    state.source_buffer[source_id].1.j_source
-                }
-                else {
-                    Default::default()
-                };
-
-                let psi = Vector3::zeros();
-
-                let update_coefficients = self.update_coefficients[index];
-
-                *e_field_next = update_coefficients.c_a * e_field_previous[index]
-                    + update_coefficients.c_b * (h_curl - j_source + psi);
-
-                // note: this is just for debugging
-                //energy += cell[current].e.norm_squared()
-                //    * cell.material.relative_permittivity
-                //    * self.physical_constants.vacuum_permittivity;
-            });
-
-        state.tick += 1;
-        state.time += self.resolution.temporal;
-        //self.total_energy = 0.5 * energy * self.resolution.spatial.product();
-    }
-}
-
 impl<Threading> SolverInstance for FdtdCpuSolverInstance<Threading>
 where
     Threading: LatticeForEach,
 {
     type State = FdtdCpuSolverState;
-    type Point = Point3<usize>;
-    type Source = SourceValues;
+    type UpdatePass<'a>
+        = FdtdCpuUpdatePass<'a, Threading>
+    where
+        Self: 'a;
 
     fn create_state(&self) -> Self::State {
         FdtdCpuSolverState::new(&self.strider)
     }
 
-    fn update<S>(&self, state: &mut Self::State, sources: S)
-    where
-        S: IntoIterator<Item = (Point3<usize>, SourceValues)>,
-    {
-        self.update_impl(state, sources);
+    fn begin_update<'a>(&'a self, state: &'a mut Self::State) -> FdtdCpuUpdatePass<'a, Threading> {
+        FdtdCpuUpdatePass::new(self, state)
     }
 }
 
@@ -463,7 +346,149 @@ impl Time for FdtdCpuSolverState {
     }
 }
 
-impl<Threading> Field for FdtdCpuSolverInstance<Threading>
+#[derive(Debug)]
+pub struct FdtdCpuUpdatePass<'a, Threading> {
+    instance: &'a FdtdCpuSolverInstance<Threading>,
+    state: &'a mut FdtdCpuSolverState,
+}
+
+impl<'a, Threading> FdtdCpuUpdatePass<'a, Threading>
+where
+    Threading: LatticeForEach,
+{
+    fn new(
+        instance: &'a FdtdCpuSolverInstance<Threading>,
+        state: &'a mut FdtdCpuSolverState,
+    ) -> Self {
+        // reset previous source values
+        for (index, _source) in state.source_buffer.drain(..) {
+            state.source_field[index] = 0;
+        }
+
+        // prepare sources
+        assert!(state.source_buffer.is_empty());
+        state.source_buffer.push(Default::default());
+
+        Self { instance, state }
+    }
+}
+
+impl<'a, Threading> UpdatePassForcing<Point3<usize>> for FdtdCpuUpdatePass<'a, Threading>
+where
+    Threading: LatticeForEach,
+{
+    fn set_forcing(&mut self, point: &Point3<usize>, value: &SourceValues) {
+        if let Some(index) = self.instance.strider.index(point) {
+            self.state.source_field[index] = self.state.source_buffer.len();
+            self.state.source_buffer.push((index, *value));
+        }
+    }
+}
+
+impl<'a, Threading> UpdatePass for FdtdCpuUpdatePass<'a, Threading>
+where
+    Threading: LatticeForEach,
+{
+    fn finish(self) {
+        // note: CE page 68. we moved the delta_x from the coefficients into the sum,
+        // which then becomes the curl plus source current density.
+        // todo: integrate psi auxiliary fields
+
+        let previous = SwapBufferIndex::from_tick(self.state.tick);
+        let next = previous.other();
+
+        //let mut energy = 0.0;
+
+        // update magnetic field
+        let (h_field_next, h_field_previous) = self.state.h_field.pair_mut(next);
+        self.instance.threading.for_each(
+            &self.instance.strider,
+            h_field_next,
+            |index, point, h_field_next| {
+                let e_jacobian = jacobian(
+                    &point,
+                    &Vector3::repeat(1),
+                    &Vector3::zeros(),
+                    &self.instance.strider,
+                    &self.state.e_field[previous],
+                    &self.instance.resolution.spatial,
+                    &self.instance.boundary_conditions,
+                );
+                let e_curl = e_jacobian.curl();
+
+                let source_id = self.state.source_field[index];
+                let m_source = if source_id != 0 {
+                    self.state.source_buffer[source_id].1.m_source
+                }
+                else {
+                    Default::default()
+                };
+
+                let psi = Vector3::zeros();
+
+                let update_coefficients = self.instance.update_coefficients[index];
+
+                // note: the E and H field equations are almost identical, but here the curl is
+                // negative.
+                *h_field_next = update_coefficients.d_a * h_field_previous[index]
+                    + update_coefficients.d_b * (-e_curl - m_source + psi);
+
+                // note: this is just for debugging
+                //energy += cell[current].h.norm_squared()
+                //    / (cell.material.relative_permeability
+                //        * self.physical_constants.vacuum_permeability);
+            },
+        );
+
+        // update electric field
+        //let time = state.time + 0.5 * self.resolution.temporal;
+        let (e_field_next, e_field_previous) = self.state.e_field.pair_mut(next);
+        self.instance.threading.for_each(
+            &self.instance.strider,
+            e_field_next,
+            |index, point, e_field_next| {
+                let h_jacobian = jacobian(
+                    &point,
+                    &Vector3::zeros(),
+                    &Vector3::repeat(1),
+                    &self.instance.strider,
+                    // NOTE: this is `current` not `previous`, because we have already updated the
+                    // H field with the new values in `current`.
+                    &self.state.h_field[next],
+                    &self.instance.resolution.spatial,
+                    &self.instance.boundary_conditions,
+                );
+                let h_curl = h_jacobian.curl();
+
+                let source_id = self.state.source_field[index];
+                let j_source = if source_id != 0 {
+                    self.state.source_buffer[source_id].1.j_source
+                }
+                else {
+                    Default::default()
+                };
+
+                let psi = Vector3::zeros();
+
+                let update_coefficients = self.instance.update_coefficients[index];
+
+                *e_field_next = update_coefficients.c_a * e_field_previous[index]
+                    + update_coefficients.c_b * (h_curl - j_source + psi);
+
+                // note: this is just for debugging
+                //energy += cell[current].e.norm_squared()
+                //    * cell.material.relative_permittivity
+                //    * self.physical_constants.vacuum_permittivity;
+            },
+        );
+
+        self.state.tick += 1;
+        self.state.time += self.instance.resolution.temporal;
+        //self.total_energy = 0.5 * energy * self.resolution.spatial.product();
+    }
+}
+
+impl<Threading> Field<Point3<usize>> for FdtdCpuSolverInstance<Threading>
 where
     Threading: LatticeForEach,
 {
@@ -479,7 +504,7 @@ where
         field_component: FieldComponent,
     ) -> Self::View<'a>
     where
-        R: RangeBounds<Self::Point>,
+        R: RangeBounds<Point3<usize>>,
     {
         let range = normalize_point_bounds(range, *self.strider.size());
 
@@ -553,7 +578,7 @@ impl<'a> ExactSizeIterator for CpuFieldIter<'a> where
 {
 }
 
-impl FieldMut for FdtdCpuSolverInstance {
+impl FieldMut<Point3<usize>> for FdtdCpuSolverInstance {
     type IterMut<'a>
         = CpuFieldRegionIterMut<'a>
     where
@@ -566,7 +591,7 @@ impl FieldMut for FdtdCpuSolverInstance {
         field_component: FieldComponent,
     ) -> Self::IterMut<'a>
     where
-        R: RangeBounds<Self::Point>,
+        R: RangeBounds<Point3<usize>>,
     {
         let swap_buffer_index = SwapBufferIndex::from_tick(state.tick);
 

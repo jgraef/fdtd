@@ -532,6 +532,9 @@ impl<'a, T> TypedArrayBufferWriteView<'a, T> {
     ) -> Self {
         let alignment =
             StagingBufferAlignment::from_unaligned_buffer_range_typed::<T>(index_range.clone());
+
+        // this is just nasty to fix and we could make it a hard requirement anyway.
+        #[allow(clippy::todo)]
         if !alignment.is_aligned() {
             todo!("unaligned write");
         }
