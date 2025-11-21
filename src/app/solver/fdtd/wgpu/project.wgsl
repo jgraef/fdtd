@@ -24,7 +24,7 @@ var<storage, read_write> field: array<Cell>;
 
 struct Projection {
     transform: mat4x4f,
-    components: vec3f,
+    color_map: mat4x4f,
 }
 
 
@@ -56,12 +56,11 @@ fn vs_main(input: VertexInput) -> VertexOutput {
 
 @fragment
 fn fs_main(input: VertexOutput) -> FragmentOutput {
-    let point = vec3u(input.field_position.xyz * vec3f(config.size.xyz - vec3u(1)));
+    let point = vec3u(round(input.field_position.xyz * vec3f(config.size.xyz - vec3u(1))));
     let index = point_to_index(point);
 
-    let field_value = field[index].value;
-    let value = dot(field_value, projection.components);
-    let color = colormap(value);
+    let value = field[index].value;
+    let color = clamp(projection.color_map * vec4f(value, 1.0), 0.0, 1.0);
 
     return FragmentOutput(color);
 }
@@ -80,19 +79,4 @@ const quad_vertices: array<vec2f, 6> = array<vec2f, 6>(
 
 fn point_to_index(point: vec3u) -> u32 {
     return dot(point, config.strides.xyz);
-}
-
-fn colormap(value: f32) -> vec4f {
-    var color: vec4f;
-
-    let x = clamp(value, -1.0, 1.0);
-
-    if x > 0.0 {
-        color.x = x;
-    }
-    else if x < 0.0 {
-        color.y = -x;
-    }
-
-    return color;
 }

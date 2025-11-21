@@ -439,7 +439,7 @@ impl Sources {
 }
 
 #[derive(Clone, Debug)]
-struct TestGradient;
+pub struct TestGradient;
 
 impl Gradient for TestGradient {
     fn at(&self, t: f32) -> colorgrad::Color {

@@ -1,8 +1,8 @@
 mod boundary_condition;
 pub mod cpu;
-mod lattice;
 mod pml;
 pub(crate) mod source;
+mod strider;
 mod util;
 pub mod wgpu;
 
@@ -13,7 +13,7 @@ use serde::{
 };
 
 use crate::{
-    app::solver::fdtd::lattice::Strider,
+    app::solver::fdtd::strider::Strider,
     physics::PhysicalConstants,
 };
 

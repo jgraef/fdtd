@@ -1,16 +1,14 @@
 pub mod config;
 pub mod fdtd;
 pub mod observer;
+pub mod project;
 pub mod runner;
 pub mod ui;
 pub mod util;
 
 use std::ops::RangeBounds;
 
-use nalgebra::{
-    Matrix4,
-    Vector3,
-};
+use nalgebra::Vector3;
 
 use crate::physics::material::Material;
 
@@ -77,10 +75,6 @@ pub trait UpdatePassForcing<Point>: UpdatePass {
     fn set_forcing(&mut self, point: &Point, value: &SourceValues);
 }
 
-pub trait UpdatePassProject<Projection>: UpdatePass {
-    fn add_projection(&mut self, projection: &Projection);
-}
-
 pub trait Time {
     fn time(&self) -> f64;
     fn tick(&self) -> usize;
@@ -125,19 +119,6 @@ pub trait FieldView<P> {
 
     fn at(&self, point: &P) -> Option<Vector3<f64>>;
     fn iter<'a>(&'a self) -> Self::Iter<'a>;
-}
-
-pub trait FieldProject<Target>: SolverInstance {
-    type Projection;
-
-    fn create_projection(
-        &self,
-        state: &Self::State,
-        target: Target,
-        projection: &Matrix4<f32>,
-        field_component: FieldComponent,
-        vector_components: &Vector3<f32>,
-    ) -> Self::Projection;
 }
 
 #[derive(Clone, Copy, Debug)]

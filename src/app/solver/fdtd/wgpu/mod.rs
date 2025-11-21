@@ -1,4 +1,4 @@
-pub mod project;
+mod project;
 
 use std::{
     convert::Infallible,
@@ -23,6 +23,7 @@ use nalgebra::{
 use smallvec::SmallVec;
 use wgpu::util::DeviceExt;
 
+pub use self::project::TextureProjection;
 use crate::{
     app::solver::{
         DomainDescription,
@@ -42,7 +43,7 @@ use crate::{
         fdtd::{
             FdtdSolverConfig,
             Resolution,
-            lattice::Strider,
+            strider::Strider,
             util::{
                 SwapBuffer,
                 SwapBufferIndex,
@@ -77,7 +78,7 @@ impl FdtdWgpuBackend {
     pub fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
         let limits = ComputeLimits::from_limits(&device.limits());
 
-        let shader_module = device.create_shader_module(wgpu::include_wgsl!("fdtd.wgsl"));
+        let shader_module = device.create_shader_module(wgpu::include_wgsl!("update.wgsl"));
 
         let bind_group_layout = BINDINGS.bind_group_layout(device);
 
@@ -98,6 +99,17 @@ impl FdtdWgpuBackend {
             pipeline_layout,
             projection,
         }
+    }
+
+    fn submit_and_poll(&self, command_buffers: impl IntoIterator<Item = wgpu::CommandBuffer>) {
+        let submission_index = self.queue.submit(command_buffers);
+
+        self.device
+            .poll(wgpu::PollType::Wait {
+                submission_index: Some(submission_index),
+                timeout: None,
+            })
+            .unwrap();
     }
 }
 
@@ -323,6 +335,7 @@ impl Time for FdtdWgpuSolverState {
 pub struct FdtdWgpuUpdatePass<'a> {
     instance: &'a FdtdWgpuSolverInstance,
     state: &'a mut FdtdWgpuSolverState,
+    swap_buffer_index: SwapBufferIndex,
 }
 
 impl<'a> FdtdWgpuUpdatePass<'a> {
@@ -331,7 +344,14 @@ impl<'a> FdtdWgpuUpdatePass<'a> {
         assert!(state.source_buffer.staging.is_empty());
         state.source_buffer.push(SourceData::default());
 
-        Self { instance, state }
+        let swap_buffer_index = SwapBufferIndex::from_tick(state.tick + 1);
+
+        Self {
+            instance,
+            state,
+
+            swap_buffer_index,
+        }
     }
 }
 
@@ -351,8 +371,6 @@ impl<'a> UpdatePassForcing<Point3<usize>> for FdtdWgpuUpdatePass<'a> {
 
 impl<'a> UpdatePass for FdtdWgpuUpdatePass<'a> {
     fn finish(self) {
-        let swap_buffer_index = SwapBufferIndex::from_tick(self.state.tick + 1);
-
         // write source data
         let num_sources = self.state.source_buffer.staging.len();
         self.state
@@ -392,7 +410,11 @@ impl<'a> UpdatePass for FdtdWgpuUpdatePass<'a> {
                     timestamp_writes: None,
                 });
 
-            compute_pass.set_bind_group(0, &self.state.update_bind_groups[swap_buffer_index], &[]);
+            compute_pass.set_bind_group(
+                0,
+                &self.state.update_bind_groups[self.swap_buffer_index],
+                &[],
+            );
 
             // update sources
             compute_pass.set_pipeline(&self.instance.update_sources_pipeline);
@@ -425,19 +447,9 @@ impl<'a> UpdatePass for FdtdWgpuUpdatePass<'a> {
             dispatch_update(&self.instance.update_e_pipeline);
         }
 
-        let submission_index = self
-            .instance
-            .backend
-            .queue
-            .submit([command_encoder.finish()]);
         self.instance
             .backend
-            .device
-            .poll(wgpu::PollType::Wait {
-                submission_index: Some(submission_index),
-                timeout: None,
-            })
-            .unwrap();
+            .submit_and_poll([command_encoder.finish()]);
 
         self.state.tick += 1;
         self.state.time += self.instance.resolution.temporal;

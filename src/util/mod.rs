@@ -16,8 +16,13 @@ use std::{
 };
 
 use directories::UserDirs;
+use image::{
+    ImageBuffer,
+    Pixel,
+};
 use nalgebra::{
     Point3,
+    Vector2,
     Vector3,
 };
 
@@ -358,6 +363,14 @@ pub fn round_to_grid(
 #[derive(Clone, Copy, Debug)]
 pub struct InvalidPoint {
     pub point: Point3<f64>,
+}
+
+pub fn image_size<P, C>(image: &ImageBuffer<P, C>) -> Vector2<u32>
+where
+    P: Pixel,
+    C: Deref<Target = [P::Subpixel]>,
+{
+    Vector2::new(image.width(), image.height())
 }
 
 #[cfg(test)]

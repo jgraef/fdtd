@@ -144,28 +144,6 @@ fn update_sources(input: Input) {
     h_field_next[source.index].source_id = source_id;
 }
 
-// todo: source
-fn m_source(index: u32, x: vec3u) -> vec3f {
-    var output: vec3f;
-    if x.x == 50 {
-        output.z = gaussian_pulse(20.0, 10.0);
-    }
-    return output;
-}
-
-fn j_source(index: u32, x: vec3u) -> vec3f {
-    var output: vec3f;
-    if x.x == 50 {
-        output.y = gaussian_pulse(20.0, 10.0);
-    }
-    return output;
-}
-
-fn gaussian_pulse(time: f32, duration: f32) -> f32 {
-    return exp(-pow((config.time - time) / duration, 2.0));
-}
-
-
 fn curl(dfdx: vec3f, dfdy: vec3f, dfdz: vec3f) -> vec3f {
     return vec3f(
         dfdy.z - dfdz.y,

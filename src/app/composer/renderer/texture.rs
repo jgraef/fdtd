@@ -18,6 +18,7 @@ use wgpu::util::DeviceExt;
 use crate::{
     Error,
     app::solver::util::WriteImage,
+    util::wgpu::write_image_to_texture,
 };
 
 #[derive(Clone, Debug)]
@@ -26,7 +27,6 @@ pub struct Texture {
     pub texture_view: wgpu::TextureView,
     pub sampler: wgpu::Sampler,
     pub bind_group: wgpu::BindGroup,
-    pub size: Vector2<u32>,
 }
 
 impl Texture {
@@ -88,37 +88,15 @@ impl Texture {
             texture_view,
             sampler: sampler.clone(),
             bind_group,
-            size,
         }
     }
 
+    fn size(&self) -> Vector2<u32> {
+        Vector2::new(self.texture.width(), self.texture.height())
+    }
+
     pub fn write_image(&self, image: &RgbaImage, queue: &wgpu::Queue) {
-        // todo: see https://docs.rs/wgpu/latest/wgpu/struct.Queue.html#performance-considerations-2
-
-        assert_eq!(
-            image_size(image),
-            self.size,
-            "provided image size doesn't match texture"
-        );
-
-        queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &self.texture,
-                mip_level: 0,
-                origin: Default::default(),
-                aspect: Default::default(),
-            },
-            image.as_raw(),
-            wgpu::TexelCopyBufferLayout {
-                bytes_per_row: Some(4 * self.size.x),
-                ..Default::default()
-            },
-            wgpu::Extent3d {
-                width: self.size.x,
-                height: self.size.y,
-                depth_or_array_layers: 1,
-            },
-        );
+        write_image_to_texture(queue, image, &self.texture);
     }
 }
 
@@ -286,10 +264,6 @@ pub(super) fn update_textures(
     );
 
     sync_texture_writers_with_textures(world, queue);
-}
-
-fn image_size(image: &RgbaImage) -> Vector2<u32> {
-    Vector2::new(image.width(), image.height())
 }
 
 #[derive(Clone, Debug)]

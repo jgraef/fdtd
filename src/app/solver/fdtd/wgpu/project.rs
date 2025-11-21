@@ -13,25 +13,29 @@ use bytemuck::{
     Pod,
     Zeroable,
 };
-use nalgebra::{
-    Matrix4,
-    Vector3,
-};
+use nalgebra::Matrix4;
 use parking_lot::Mutex;
 use wgpu::util::DeviceExt;
 
 use crate::app::solver::{
-    FieldComponent,
-    FieldProject,
     fdtd::{
         util::{
             SwapBuffer,
             SwapBufferIndex,
         },
         wgpu::{
+            FdtdWgpuBackend,
             FdtdWgpuSolverInstance,
             FdtdWgpuSolverState,
         },
+    },
+    project::{
+        BeginProjectionPass,
+        CreateProjection,
+        ProjectionParameters,
+        ProjectionPass,
+        ProjectionPassAdd,
+        TextureTarget,
     },
 };
 
@@ -170,21 +174,19 @@ impl ProjectionPipeline {
 /// - We can also bind both field buffers, which would allow us to specify which
 ///   one we want in the `project` method.
 #[derive(Clone, Debug)]
-pub struct Projection {
+pub struct TextureProjection {
     pipeline: Arc<wgpu::RenderPipeline>,
     projection_buffer: wgpu::Buffer,
     bind_groups: SwapBuffer<wgpu::BindGroup>,
     target_texture_view: wgpu::TextureView,
 }
 
-impl Projection {
+impl TextureProjection {
     fn new(
         instance: &FdtdWgpuSolverInstance,
         state: &FdtdWgpuSolverState,
         target_texture_view: wgpu::TextureView,
-        projection: Matrix4<f32>,
-        field_component: FieldComponent,
-        vector_components: Vector3<f32>,
+        parameters: &ProjectionParameters,
     ) -> Self {
         let target_texture_format = target_texture_view.texture().format();
 
@@ -193,11 +195,7 @@ impl Projection {
             .projection
             .get_pipeline(&instance.backend.device, target_texture_format);
 
-        let projection_data = ProjectionData {
-            projection,
-            vector_components,
-            ..Default::default()
-        };
+        let projection_data = ProjectionData::new(parameters);
 
         let projection_buffer =
             instance
@@ -211,7 +209,7 @@ impl Projection {
 
         let field_component_buffer = |swap_buffer_index| {
             let field_buffers = &state.field_buffers[swap_buffer_index];
-            field_buffers[field_component]
+            field_buffers[parameters.field]
                 .buffer()
                 .unwrap()
                 .as_entire_binding()
@@ -249,7 +247,7 @@ impl Projection {
         }
     }
 
-    pub(super) fn project(
+    fn project(
         &self,
         command_encoder: &mut wgpu::CommandEncoder,
         swap_buffer_index: SwapBufferIndex,
@@ -276,32 +274,96 @@ impl Projection {
     }
 }
 
+impl AsRef<wgpu::TextureView> for TextureProjection {
+    fn as_ref(&self) -> &wgpu::TextureView {
+        &self.target_texture_view
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]
 #[repr(C)]
 struct ProjectionData {
     projection: Matrix4<f32>,
-    vector_components: Vector3<f32>,
-    _padding: [u32; 1],
+    color_map: Matrix4<f32>,
 }
 
-impl FieldProject<wgpu::TextureView> for FdtdWgpuSolverInstance {
-    type Projection = Projection;
+impl ProjectionData {
+    pub fn new(parameters: &ProjectionParameters) -> Self {
+        Self {
+            projection: parameters.projection,
+            color_map: parameters.color_map,
+        }
+    }
+}
+
+impl<'a> CreateProjection<TextureTarget<'a>> for FdtdWgpuSolverInstance {
+    type Projection = TextureProjection;
 
     fn create_projection(
         &self,
         state: &FdtdWgpuSolverState,
-        target: wgpu::TextureView,
-        projection: &Matrix4<f32>,
-        field_component: FieldComponent,
-        vector_components: &Vector3<f32>,
-    ) -> Projection {
-        Projection::new(
-            self,
-            state,
-            target,
-            *projection,
-            field_component,
-            *vector_components,
-        )
+        target: TextureTarget<'a>,
+        parameters: &ProjectionParameters,
+    ) -> TextureProjection {
+        let texture_view = target.texture.create_view(&wgpu::TextureViewDescriptor {
+            label: Some("fdtd/projection"),
+            ..Default::default()
+        });
+
+        TextureProjection::new(self, state, texture_view, parameters)
+    }
+}
+
+impl BeginProjectionPass for FdtdWgpuSolverInstance {
+    type ProjectionPass<'a>
+        = FdtdWgpuProjectionPass<'a>
+    where
+        Self: 'a;
+
+    fn begin_projection_pass<'a>(
+        &'a self,
+        state: &'a FdtdWgpuSolverState,
+    ) -> FdtdWgpuProjectionPass<'a> {
+        FdtdWgpuProjectionPass::new(self, state)
+    }
+}
+
+#[derive(Debug)]
+pub struct FdtdWgpuProjectionPass<'a> {
+    command_encoder: wgpu::CommandEncoder,
+    swap_buffer_index: SwapBufferIndex,
+    backend: &'a FdtdWgpuBackend,
+}
+
+impl<'a> FdtdWgpuProjectionPass<'a> {
+    fn new(instance: &'a FdtdWgpuSolverInstance, state: &FdtdWgpuSolverState) -> Self {
+        let command_encoder =
+            instance
+                .backend
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("fdtd/update/post"),
+                });
+
+        let swap_buffer_index = SwapBufferIndex::from_tick(state.tick + 1);
+
+        Self {
+            command_encoder,
+            swap_buffer_index,
+            backend: &instance.backend,
+        }
+    }
+}
+
+impl<'a> ProjectionPassAdd<TextureProjection> for FdtdWgpuProjectionPass<'a> {
+    fn add_projection<'b>(&'b mut self, projection: &'b mut TextureProjection) {
+        projection.project(&mut self.command_encoder, self.swap_buffer_index);
+    }
+}
+
+impl<'a> ProjectionPass for FdtdWgpuProjectionPass<'a> {
+    fn finish(self) {
+        self.backend
+            .submit_and_poll([self.command_encoder.finish()]);
     }
 }

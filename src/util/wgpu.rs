@@ -10,9 +10,14 @@ use std::{
 };
 
 use bytemuck::Pod;
+use image::RgbaImage;
+use nalgebra::Vector2;
 use parking_lot::Mutex;
 
-use crate::util::normalize_index_bounds;
+use crate::util::{
+    image_size,
+    normalize_index_bounds,
+};
 
 pub fn unpadded_buffer_size<T>(num_elements: usize) -> u64 {
     (std::mem::size_of::<T>() * num_elements) as u64
@@ -811,4 +816,35 @@ where
 
         self.staging.clear();
     }
+}
+
+pub fn write_image_to_texture(queue: &wgpu::Queue, image: &RgbaImage, texture: &wgpu::Texture) {
+    // todo: see https://docs.rs/wgpu/latest/wgpu/struct.Queue.html#performance-considerations-2
+
+    let size = Vector2::new(texture.width(), texture.height());
+
+    assert_eq!(
+        image_size(image),
+        size,
+        "provided image size doesn't match texture"
+    );
+
+    queue.write_texture(
+        wgpu::TexelCopyTextureInfo {
+            texture,
+            mip_level: 0,
+            origin: Default::default(),
+            aspect: Default::default(),
+        },
+        image.as_raw(),
+        wgpu::TexelCopyBufferLayout {
+            bytes_per_row: Some(4 * size.x),
+            ..Default::default()
+        },
+        wgpu::Extent3d {
+            width: size.x,
+            height: size.y,
+            depth_or_array_layers: 1,
+        },
+    );
 }
