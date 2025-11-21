@@ -378,9 +378,18 @@ where
     Threading: LatticeForEach,
 {
     fn set_forcing(&mut self, point: &Point3<usize>, value: &SourceValues) {
-        if let Some(index) = self.instance.strider.index(point) {
-            self.state.source_field[index] = self.state.source_buffer.len();
-            self.state.source_buffer.push((index, *value));
+        if let Some(cell_index) = self.instance.strider.index(point) {
+            let source_index = &mut self.state.source_field[cell_index];
+            if *source_index == 0 {
+                // cell doesn't have a source set, push into buffer
+                *source_index = self.state.source_buffer.len();
+                self.state.source_buffer.push((cell_index, *value));
+            }
+            else {
+                // source for this cell was already assigned, overwrite value in buffer.
+                assert_eq!(self.state.source_buffer[*source_index].0, cell_index);
+                self.state.source_buffer[*source_index].1 = *value;
+            }
         }
     }
 }
