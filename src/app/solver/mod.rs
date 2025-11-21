@@ -58,6 +58,8 @@ pub trait SolverInstance {
     type Source;
 
     fn create_state(&self) -> Self::State;
+
+    // todo: split this into an UpdatePass type?
     fn update<S>(&self, state: &mut Self::State, sources: S)
     where
         S: IntoIterator<Item = (Self::Point, Self::Source)>;
