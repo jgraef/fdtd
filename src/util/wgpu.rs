@@ -823,6 +823,12 @@ pub fn write_image_to_texture(queue: &wgpu::Queue, image: &RgbaImage, texture: &
 
     let size = Vector2::new(texture.width(), texture.height());
 
+    let bytes_per_row = size.x * 4;
+    if bytes_per_row < 256 {
+        // https://docs.rs/wgpu/latest/wgpu/struct.TexelCopyBufferLayout.html#structfield.bytes_per_row
+        todo!("image needs padding")
+    }
+
     assert_eq!(
         image_size(image),
         size,
@@ -838,7 +844,7 @@ pub fn write_image_to_texture(queue: &wgpu::Queue, image: &RgbaImage, texture: &
         },
         image.as_raw(),
         wgpu::TexelCopyBufferLayout {
-            bytes_per_row: Some(4 * size.x),
+            bytes_per_row: Some(bytes_per_row),
             ..Default::default()
         },
         wgpu::Extent3d {

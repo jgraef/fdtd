@@ -32,6 +32,7 @@ use crate::app::solver::{
     project::{
         BeginProjectionPass,
         CreateProjection,
+        ImageTarget,
         ProjectionParameters,
         ProjectionPass,
         ProjectionPassAdd,
@@ -173,7 +174,7 @@ impl ProjectionPipeline {
 ///   parameters on the `project` method.
 /// - We can also bind both field buffers, which would allow us to specify which
 ///   one we want in the `project` method.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct TextureProjection {
     pipeline: Arc<wgpu::RenderPipeline>,
     projection_buffer: wgpu::Buffer,
@@ -274,9 +275,255 @@ impl TextureProjection {
     }
 }
 
-impl AsRef<wgpu::TextureView> for TextureProjection {
-    fn as_ref(&self) -> &wgpu::TextureView {
-        &self.target_texture_view
+impl<'a> CreateProjection<TextureTarget<'a>> for FdtdWgpuSolverInstance {
+    type Projection = TextureProjection;
+
+    fn create_projection(
+        &self,
+        state: &FdtdWgpuSolverState,
+        target: TextureTarget<'a>,
+        parameters: &ProjectionParameters,
+    ) -> TextureProjection {
+        let texture_view = target.texture.create_view(&wgpu::TextureViewDescriptor {
+            label: Some("fdtd/projection"),
+            ..Default::default()
+        });
+
+        TextureProjection::new(self, state, texture_view, parameters)
+    }
+}
+
+#[derive(Debug)]
+pub struct ImageProjection<Target>
+where
+    Target: ImageTarget,
+{
+    target: Target,
+    inner: TextureProjection,
+    buffer_texture: wgpu::Texture,
+    staging: Staging,
+}
+
+impl<Target> CreateProjection<Target> for FdtdWgpuSolverInstance
+where
+    Target: ImageTarget,
+{
+    type Projection = ImageProjection<Target>;
+
+    fn create_projection(
+        &self,
+        state: &FdtdWgpuSolverState,
+        target: Target,
+        parameters: &ProjectionParameters,
+    ) -> ImageProjection<Target> {
+        let size = target.size();
+
+        let buffer_texture = self
+            .backend
+            .device
+            .create_texture(&wgpu::TextureDescriptor {
+                label: Some("fdtd/projection/buffer"),
+                size: wgpu::Extent3d {
+                    width: size.x,
+                    height: size.y,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                // not sure, but it looks better without Srgb. The surface egui-wgpu uses is not
+                // srgba, but wouldn't the conversion being taken care of?
+                // format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            });
+
+        let buffer_texture_view = buffer_texture.create_view(&wgpu::TextureViewDescriptor {
+            label: Some("fdtd/projection/buffer"),
+            ..Default::default()
+        });
+
+        let staging = {
+            let bytes_per_row_unpadded = size.x as u64 * 4;
+            let bytes_per_row_padded = bytes_per_row_unpadded.max(256);
+            let staging_size = bytes_per_row_padded * size.y as u64;
+
+            let buffer = self.backend.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("fdtd/prrojection/staging"),
+                size: staging_size,
+                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            });
+
+            Staging {
+                bytes_per_row_unpadded,
+                bytes_per_row_padded,
+                buffer,
+            }
+        };
+
+        let inner = TextureProjection::new(self, state, buffer_texture_view, parameters);
+
+        ImageProjection {
+            target,
+            inner,
+            buffer_texture,
+            staging,
+        }
+    }
+}
+
+#[derive(Debug)]
+struct Staging {
+    bytes_per_row_unpadded: u64,
+    bytes_per_row_padded: u64,
+    buffer: wgpu::Buffer,
+}
+
+impl<'a, Target> ProjectionPassAdd<'a, ImageProjection<Target>> for FdtdWgpuProjectionPass<'a>
+where
+    Target: ImageTarget<Pixel = image::Rgba<u8>>,
+{
+    fn add_projection(&mut self, projection: &'a mut ImageProjection<Target>) {
+        projection
+            .inner
+            .project(&mut self.command_encoder, self.swap_buffer_index);
+
+        let size = projection.target.size();
+
+        let bytes_per_row_unpadded = size.x * 4;
+        let bytes_per_row_padded = bytes_per_row_unpadded.max(256);
+
+        // copy buffer texture to staging buffer
+        self.command_encoder.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo {
+                texture: &projection.buffer_texture,
+                mip_level: 0,
+                origin: Default::default(),
+                aspect: Default::default(),
+            },
+            wgpu::TexelCopyBufferInfo {
+                buffer: &projection.staging.buffer,
+                layout: wgpu::TexelCopyBufferLayout {
+                    bytes_per_row: Some(bytes_per_row_padded),
+                    ..Default::default()
+                },
+            },
+            wgpu::Extent3d {
+                width: size.x,
+                height: size.y,
+                depth_or_array_layers: 1,
+            },
+        );
+
+        // after the command encoder has been submitted, we can map the staging
+        // buffer.
+        self.command_encoder.map_buffer_on_submit(
+            &projection.staging.buffer,
+            wgpu::MapMode::Read,
+            ..,
+            |result| {
+                // todo
+                result.unwrap();
+            },
+        );
+
+        // stash closure to copy from mapped staging buffer to image later
+        self.copy_to_image_buffer.push({
+            // make sure we unmap the staging buffer when we don't need read access to it
+            // anymore. this will be moved into the closure, which is stored in the
+            // projection pass. so if the pass is dropped before finish is called, the
+            // buffer will be unmapped regardless.
+            //
+            // this wrapper will also hold the view while we need it, to make sure it's
+            // dropped before the buffer is unmapped.
+            let mut staging_buffer = MappedStagingBuffer {
+                buffer: &projection.staging.buffer,
+                view: None,
+            };
+
+            // move &mut of projection target into closure
+            let target = &mut projection.target;
+
+            let bytes_per_row_padded = bytes_per_row_padded as usize;
+
+            Box::new(move || {
+                // this closure finishes the projection by copying from the mapped staging
+                // buffer to the image. it is executed in `finish` after the command buffer has
+                // been submitted.
+
+                let staging_view = staging_buffer.view();
+
+                target.with_image_buffer(|image| {
+                    image.enumerate_pixels_mut().for_each(|(x, y, pixel)| {
+                        let staging_offset = y as usize * bytes_per_row_padded + 4 * x as usize;
+                        pixel
+                            .0
+                            .copy_from_slice(&staging_view[staging_offset..staging_offset + 4]);
+                    });
+                });
+            })
+        });
+    }
+}
+
+impl BeginProjectionPass for FdtdWgpuSolverInstance {
+    type ProjectionPass<'a>
+        = FdtdWgpuProjectionPass<'a>
+    where
+        Self: 'a;
+
+    fn begin_projection_pass<'a>(
+        &'a self,
+        state: &'a FdtdWgpuSolverState,
+    ) -> FdtdWgpuProjectionPass<'a> {
+        FdtdWgpuProjectionPass::new(self, state)
+    }
+}
+
+#[derive(derive_more::Debug)]
+pub struct FdtdWgpuProjectionPass<'a> {
+    command_encoder: wgpu::CommandEncoder,
+    swap_buffer_index: SwapBufferIndex,
+    backend: &'a FdtdWgpuBackend,
+    #[debug(skip)]
+    copy_to_image_buffer: Vec<Box<dyn FnOnce() + 'a>>,
+}
+
+impl<'a> FdtdWgpuProjectionPass<'a> {
+    fn new(instance: &'a FdtdWgpuSolverInstance, state: &FdtdWgpuSolverState) -> Self {
+        let command_encoder =
+            instance
+                .backend
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("fdtd/update/post"),
+                });
+
+        let swap_buffer_index = SwapBufferIndex::from_tick(state.tick + 1);
+
+        Self {
+            command_encoder,
+            swap_buffer_index,
+            backend: &instance.backend,
+            copy_to_image_buffer: vec![],
+        }
+    }
+}
+
+impl<'a> ProjectionPassAdd<'a, TextureProjection> for FdtdWgpuProjectionPass<'a> {
+    fn add_projection(&mut self, projection: &mut TextureProjection) {
+        projection.project(&mut self.command_encoder, self.swap_buffer_index);
+    }
+}
+
+impl<'a> ProjectionPass for FdtdWgpuProjectionPass<'a> {
+    fn finish(mut self) {
+        self.backend
+            .submit_and_poll([self.command_encoder.finish()]);
+
+        self.copy_to_image_buffer.drain(..).for_each(|f| f());
     }
 }
 
@@ -296,74 +543,24 @@ impl ProjectionData {
     }
 }
 
-impl<'a> CreateProjection<TextureTarget<'a>> for FdtdWgpuSolverInstance {
-    type Projection = TextureProjection;
-
-    fn create_projection(
-        &self,
-        state: &FdtdWgpuSolverState,
-        target: TextureTarget<'a>,
-        parameters: &ProjectionParameters,
-    ) -> TextureProjection {
-        let texture_view = target.texture.create_view(&wgpu::TextureViewDescriptor {
-            label: Some("fdtd/projection"),
-            ..Default::default()
-        });
-
-        TextureProjection::new(self, state, texture_view, parameters)
-    }
-}
-
-impl BeginProjectionPass for FdtdWgpuSolverInstance {
-    type ProjectionPass<'a>
-        = FdtdWgpuProjectionPass<'a>
-    where
-        Self: 'a;
-
-    fn begin_projection_pass<'a>(
-        &'a self,
-        state: &'a FdtdWgpuSolverState,
-    ) -> FdtdWgpuProjectionPass<'a> {
-        FdtdWgpuProjectionPass::new(self, state)
-    }
-}
-
 #[derive(Debug)]
-pub struct FdtdWgpuProjectionPass<'a> {
-    command_encoder: wgpu::CommandEncoder,
-    swap_buffer_index: SwapBufferIndex,
-    backend: &'a FdtdWgpuBackend,
+struct MappedStagingBuffer<'a> {
+    pub buffer: &'a wgpu::Buffer,
+    pub view: Option<wgpu::BufferView>,
 }
 
-impl<'a> FdtdWgpuProjectionPass<'a> {
-    fn new(instance: &'a FdtdWgpuSolverInstance, state: &FdtdWgpuSolverState) -> Self {
-        let command_encoder =
-            instance
-                .backend
-                .device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("fdtd/update/post"),
-                });
-
-        let swap_buffer_index = SwapBufferIndex::from_tick(state.tick + 1);
-
-        Self {
-            command_encoder,
-            swap_buffer_index,
-            backend: &instance.backend,
-        }
+impl<'a> MappedStagingBuffer<'a> {
+    pub fn view(&mut self) -> &wgpu::BufferView {
+        self.view
+            .get_or_insert_with(|| self.buffer.get_mapped_range(..))
     }
 }
 
-impl<'a> ProjectionPassAdd<TextureProjection> for FdtdWgpuProjectionPass<'a> {
-    fn add_projection<'b>(&'b mut self, projection: &'b mut TextureProjection) {
-        projection.project(&mut self.command_encoder, self.swap_buffer_index);
-    }
-}
+impl<'a> Drop for MappedStagingBuffer<'a> {
+    fn drop(&mut self) {
+        // make sure any mapped view is dropped first
+        drop(self.view.take());
 
-impl<'a> ProjectionPass for FdtdWgpuProjectionPass<'a> {
-    fn finish(self) {
-        self.backend
-            .submit_and_poll([self.command_encoder.finish()]);
+        self.buffer.unmap();
     }
 }

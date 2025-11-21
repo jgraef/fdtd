@@ -33,9 +33,12 @@ use nalgebra::{
     Vector2,
 };
 
-use crate::app::solver::{
-    FieldComponent,
-    SolverInstance,
+use crate::{
+    app::solver::{
+        FieldComponent,
+        SolverInstance,
+    },
+    util::image_size,
 };
 
 /// Parameters for a projection
@@ -114,8 +117,8 @@ pub trait ProjectionPass {
 ///
 /// If a [`SolverInstance`] allows for a projection to be created, it must also
 /// accept them to be added to its projection pass.
-pub trait ProjectionPassAdd<Projection> {
-    fn add_projection<'a>(&'a mut self, projection: &'a mut Projection);
+pub trait ProjectionPassAdd<'a, Projection>: 'a {
+    fn add_projection(&mut self, projection: &'a mut Projection);
 }
 
 /// Project into a [`wgpu::Texture`]
@@ -137,6 +140,8 @@ pub trait ImageTarget {
     type Pixel: image::Pixel;
     type Container: DerefMut<Target = [<Self::Pixel as image::Pixel>::Subpixel]>;
 
+    fn size(&self) -> Vector2<u32>;
+
     fn with_image_buffer(
         &mut self,
         f: impl FnOnce(&mut image::ImageBuffer<Self::Pixel, Self::Container>),
@@ -149,6 +154,10 @@ where
 {
     type Pixel = T::Pixel;
     type Container = T::Container;
+
+    fn size(&self) -> Vector2<u32> {
+        T::size(*self)
+    }
 
     fn with_image_buffer(
         &mut self,
@@ -165,6 +174,10 @@ where
 {
     type Pixel = Pixel;
     type Container = Container;
+
+    fn size(&self) -> Vector2<u32> {
+        image_size(self)
+    }
 
     fn with_image_buffer(&mut self, f: impl FnOnce(&mut image::ImageBuffer<Pixel, Container>)) {
         f(self)
@@ -189,6 +202,10 @@ where
 {
     type Pixel = image::Rgba<u8>;
     type Container = Vec<u8>;
+
+    fn size(&self) -> Vector2<u32> {
+        self.frame_size
+    }
 
     fn with_image_buffer(
         &mut self,

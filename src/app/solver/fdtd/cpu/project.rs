@@ -3,11 +3,6 @@ use std::ops::{
     DerefMut,
 };
 
-use image::{
-    ImageBuffer,
-    Rgba,
-    RgbaImage,
-};
 use nalgebra::{
     Point3,
     Vector2,
@@ -75,11 +70,11 @@ where
     }
 }
 
-impl<'a, Target> ProjectionPassAdd<ImageProjection<Target>> for FdtdCpuProjectionPass<'a>
+impl<'a, Target> ProjectionPassAdd<'a, ImageProjection<Target>> for FdtdCpuProjectionPass<'a>
 where
     Target: ImageTarget<Pixel = image::Rgba<u8>>,
 {
-    fn add_projection<'b>(&'b mut self, projection: &'b mut ImageProjection<Target>) {
+    fn add_projection(&mut self, projection: &'a mut ImageProjection<Target>) {
         projection.target.with_image_buffer(|image| {
             self.project_to_image(image, &projection.parameters);
         });
@@ -91,7 +86,7 @@ pub struct TextureProjection {
     texture: wgpu::Texture,
     queue: wgpu::Queue,
     parameters: ProjectionParameters,
-    frame_buffer: RgbaImage,
+    frame_buffer: image::RgbaImage,
 }
 
 impl<'a, Threading> CreateProjection<TextureTarget<'a>> for FdtdCpuSolverInstance<Threading>
@@ -108,7 +103,7 @@ where
     ) -> TextureProjection {
         let _ = state;
 
-        let frame_buffer = RgbaImage::new(target.texture.width(), target.texture.height());
+        let frame_buffer = image::RgbaImage::new(target.texture.width(), target.texture.height());
 
         TextureProjection {
             texture: target.texture.clone(),
@@ -119,8 +114,8 @@ where
     }
 }
 
-impl<'a> ProjectionPassAdd<TextureProjection> for FdtdCpuProjectionPass<'a> {
-    fn add_projection<'b>(&'b mut self, projection: &'b mut TextureProjection) {
+impl<'a> ProjectionPassAdd<'a, TextureProjection> for FdtdCpuProjectionPass<'a> {
+    fn add_projection(&mut self, projection: &'a mut TextureProjection) {
         self.project_to_image(&mut projection.frame_buffer, &projection.parameters);
         write_image_to_texture(
             &projection.queue,
@@ -164,13 +159,14 @@ impl<'a> FdtdCpuProjectionPass<'a> {
 
     fn project_to_image<Container>(
         &self,
-        image: &mut ImageBuffer<Rgba<u8>, Container>,
+        image: &mut image::ImageBuffer<image::Rgba<u8>, Container>,
         parameters: &ProjectionParameters,
     ) where
         Container: Deref<Target = [u8]> + DerefMut,
     {
         let image_size = (image_size(image) - Vector2::repeat(1)).cast::<f32>();
 
+        // todo: par_iter depending on `Threading`
         image.enumerate_pixels_mut().for_each(|(x, y, pixel)| {
             let uv = Vector2::new(x, y).cast::<f32>().component_div(&image_size);
             let point = Vector4::new(uv.x, uv.y, 0.0, 1.0);
@@ -192,7 +188,7 @@ impl<'a> FdtdCpuProjectionPass<'a> {
                 pixel.0 = color.into();
             }
             else {
-                *pixel = Rgba(Default::default());
+                *pixel = image::Rgba(Default::default());
             }
         });
     }

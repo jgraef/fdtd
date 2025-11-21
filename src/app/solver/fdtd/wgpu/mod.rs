@@ -1,4 +1,4 @@
-mod project;
+pub mod project;
 
 use std::{
     convert::Infallible,

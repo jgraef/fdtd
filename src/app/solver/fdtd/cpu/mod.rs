@@ -1,5 +1,5 @@
 mod lattice;
-mod project;
+pub mod project;
 mod util;
 
 use std::{
