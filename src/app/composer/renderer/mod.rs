@@ -1,9 +1,8 @@
 pub mod camera;
-pub mod draw_commands;
+mod draw_commands;
 pub mod grid;
 pub mod light;
 pub mod mesh;
-pub mod texture;
 
 use std::{
     num::NonZero,
@@ -26,6 +25,7 @@ use serde::{
 };
 
 use crate::{
+    Error,
     app::composer::{
         properties::{
             PropertiesUi,
@@ -44,11 +44,13 @@ use crate::{
                 DrawCommandOptions,
             },
             light::{
+                LoadMaterialTextures,
                 Material,
                 MaterialData,
             },
             mesh::{
                 Mesh,
+                MeshBindGroup,
                 WindingOrder,
             },
         },
@@ -57,7 +59,10 @@ use crate::{
             transform::Transform,
         },
     },
-    util::wgpu::StagedTypedArrayBuffer,
+    util::wgpu::{
+        StagedTypedArrayBuffer,
+        texture_view_from_color,
+    },
 };
 
 /// Tag for entities that should be rendered
@@ -161,8 +166,7 @@ pub struct Renderer {
     /// specific camera.
     draw_command_buffer: DrawCommandBuffer,
 
-    /// The same sampler is used for all textures
-    texture_sampler: wgpu::Sampler,
+    texture_defaults: Fallbacks,
 }
 
 impl Renderer {
@@ -208,61 +212,62 @@ impl Renderer {
                     ],
                 });
 
-        let mesh_bind_group_layout =
+        let mesh_bind_group_layout = {
+            let vertex_buffer = |binding| {
+                wgpu::BindGroupLayoutEntry {
+                    binding,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }
+            };
+
+            let texture = |binding| {
+                wgpu::BindGroupLayoutEntry {
+                    binding,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                }
+            };
+
             wgpu_context
                 .device
                 .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                     label: Some("mesh_bind_group_layout"),
                     entries: &[
                         // index buffer
-                        wgpu::BindGroupLayoutEntry {
-                            binding: 0,
-                            visibility: wgpu::ShaderStages::VERTEX,
-                            ty: wgpu::BindingType::Buffer {
-                                ty: wgpu::BufferBindingType::Storage { read_only: true },
-                                has_dynamic_offset: false,
-                                min_binding_size: None,
-                            },
-                            count: None,
-                        },
+                        vertex_buffer(0),
                         // vertex buffer
+                        vertex_buffer(1),
+                        // uv buffer
+                        vertex_buffer(2),
+                        // sampler
                         wgpu::BindGroupLayoutEntry {
-                            binding: 1,
-                            visibility: wgpu::ShaderStages::VERTEX,
-                            ty: wgpu::BindingType::Buffer {
-                                ty: wgpu::BufferBindingType::Storage { read_only: true },
-                                has_dynamic_offset: false,
-                                min_binding_size: None,
-                            },
-                            count: None,
-                        },
-                    ],
-                });
-
-        let texture_bind_group_layout =
-            wgpu_context
-                .device
-                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                    label: Some("texture_bind_group_layout"),
-                    entries: &[
-                        wgpu::BindGroupLayoutEntry {
-                            binding: 0,
-                            visibility: wgpu::ShaderStages::FRAGMENT,
-                            ty: wgpu::BindingType::Texture {
-                                sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                                view_dimension: wgpu::TextureViewDimension::D2,
-                                multisampled: false,
-                            },
-                            count: None,
-                        },
-                        wgpu::BindGroupLayoutEntry {
-                            binding: 1,
+                            binding: 3,
                             visibility: wgpu::ShaderStages::FRAGMENT,
                             ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                             count: None,
                         },
+                        // material - ambient
+                        texture(4),
+                        // material - diffuse
+                        texture(5),
+                        // material - specular
+                        texture(6),
+                        // material - emissive
+                        texture(7),
                     ],
-                });
+                })
+        };
 
         // should we store this in the struct?
         let mesh_shader_module = wgpu_context
@@ -359,16 +364,7 @@ impl Renderer {
         );
         assert!(instance_buffer.buffer.is_allocated());
 
-        let texture_sampler = wgpu_context
-            .device
-            .create_sampler(&wgpu::SamplerDescriptor {
-                label: Some("texture_sampler"),
-                address_mode_u: wgpu::AddressMode::ClampToEdge,
-                address_mode_v: wgpu::AddressMode::ClampToEdge,
-                mag_filter: wgpu::FilterMode::Linear,
-                min_filter: wgpu::FilterMode::Nearest,
-                ..Default::default()
-            });
+        let texture_defaults = Fallbacks::new(&wgpu_context.device, &wgpu_context.queue);
 
         Self {
             wgpu_context: wgpu_context.clone(),
@@ -381,7 +377,7 @@ impl Renderer {
             outline_pipeline,
             instance_buffer,
             draw_command_buffer: Default::default(),
-            texture_sampler,
+            texture_defaults,
         }
     }
 
@@ -397,12 +393,16 @@ impl Renderer {
     /// views that render the same scene. Internally they're put into a
     /// `Arc<Vec<_>>`, so they're cheap to clone (which is done in
     /// [`Self::prepare_frame`]).
-    pub fn prepare_world(&mut self, scene: &mut Scene) {
+    pub fn prepare_world(&mut self, scene: &mut Scene) -> Result<(), Error> {
+        // load rendering assets
+        let load_result = self.load_all::<LoadMaterialTextures>(scene);
+
         // generate meshes (for rendering) for objects that don't have them yet.
         mesh::generate_meshes_for_shapes(
             scene,
             &self.wgpu_context.device,
             &self.mesh_bind_group_layout,
+            &self.texture_defaults,
         );
 
         // next we prepare the draw commands.
@@ -422,6 +422,8 @@ impl Renderer {
             self.instance_buffer.buffer.buffer().unwrap(),
             instance_buffer_reallocated,
         );
+
+        load_result
     }
 
     fn update_instance_buffer_and_draw_command(&mut self, world: &mut hecs::World) -> bool {
@@ -444,14 +446,25 @@ impl Renderer {
         let mut draw_command_builder = self.draw_command_buffer.builder();
 
         // draw meshes (solid, wireframe, outlines)
-        for (_, (transform, mesh, material, outline)) in world
-            .query_mut::<(&Transform, &Mesh, &Material, Option<&Outline>)>()
+        for (_, (transform, mesh, mesh_bind_group, material, outline)) in world
+            .query_mut::<(
+                &Transform,
+                &Mesh,
+                &MeshBindGroup,
+                &Material,
+                Option<&Outline>,
+            )>()
             .with::<&Render>()
         {
             // instance flags
-            let mut flags = InstanceFlags::SHOW_SOLID | InstanceFlags::SHOW_WIREFRAME;
+            let mut flags = InstanceFlags::SHOW_SOLID
+                | InstanceFlags::SHOW_WIREFRAME
+                | InstanceFlags::ENABLE_TEXTURES;
             if mesh.winding_order != Self::WINDING_ORDER {
                 flags |= InstanceFlags::REVERSE_WINDING;
+            }
+            if mesh.uv_buffer.is_some() {
+                flags |= InstanceFlags::UV_BUFFER_VALID;
             }
 
             // write per-instance data into a buffer
@@ -464,7 +477,7 @@ impl Renderer {
             ));
 
             // prepare draw commands
-            draw_command_builder.draw_mesh(instances(), mesh, outline.is_some());
+            draw_command_builder.draw_mesh(instances(), mesh, mesh_bind_group, outline.is_some());
         }
 
         // send instance data to gpu
@@ -531,6 +544,34 @@ impl Renderer {
             },
         ))
     }
+
+    // todo: ideally this would be in an asset loader
+    fn load_all<L: Loader>(&mut self, scene: &mut Scene) -> Result<(), Error> {
+        fn load_all_inner<L: Loader>(scene: &mut Scene, renderer: &Renderer) -> Result<(), Error> {
+            for (entity, loader) in scene.entities.query_mut::<&L>() {
+                // remove first, so if an error occurs during loading, the loader will still be
+                // removed.
+                scene.command_buffer.remove_one::<L>(entity);
+
+                let loaded = loader.load(renderer)?;
+                scene.command_buffer.insert(entity, loaded);
+            }
+            Ok(())
+        }
+
+        let result = load_all_inner::<L>(scene, self);
+
+        // apply commands even if an error occurred.
+        scene.apply_deferred();
+
+        result
+    }
+}
+
+trait Loader: hecs::Component {
+    type Output: hecs::DynamicBundle;
+
+    fn load(&self, renderer: &Renderer) -> Result<Self::Output, Error>;
 }
 
 fn create_instance_bind_group(
@@ -744,16 +785,19 @@ bitflags! {
     #[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]
     #[repr(C)]
     struct InstanceFlags: u32 {
-        const REVERSE_WINDING = 0b0001;
+        const REVERSE_WINDING = 0b0000_0001;
 
         // todo: these are not used currently. since we only render one
         // instance at a time currently, we could just not emit a draw call
         // of one of these is disabled.
         // if we were to render multiple instances at a time, we can use this
         // flag in the vertex shader to skip anything that it shouldn't render.
-        const SHOW_SOLID = 0b0010;
-        const SHOW_WIREFRAME = 0b0100;
-        const SHOW_OUTLINE = 0b1000;
+        const SHOW_SOLID      = 0b0000_0010;
+        const SHOW_WIREFRAME  = 0b0000_0100;
+        const SHOW_OUTLINE    = 0b0000_1000;
+
+        const ENABLE_TEXTURES = 0b0001_0000;
+        const UV_BUFFER_VALID = 0b0010_0000;
     }
 }
 
@@ -808,5 +852,45 @@ bitflags! {
 impl From<Stencil> for u32 {
     fn from(value: Stencil) -> Self {
         value.bits().into()
+    }
+}
+
+#[derive(Clone, Debug)]
+struct Fallbacks {
+    pub white: wgpu::TextureView,
+    pub black: wgpu::TextureView,
+    pub sampler: wgpu::Sampler,
+    pub uv_buffer: wgpu::Buffer,
+}
+
+impl Fallbacks {
+    pub fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
+        let white = texture_view_from_color(device, queue, Srgba::new(255, 255, 255, 255), "white");
+        let black = texture_view_from_color(device, queue, Srgba::new(0, 0, 0, 255), "black");
+
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("default texture sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Nearest,
+            ..Default::default()
+        });
+
+        let uv_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("uv buffer dummy"),
+            // the shader will expect at least one element in the array, which is a vec2f, so it's 8
+            // bytes
+            size: 8,
+            usage: wgpu::BufferUsages::STORAGE,
+            mapped_at_creation: false,
+        });
+
+        Self {
+            white,
+            black,
+            sampler,
+            uv_buffer,
+        }
     }
 }

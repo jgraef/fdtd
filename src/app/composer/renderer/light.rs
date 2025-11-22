@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use bytemuck::{
     Pod,
     Zeroable,
@@ -13,13 +15,21 @@ use serde::{
     Serialize,
 };
 
-use crate::app::composer::{
-    properties::{
-        PropertiesUi,
-        TrackChanges,
-        label_and_value,
+use crate::{
+    Error,
+    app::composer::{
+        properties::{
+            PropertiesUi,
+            TrackChanges,
+            label_and_value,
+        },
+        renderer::{
+            Loader,
+            Outline,
+            Renderer,
+        },
     },
-    renderer::Outline,
+    util::wgpu::texture_view_from_path,
 };
 
 /// Material properties that define how an object looks in the scene.
@@ -102,6 +112,14 @@ impl PropertiesUi for Material {
 
         changes.propagated(response)
     }
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct MaterialTextures {
+    pub ambient: Option<wgpu::TextureView>,
+    pub diffuse: Option<wgpu::TextureView>,
+    pub specular: Option<wgpu::TextureView>,
+    pub emissive: Option<wgpu::TextureView>,
 }
 
 /// A point light source.
@@ -278,5 +296,62 @@ impl PointLightData {
             diffuse: point_light.diffuse.into_linear().with_alpha(1.0),
             specular: point_light.specular.into_linear().with_alpha(1.0),
         }
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct LoadMaterialTextures {
+    pub ambient: Option<PathBuf>,
+    pub diffuse: Option<PathBuf>,
+    pub specular: Option<PathBuf>,
+    pub emissive: Option<PathBuf>,
+}
+
+impl LoadMaterialTextures {
+    pub fn with_ambient(mut self, path: impl Into<PathBuf>) -> Self {
+        self.ambient = Some(path.into());
+        self
+    }
+
+    pub fn with_diffuse(mut self, path: impl Into<PathBuf>) -> Self {
+        self.diffuse = Some(path.into());
+        self
+    }
+
+    pub fn with_specular(mut self, path: impl Into<PathBuf>) -> Self {
+        self.specular = Some(path.into());
+        self
+    }
+
+    pub fn with_emissive(mut self, path: impl Into<PathBuf>) -> Self {
+        self.emissive = Some(path.into());
+        self
+    }
+}
+
+impl Loader for LoadMaterialTextures {
+    type Output = (MaterialTextures,);
+
+    fn load(&self, renderer: &Renderer) -> Result<Self::Output, Error> {
+        let mut output = MaterialTextures::default();
+
+        macro_rules! texture {
+            ($name:ident) => {
+                if let Some(path) = &self.$name {
+                    output.$name = Some(texture_view_from_path(
+                        &renderer.wgpu_context.device,
+                        &renderer.wgpu_context.queue,
+                        path,
+                    )?);
+                }
+            };
+        }
+
+        texture!(ambient);
+        texture!(diffuse);
+        texture!(specular);
+        texture!(emissive);
+
+        Ok((output,))
     }
 }

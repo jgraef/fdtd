@@ -2,6 +2,7 @@ pub mod args;
 pub mod clipboard;
 pub mod composer;
 pub mod config;
+mod error_dialog;
 pub mod files;
 pub mod menubar;
 pub mod solver;
@@ -20,6 +21,11 @@ use image::RgbaImage;
 use crate::app::{
     composer::Composer,
     config::AppConfig,
+    error_dialog::{
+        ErrorDialog,
+        ResultExt,
+        show_error_dialog,
+    },
     files::AppFiles,
     menubar::{
         MenuBar,
@@ -36,7 +42,6 @@ pub struct App {
     file_dialog: FileDialog,
     show_about: bool,
     show_debug: bool,
-    error_dialog: ErrorDialog,
 }
 
 impl App {
@@ -73,8 +78,12 @@ impl App {
                 context.config.recently_opened_files_limit,
             );
 
-            error_dialog.ok_or_show(composer.open_file(&context.config, path));
+            composer
+                .open_file(&context.config, path)
+                .ok_or_handle(&mut error_dialog);
         }
+
+        error_dialog.register_in_context(&context.egui_context);
 
         Self {
             app_files: context.app_files,
@@ -83,7 +92,6 @@ impl App {
             file_dialog,
             show_about: false,
             show_debug: false,
-            error_dialog,
         }
     }
 
@@ -127,7 +135,7 @@ impl eframe::App for App {
                             user_data: _,
                             image,
                         } => {
-                            self.error_dialog.ok_or_show(self.save_screenshot(image));
+                            self.save_screenshot(image).ok_or_handle(ctx);
                         }
                         _ => {}
                     }
@@ -196,8 +204,9 @@ impl eframe::App for App {
                             self.config.recently_opened_files_limit,
                         );
 
-                        self.error_dialog
-                            .ok_or_show(self.composer.open_file(&self.config, path));
+                        self.composer
+                            .open_file(&self.config, path)
+                            .ok_or_handle(ctx);
                     }
                     FileDialogAction::SaveAs => {
                         tracing::debug!("todo: save as");
@@ -209,7 +218,7 @@ impl eframe::App for App {
             }
         }
 
-        self.error_dialog.show(ctx);
+        show_error_dialog(ctx);
     }
 }
 
@@ -247,69 +256,5 @@ impl GithubUrls {
 
     pub fn release_notes(&self) -> String {
         format!("{}/releases", self.repository)
-    }
-}
-
-#[derive(Debug, Default)]
-pub struct ErrorDialog {
-    error: Option<Error>,
-}
-
-impl ErrorDialog {
-    pub fn ok_or_show<T, E>(&mut self, result: Result<T, E>) -> Option<T>
-    where
-        Error: From<E>,
-    {
-        result
-            .map_err(|error| {
-                self.set_error(error);
-            })
-            .ok()
-    }
-
-    pub fn set_error<E>(&mut self, error: E)
-    where
-        Error: From<E>,
-    {
-        let error = error.into();
-        tracing::error!(?error);
-        self.error = Some(error);
-    }
-
-    pub fn clear(&mut self) {
-        self.error = None;
-    }
-
-    pub fn show(&mut self, ctx: &egui::Context) {
-        if let Some(error) = &self.error {
-            let mut open1 = true;
-            let mut open2 = true;
-
-            egui::Window::new("Error")
-                .movable(true)
-                .open(&mut open1)
-                .collapsible(false)
-                .show(ctx, |ui| {
-                    egui::ScrollArea::vertical()
-                        .id_salt("error_message")
-                        .show(ui, |ui| {
-                            egui::Frame::new().inner_margin(5).show(ui, |ui| {
-                                ui.label(format!("{error:#}"));
-                            });
-                        });
-
-                    ui.separator();
-
-                    ui.with_layout(egui::Layout::right_to_left(Default::default()), |ui| {
-                        if ui.button("Close").clicked() {
-                            open2 = false;
-                        }
-                    });
-                });
-
-            if !open1 || !open2 {
-                self.clear();
-            }
-        }
     }
 }

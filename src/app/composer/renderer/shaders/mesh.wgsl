@@ -41,6 +41,8 @@ const FLAG_REVERSE_WINDING: u32 = 1;
 const FLAG_SHOW_SOLID: u32 = 2;
 const FLAG_SHOW_WIREFRAME: u32 = 4;
 const FLAG_SHOW_OUTLINE: u32 = 8;
+const FLAG_ENABLE_TEXTURES: u32 = 16;
+const FLAG_UV_BUFFER_VALID: u32 = 32;
 
 struct VertexInput {
     @builtin(vertex_index) vertex_index: u32,
@@ -52,16 +54,12 @@ struct VertexOutputSolid {
     @location(0) @interpolate(flat, either) instance_index: u32,
     @location(1) world_position: vec4f,
     @location(2) world_normal: vec4f,
+    @location(3) texture_position: vec2f,
 }
 
 struct VertexOutputSingleColor {
     @builtin(position) fragment_position: vec4f,
     @location(0) color: vec4f,
-}
-
-struct VertexOutputTexture {
-    @builtin(position) fragment_position: vec4f,
-    @location(0) texture_position: vec2f,
 }
 
 struct FragmentOutput {
@@ -94,11 +92,23 @@ var<storage, read> index_buffer: array<u32>;
 @group(1) @binding(1)
 var<storage, read> vertex_buffer: array<f32>;
 
-//@group(1) @binding(2)
-//var texture_texture: texture_2d<f32>;
+@group(1) @binding(2)
+var<storage, read> uv_buffer: array<vec2f>;
 
-//@group(1) @binding(3)
-//var texture_sampler: sampler;
+@group(1) @binding(3)
+var texture_sampler: sampler;
+
+@group(1) @binding(4)
+var texture_ambient: texture_2d<f32>;
+
+@group(1) @binding(5)
+var texture_diffuse: texture_2d<f32>;
+
+@group(1) @binding(6)
+var texture_specular: texture_2d<f32>;
+
+@group(1) @binding(7)
+var texture_emissive: texture_2d<f32>;
 
 
 @vertex
@@ -121,6 +131,9 @@ fn vs_main_solid(input: VertexInput) -> VertexOutputSolid {
     output.world_position = instance.transform * vec4f(vertex, 1.0);
     output.world_normal = instance.transform * vec4f(normal, 0.0);
     output.fragment_position = camera.projection * camera.transform * output.world_position;
+    if (instance.flags & FLAG_UV_BUFFER_VALID) != 0 {
+        output.texture_position = uv_buffer[input.vertex_index];
+    }
 
     return output;
 }
@@ -141,23 +154,36 @@ fn fs_main_solid(input: VertexOutputSolid, @builtin(front_facing) front_face: bo
             vec4f(1.0),
         );
 
+        // sample textures
+        var texture_color_ambient = vec4f(1.0);
+        var texture_color_diffuse = vec4f(1.0);
+        var texture_color_specular = vec4f(1.0);
+        var texture_color_emissive = vec4f(1.0);
+
+        if (instance.flags & FLAG_ENABLE_TEXTURES) != 0 {
+            texture_color_ambient = textureSample(texture_ambient, texture_sampler, input.texture_position);
+            texture_color_diffuse = textureSample(texture_diffuse, texture_sampler, input.texture_position);
+            texture_color_specular = textureSample(texture_specular, texture_sampler, input.texture_position);
+            texture_color_emissive = textureSample(texture_emissive, texture_sampler, input.texture_position);
+        }
+
         // ambient lighting
-        let ambient_color = camera.light_filter.ambient * instance.material.ambient;
+        let ambient_color = camera.light_filter.ambient * instance.material.ambient * texture_color_ambient;
 
         // diffuse lighting
         let world_normal = normalize(input.world_normal.xyz);
         let light_direction = normalize(point_light.world_position.xyz - input.world_position.xyz);
         let diffuse_intensity = max(dot(world_normal, light_direction), 0.0);
-        let diffuse_color = diffuse_intensity * camera.light_filter.diffuse * point_light.diffuse * instance.material.diffuse;
+        let diffuse_color = diffuse_intensity * camera.light_filter.diffuse * point_light.diffuse * instance.material.diffuse * texture_color_diffuse;
 
         // specular lighting
         let view_direction = normalize(camera.world_position.xyz - input.world_position.xyz);
         let reflect_direction = reflect(-light_direction, world_normal);
         let specular_intensity = pow(max(dot(view_direction, reflect_direction), 0.0), instance.material.shininess);
-        let specular_color = specular_intensity * camera.light_filter.specular * point_light.specular * instance.material.specular;
+        let specular_color = specular_intensity * camera.light_filter.specular * point_light.specular * instance.material.specular * texture_color_specular;
 
         // emissive lighting
-        let emissive_color = camera.light_filter.emissive * instance.material.emissive;
+        let emissive_color = camera.light_filter.emissive * instance.material.emissive * texture_color_emissive;
 
         let final_color = ambient_color + diffuse_color + specular_color + emissive_color;
         output.color = vec4f(final_color.xyz, 1.0);

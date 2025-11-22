@@ -346,7 +346,8 @@ where
 
         let staging = {
             let bytes_per_row_unpadded = size.x as u64 * 4;
-            let bytes_per_row_padded = bytes_per_row_unpadded.max(256);
+            let bytes_per_row_padded =
+                bytes_per_row_unpadded.max(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT as u64);
             let staging_size = bytes_per_row_padded * size.y as u64;
 
             let buffer = self.backend.device.create_buffer(&wgpu::BufferDescriptor {
@@ -393,7 +394,7 @@ where
         let size = projection.target.size();
 
         let bytes_per_row_unpadded = size.x * 4;
-        let bytes_per_row_padded = bytes_per_row_unpadded.max(256);
+        let bytes_per_row_padded = bytes_per_row_unpadded.max(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
 
         // copy buffer texture to staging buffer
         self.command_encoder.copy_texture_to_buffer(

@@ -35,7 +35,6 @@ use serde::{
 use crate::{
     Error,
     app::{
-        ErrorDialog,
         composer::{
             menubar::ComposerMenuElements,
             renderer::{
@@ -48,6 +47,7 @@ use crate::{
                     CameraConfig,
                     CameraProjection,
                 },
+                light::LoadMaterialTextures,
             },
             scene::{
                 EntityDebugLabel,
@@ -76,6 +76,7 @@ use crate::{
             AppConfig,
             ComposerConfig,
         },
+        error_dialog::ResultExt,
         solver::{
             FieldComponent,
             config::{
@@ -251,14 +252,8 @@ impl Composer {
         }
     }
 
-    pub fn menu_elements<'a>(
-        &'a mut self,
-        error_dialog: &'a mut ErrorDialog,
-    ) -> ComposerMenuElements<'a> {
-        ComposerMenuElements {
-            composer: self,
-            error_dialog,
-        }
+    pub fn menu_elements<'a>(&'a mut self) -> ComposerMenuElements<'a> {
+        ComposerMenuElements { composer: self }
     }
 }
 
@@ -380,7 +375,8 @@ impl ComposerState {
     pub fn show(&mut self, ctx: &egui::Context, renderer: &mut Renderer) {
         // prepare world
         self.scene.prepare();
-        renderer.prepare_world(&mut self.scene);
+
+        renderer.prepare_world(&mut self.scene).ok_or_handle(ctx);
         ctx.request_repaint_after(Duration::from_millis(1000 / 60));
 
         {
@@ -713,7 +709,9 @@ impl PopulateScene for ExampleScene {
         let shape = |size| parry3d::shape::Cuboid::new(Vector3::repeat(size));
         //let shape = |size| parry3d::shape::Ball::new(size);
 
-        scene.add_object(Point3::new(-0.2, 0.0, 0.0), shape(0.1), palette::named::RED);
+        scene
+            .add_object(Point3::new(-0.2, 0.0, 0.0), shape(0.1), palette::named::RED)
+            .add(LoadMaterialTextures::default().with_diffuse("tmp/test_pattern.png"));
         scene.add_object(Point3::new(0.2, 0.0, 0.0), shape(0.1), palette::named::BLUE);
         scene.add_object(
             Point3::new(0.0, -0.2, 0.0),

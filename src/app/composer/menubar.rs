@@ -4,12 +4,12 @@ use nalgebra::{
 };
 
 use crate::app::{
-    ErrorDialog,
     composer::{
         Composer,
         ComposerState,
         renderer::camera::CameraConfig,
     },
+    error_dialog::ResultExt,
     menubar::setup_menu,
     solver::config::SolverConfig,
 };
@@ -18,7 +18,6 @@ use crate::app::{
 #[derive(Debug)]
 pub struct ComposerMenuElements<'a> {
     pub composer: &'a mut Composer,
-    pub error_dialog: &'a mut ErrorDialog,
 }
 
 impl<'a> ComposerMenuElements<'a> {
@@ -266,11 +265,10 @@ impl<'a> ComposerMenuElements<'a> {
                     );
                     // for now we'll just send the config and scene to the runner to run it. but
                     // we'll need an intermediate step to rasterize/tesselate the scene
-                    self.error_dialog.ok_or_show(
-                        self.composer
-                            .solver_runner
-                            .run(solver_config, &mut state.scene),
-                    );
+                    self.composer
+                        .solver_runner
+                        .run(solver_config, &mut state.scene)
+                        .ok_or_handle(&*ui);
                 }
                 i += 1;
             }

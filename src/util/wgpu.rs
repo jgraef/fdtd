@@ -6,14 +6,18 @@ use std::{
         Range,
         RangeBounds,
     },
+    path::Path,
     sync::Arc,
 };
 
 use bytemuck::Pod;
 use nalgebra::Vector2;
+use palette::Srgba;
 use parking_lot::Mutex;
+use wgpu::util::DeviceExt;
 
 use crate::util::{
+    ImageLoadExt,
     ImageSizeExt,
     normalize_index_bounds,
 };
@@ -835,12 +839,16 @@ where
 {
     fn write_to_texture(&self, queue: &wgpu::Queue, texture: &wgpu::Texture) {
         // todo: see https://docs.rs/wgpu/latest/wgpu/struct.Queue.html#performance-considerations-2
+        //
+        // note: the 256 bytes per row alignment doesn't apply for Queue::write_texture:
+        // https://docs.rs/wgpu/latest/wgpu/constant.COPY_BYTES_PER_ROW_ALIGNMENT.html
 
         let size = Vector2::new(texture.width(), texture.height());
 
         let bytes_per_row = size.x * 4;
-        if bytes_per_row < 256 {
+        if bytes_per_row < wgpu::COPY_BYTES_PER_ROW_ALIGNMENT {
             // https://docs.rs/wgpu/latest/wgpu/struct.TexelCopyBufferLayout.html#structfield.bytes_per_row
+            //
             todo!("image needs padding")
         }
 
@@ -868,5 +876,77 @@ where
                 depth_or_array_layers: 1,
             },
         );
+    }
+}
+
+pub fn texture_view_from_color(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    color: Srgba<u8>,
+    label: &str,
+) -> wgpu::TextureView {
+    let color: [u8; 4] = color.into();
+    let texture = device.create_texture_with_data(
+        queue,
+        &texture_descriptor(Vector2::repeat(1), label),
+        Default::default(),
+        &color,
+    );
+    texture.create_view(&wgpu::TextureViewDescriptor {
+        label: Some(label),
+        ..Default::default()
+    })
+}
+
+pub fn texture_view_from_image<Container>(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    image: &image::ImageBuffer<image::Rgba<u8>, Container>,
+    label: &str,
+) -> wgpu::TextureView
+where
+    Container: Deref<Target = [u8]>,
+{
+    let size = image.size();
+    let texture = device.create_texture_with_data(
+        queue,
+        &texture_descriptor(size, label),
+        Default::default(),
+        image.as_raw(),
+    );
+    texture.create_view(&wgpu::TextureViewDescriptor {
+        label: Some(label),
+        ..Default::default()
+    })
+}
+
+pub fn texture_view_from_path<P: AsRef<Path>>(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    path: P,
+) -> Result<wgpu::TextureView, image::ImageError> {
+    tracing::debug!(path = %path.as_ref().display(), "loading texture");
+    let image = image::RgbaImage::from_path(path.as_ref())?;
+    let label = path.as_ref().display().to_string();
+    Ok(texture_view_from_image(device, queue, &image, &label))
+}
+
+pub fn texture_descriptor<'a>(size: Vector2<u32>, label: &'a str) -> wgpu::TextureDescriptor<'a> {
+    wgpu::TextureDescriptor {
+        label: Some(label),
+        size: wgpu::Extent3d {
+            width: size.x,
+            height: size.y,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        // not sure, but it looks better without Srgb. The surface egui-wgpu uses is not srgba, but
+        // wouldn't the conversion being taken care of?
+        // format: wgpu::TextureFormat::Rgba8UnormSrgb,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
     }
 }

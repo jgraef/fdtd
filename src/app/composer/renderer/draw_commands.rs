@@ -14,7 +14,10 @@ use crate::{
     app::composer::renderer::{
         Renderer,
         Stencil,
-        mesh::Mesh,
+        mesh::{
+            Mesh,
+            MeshBindGroup,
+        },
     },
     util::{
         ReusableSharedBuffer,
@@ -97,7 +100,13 @@ pub struct DrawCommandBuilder<'a> {
 }
 
 impl<'a> DrawCommandBuilder<'a> {
-    pub fn draw_mesh(&mut self, instances: Range<u32>, mesh: &Mesh, outline: bool) {
+    pub fn draw_mesh(
+        &mut self,
+        instances: Range<u32>,
+        mesh: &Mesh,
+        mesh_bind_group: &MeshBindGroup,
+        outline: bool,
+    ) {
         let mut stencil_reference = Stencil::default();
 
         if outline {
@@ -111,7 +120,7 @@ impl<'a> DrawCommandBuilder<'a> {
         self.buffer.draw_meshes.push(DrawMesh {
             instances,
             indices: mesh.indices.clone(),
-            bind_group: mesh.bind_group.clone(),
+            bind_group: mesh_bind_group.bind_group.clone(),
             stencil_reference,
         });
     }

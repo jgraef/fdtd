@@ -4,7 +4,11 @@ use nalgebra::Point3;
 use wgpu::util::DeviceExt;
 
 use crate::app::composer::{
-    renderer::Render,
+    renderer::{
+        Fallbacks,
+        Render,
+        light::MaterialTextures,
+    },
     scene::{
         Label,
         Scene,
@@ -19,18 +23,14 @@ use crate::app::composer::{
 pub struct Mesh {
     pub index_buffer: wgpu::Buffer,
     pub vertex_buffer: wgpu::Buffer,
+    pub uv_buffer: Option<wgpu::Buffer>,
     pub indices: Range<u32>,
     pub base_vertex: u32,
-    pub bind_group: wgpu::BindGroup,
     pub winding_order: WindingOrder,
 }
 
 impl Mesh {
-    pub fn from_surface_mesh(
-        surface_mesh: &SurfaceMesh,
-        device: &wgpu::Device,
-        bind_group_layout: &wgpu::BindGroupLayout,
-    ) -> Self {
+    pub fn from_surface_mesh(surface_mesh: &SurfaceMesh, device: &wgpu::Device) -> Self {
         // todo: we could just fix the winding order here when we write the indices into
         // the buffer, and not bother doing that in the shader.
 
@@ -46,21 +46,6 @@ impl Mesh {
             usage: wgpu::BufferUsages::STORAGE,
         });
 
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("mesh bind group"),
-            layout: bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: index_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: vertex_buffer.as_entire_binding(),
-                },
-            ],
-        });
-
         // the indices array in surface_mesh is **not** flat (i.e. it consists of `[u32;
         // 3]`, one index per face), thus we need to multiply by 3.
         let num_indices = (surface_mesh.indices.len() * 3) as u32;
@@ -68,21 +53,78 @@ impl Mesh {
         Self {
             index_buffer,
             vertex_buffer,
+            uv_buffer: None,
             indices: 0..num_indices,
             base_vertex: 0,
-            bind_group,
             winding_order: surface_mesh.winding_order,
         }
     }
 
-    pub fn from_shape<S: Shape + ?Sized>(
-        shape: &S,
-        device: &wgpu::Device,
-        bind_group_layout: &wgpu::BindGroupLayout,
-    ) -> Option<Self> {
+    pub fn from_shape<S: Shape + ?Sized>(shape: &S, device: &wgpu::Device) -> Option<Self> {
         shape
             .to_surface_mesh()
-            .map(|surface_mesh| Self::from_surface_mesh(&surface_mesh, device, bind_group_layout))
+            .map(|surface_mesh| Self::from_surface_mesh(&surface_mesh, device))
+    }
+}
+
+#[derive(Debug)]
+pub(super) struct MeshBindGroup {
+    pub bind_group: wgpu::BindGroup,
+}
+
+impl MeshBindGroup {
+    pub fn new(
+        device: &wgpu::Device,
+        mesh_bind_group_layout: &wgpu::BindGroupLayout,
+        mesh: &Mesh,
+        material_textures: Option<&MaterialTextures>,
+        fallbacks: &Fallbacks,
+    ) -> Self {
+        macro_rules! texture {
+            ($binding:expr, $name:ident, $default:ident) => {
+                wgpu::BindGroupEntry {
+                    binding: $binding,
+                    resource: wgpu::BindingResource::TextureView(
+                        material_textures
+                            .and_then(|material_textures| material_textures.$name.as_ref())
+                            .unwrap_or(&fallbacks.$default),
+                    ),
+                }
+            };
+        }
+
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("mesh bind group"),
+            layout: mesh_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: mesh.index_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: mesh.vertex_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: mesh
+                        .uv_buffer
+                        .as_ref()
+                        .unwrap_or(&fallbacks.uv_buffer)
+                        .as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::Sampler(&fallbacks.sampler),
+                },
+                texture!(4, ambient, white),
+                texture!(5, diffuse, white),
+                texture!(6, specular, white),
+                texture!(7, emissive, white),
+            ],
+        });
+
+        Self { bind_group }
     }
 }
 
@@ -119,15 +161,28 @@ pub(super) fn generate_meshes_for_shapes(
     scene: &mut Scene,
     device: &wgpu::Device,
     mesh_bind_group_layout: &wgpu::BindGroupLayout,
+    texture_defaults: &Fallbacks,
 ) {
-    for (entity, (shape, label)) in scene
+    for (entity, (shape, material_textures, label)) in scene
         .entities
-        .query_mut::<(&SharedShape, Option<&Label>)>()
+        .query_mut::<(&SharedShape, Option<&MaterialTextures>, Option<&Label>)>()
         .with::<&Render>()
         .without::<&Mesh>()
     {
-        if let Some(mesh) = Mesh::from_shape(&*shape.0, device, mesh_bind_group_layout) {
-            scene.command_buffer.insert_one(entity, mesh);
+        if let Some(mesh) = Mesh::from_shape(&*shape.0, device) {
+            if mesh.uv_buffer.is_none() && material_textures.is_some() {
+                tracing::warn!(?label, "Mesh with textures, but no UV buffer");
+            }
+
+            let mesh_bind_group = MeshBindGroup::new(
+                device,
+                mesh_bind_group_layout,
+                &mesh,
+                material_textures,
+                texture_defaults,
+            );
+
+            scene.command_buffer.insert(entity, (mesh, mesh_bind_group));
         }
         else {
             tracing::warn!(

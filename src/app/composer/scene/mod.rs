@@ -12,6 +12,10 @@ use std::{
         Display,
     },
     marker::PhantomData,
+    ops::{
+        Deref,
+        DerefMut,
+    },
 };
 
 use nalgebra::{
@@ -89,10 +93,13 @@ impl Scene {
         transform: impl Into<Transform>,
         shape: impl Into<SharedShape>,
         material: impl Into<Material>,
-    ) -> hecs::Entity {
+    ) -> EntityBuilder<'_> {
+        let mut builder = hecs::EntityBuilder::new();
+
         let shape = shape.into();
         let label = Label::from(format!("object.{:?}", shape.shape_type()));
-        self.entities.spawn((
+
+        builder.add_bundle((
             transform.into(),
             shape,
             material.into(),
@@ -106,7 +113,12 @@ impl Scene {
                 relative_permittivity: 3.9,
                 ..crate::physics::material::Material::VACUUM
             },
-        ))
+        ));
+
+        EntityBuilder {
+            builder,
+            world: &mut self.entities,
+        }
     }
 
     pub fn add_grid_plane(
@@ -339,5 +351,41 @@ impl From<&EntityDebugLabel> for egui::WidgetText {
 impl From<EntityDebugLabel> for egui::WidgetText {
     fn from(value: EntityDebugLabel) -> Self {
         egui::WidgetText::Text(value.to_string())
+    }
+}
+
+#[derive(derive_more::Debug)]
+pub struct EntityBuilder<'a> {
+    #[debug("hecs::EntityBuilder {{ ... }}")]
+    builder: hecs::EntityBuilder,
+    #[debug("hecs::World {{ ... }}")]
+    world: &'a mut hecs::World,
+}
+
+impl<'a> Deref for EntityBuilder<'a> {
+    type Target = hecs::EntityBuilder;
+
+    fn deref(&self) -> &Self::Target {
+        &self.builder
+    }
+}
+
+impl<'a> DerefMut for EntityBuilder<'a> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.builder
+    }
+}
+
+impl<'a> EntityBuilder<'a> {
+    fn finish(mut self) -> hecs::Entity {
+        let bundle = self.builder.build();
+        self.world.spawn(bundle)
+    }
+}
+
+impl<'a> Drop for EntityBuilder<'a> {
+    fn drop(&mut self) {
+        let bundle = self.builder.build();
+        self.world.spawn(bundle);
     }
 }

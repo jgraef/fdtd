@@ -16,6 +16,7 @@ use crate::{
         App,
         FileDialogAction,
         GithubUrls,
+        error_dialog::ResultExt,
     },
     util::format_path,
 };
@@ -66,8 +67,9 @@ impl<'a> MenuBar<'a> {
                             RecentlyOpenedFiles::move_to_top(ui.ctx(), &path);
 
                             self.app
-                                .error_dialog
-                                .ok_or_show(self.app.composer.open_file(&self.app.config, &path));
+                                .composer
+                                .open_file(&self.app.config, &path)
+                                .ok_or_handle(&*ui);
                         }
                     }
                 }
@@ -125,38 +127,28 @@ impl<'a> MenuBar<'a> {
     fn edit_menu(&mut self, ui: &mut egui::Ui) {
         ui.menu_button("Edit", |ui| {
             setup_menu(ui);
-            self.app
-                .composer
-                .menu_elements(&mut self.app.error_dialog)
-                .edit_menu_buttons(ui);
+            self.app.composer.menu_elements().edit_menu_buttons(ui);
         });
     }
 
     fn selection_menu(&mut self, ui: &mut egui::Ui) {
         ui.menu_button("Selection", |ui| {
             setup_menu(ui);
-            self.app
-                .composer
-                .menu_elements(&mut self.app.error_dialog)
-                .selection_menu_buttons(ui);
+            self.app.composer.menu_elements().selection_menu_buttons(ui);
         });
     }
 
     fn view_menu(&mut self, ui: &mut egui::Ui) {
         ui.menu_button("View", |ui| {
             setup_menu(ui);
-            self.app
-                .composer
-                .menu_elements(&mut self.app.error_dialog)
-                .camera_submenu_button(ui);
+            self.app.composer.menu_elements().camera_submenu_button(ui);
         });
     }
 
     fn run_menu(&mut self, ui: &mut egui::Ui) {
         ui.menu_button("Run", |ui| {
             setup_menu(ui);
-            let mut composer_menu_elements =
-                self.app.composer.menu_elements(&mut self.app.error_dialog);
+            let mut composer_menu_elements = self.app.composer.menu_elements();
 
             composer_menu_elements.configure_solver_button(ui);
             ui.separator();
