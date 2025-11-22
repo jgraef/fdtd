@@ -1,24 +1,20 @@
 use std::{
-    convert::Infallible,
-    path::{
-        Path,
-        PathBuf,
-    },
+    ops::Deref,
+    path::PathBuf,
     sync::Arc,
 };
 
-use image::{
-    ImageReader,
-    RgbaImage,
-};
 use nalgebra::Vector2;
 use parking_lot::Mutex;
 use wgpu::util::DeviceExt;
 
 use crate::{
-    Error,
-    app::solver::util::WriteImage,
-    util::wgpu::write_image_to_texture,
+    app::solver::project::ImageTarget,
+    util::{
+        ImageLoadExt,
+        ImageSizeExt,
+        wgpu::WriteImageToTextureExt,
+    },
 };
 
 #[derive(Clone, Debug)]
@@ -40,14 +36,17 @@ impl Texture {
         Self::new_with_texture(device, sampler, bind_group_layout, size, texture)
     }
 
-    pub fn new_with_data(
+    pub fn from_image<Container>(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         sampler: &wgpu::Sampler,
         bind_group_layout: &wgpu::BindGroupLayout,
-        image: &RgbaImage,
-    ) -> Self {
-        let size = Vector2::new(image.width(), image.height());
+        image: &image::ImageBuffer<image::Rgba<u8>, Container>,
+    ) -> Self
+    where
+        Container: Deref<Target = [u8]>,
+    {
+        let size = image.size();
         let texture = device.create_texture_with_data(
             queue,
             &create_texture_descriptor(size),
@@ -95,8 +94,8 @@ impl Texture {
         Vector2::new(self.texture.width(), self.texture.height())
     }
 
-    pub fn write_image(&self, image: &RgbaImage, queue: &wgpu::Queue) {
-        write_image_to_texture(queue, image, &self.texture);
+    pub fn write_image(&self, image: &image::RgbaImage, queue: &wgpu::Queue) {
+        image.write_to_texture(queue, &self.texture);
     }
 }
 
@@ -136,7 +135,7 @@ pub struct TextureWriter {
 
 #[derive(Debug)]
 struct TextureWriterShared {
-    image: RgbaImage,
+    image: image::RgbaImage,
     dirty: bool,
 }
 
@@ -145,25 +144,28 @@ impl TextureWriter {
         Self {
             size,
             shared: Arc::new(Mutex::new(TextureWriterShared {
-                image: RgbaImage::new(size.x, size.y),
+                image: image::RgbaImage::new(size.x, size.y),
                 dirty: false,
             })),
         }
     }
 }
 
-impl WriteImage for TextureWriter {
-    type Error = Infallible;
+impl ImageTarget for TextureWriter {
+    type Pixel = image::Rgba<u8>;
+    type Container = Vec<u8>;
 
     fn size(&self) -> Vector2<u32> {
         self.size
     }
 
-    fn write_image(&mut self, mut f: impl FnMut(&mut RgbaImage)) -> Result<(), Self::Error> {
+    fn with_image_buffer(
+        &mut self,
+        f: impl FnOnce(&mut image::ImageBuffer<Self::Pixel, Self::Container>),
+    ) {
         let mut shared = self.shared.lock();
         f(&mut shared.image);
         shared.dirty = true;
-        Ok(())
     }
 }
 
@@ -190,7 +192,7 @@ fn create_textures_for_texture_writers(
 
         let texture = if shared.dirty {
             shared.dirty = false;
-            Texture::new_with_data(
+            Texture::from_image(
                 device,
                 queue,
                 sampler,
@@ -222,9 +224,9 @@ fn load_textures_from_files(
     for (entity, load_texture) in world.query_mut::<&LoadTexture>() {
         tracing::debug!(path = %load_texture.path.display(), "loading texture from file");
 
-        let texture = match load_image(&load_texture.path) {
+        let texture = match image::RgbaImage::from_path(&load_texture.path) {
             Ok(image) => {
-                Texture::new_with_data(device, queue, sampler, texture_bind_group_layout, &image)
+                Texture::from_image(device, queue, sampler, texture_bind_group_layout, &image)
             }
             Err(error) => {
                 tracing::debug!("failed to load image: {error}");
@@ -269,9 +271,4 @@ pub(super) fn update_textures(
 #[derive(Clone, Debug)]
 pub struct LoadTexture {
     pub path: PathBuf,
-}
-
-pub(super) fn load_image(path: impl AsRef<Path>) -> Result<RgbaImage, Error> {
-    let image = ImageReader::open(path)?.decode()?;
-    Ok(image.to_rgba8())
 }

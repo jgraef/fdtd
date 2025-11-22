@@ -16,10 +16,6 @@ use std::{
 };
 
 use directories::UserDirs;
-use image::{
-    ImageBuffer,
-    Pixel,
-};
 use nalgebra::{
     Point3,
     Vector2,
@@ -365,12 +361,29 @@ pub struct InvalidPoint {
     pub point: Point3<f64>,
 }
 
-pub fn image_size<P, C>(image: &ImageBuffer<P, C>) -> Vector2<u32>
+pub trait ImageSizeExt {
+    fn size(&self) -> Vector2<u32>;
+}
+
+impl<Pixel, Container> ImageSizeExt for image::ImageBuffer<Pixel, Container>
 where
-    P: Pixel,
-    C: Deref<Target = [P::Subpixel]>,
+    Pixel: image::Pixel,
+    Container: Deref<Target = [Pixel::Subpixel]>,
 {
-    Vector2::new(image.width(), image.height())
+    fn size(&self) -> Vector2<u32> {
+        Vector2::new(self.width(), self.height())
+    }
+}
+
+pub trait ImageLoadExt: Sized {
+    fn from_path<P: AsRef<Path>>(path: P) -> Result<Self, image::ImageError>;
+}
+
+impl ImageLoadExt for image::RgbaImage {
+    fn from_path<P: AsRef<Path>>(path: P) -> Result<Self, image::ImageError> {
+        let image = image::ImageReader::open(path)?.decode()?;
+        Ok(image.to_rgba8())
+    }
 }
 
 #[cfg(test)]

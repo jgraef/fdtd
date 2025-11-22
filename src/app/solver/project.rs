@@ -38,7 +38,7 @@ use crate::{
         FieldComponent,
         SolverInstance,
     },
-    util::image_size,
+    util::ImageSizeExt,
 };
 
 /// Parameters for a projection
@@ -176,7 +176,7 @@ where
     type Container = Container;
 
     fn size(&self) -> Vector2<u32> {
-        image_size(self)
+        ImageSizeExt::size(self)
     }
 
     fn with_image_buffer(&mut self, f: impl FnOnce(&mut image::ImageBuffer<Pixel, Container>)) {

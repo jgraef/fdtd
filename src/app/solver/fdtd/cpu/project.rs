@@ -34,10 +34,7 @@ use crate::{
             TextureTarget,
         },
     },
-    util::{
-        image_size,
-        wgpu::write_image_to_texture,
-    },
+    util::wgpu::WriteImageToTextureExt,
 };
 
 #[derive(Debug)]
@@ -81,6 +78,9 @@ where
     }
 }
 
+// Todo: this is still kind of awkward, since it needs the Queue. Also we have a
+// TextureWrite that shares an image buffer with the rendering engine and will
+// write them to GPU before rendering.
 #[derive(Debug)]
 pub struct TextureProjection {
     texture: wgpu::Texture,
@@ -117,11 +117,9 @@ where
 impl<'a> ProjectionPassAdd<'a, TextureProjection> for FdtdCpuProjectionPass<'a> {
     fn add_projection(&mut self, projection: &'a mut TextureProjection) {
         self.project_to_image(&mut projection.frame_buffer, &projection.parameters);
-        write_image_to_texture(
-            &projection.queue,
-            &projection.frame_buffer,
-            &projection.texture,
-        );
+        projection
+            .frame_buffer
+            .write_to_texture(&projection.queue, &projection.texture);
     }
 }
 
@@ -164,7 +162,7 @@ impl<'a> FdtdCpuProjectionPass<'a> {
     ) where
         Container: Deref<Target = [u8]> + DerefMut,
     {
-        let image_size = (image_size(image) - Vector2::repeat(1)).cast::<f32>();
+        let image_size = (image.size() - Vector2::repeat(1)).cast::<f32>();
 
         // todo: par_iter depending on `Threading`
         image.enumerate_pixels_mut().for_each(|(x, y, pixel)| {

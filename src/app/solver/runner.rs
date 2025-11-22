@@ -8,7 +8,6 @@ use nalgebra::{
     Point3,
     Vector3,
 };
-use palette::Srgba;
 
 use crate::{
     Error,
@@ -23,8 +22,6 @@ use crate::{
         solver::{
             DomainDescription,
             Field,
-            FieldComponent,
-            FieldView,
             SolverBackend,
             SolverInstance,
             SourceValues,
@@ -50,7 +47,6 @@ use crate::{
                 },
                 wgpu::FdtdWgpuBackend,
             },
-            util::WriteImage,
         },
     },
     physics::material::Material,
@@ -323,9 +319,7 @@ impl<'a, 'b> DomainDescription<Point3<usize>> for SceneDomainDescription<'a, 'b>
 
 #[derive(Debug)]
 struct Observer {
-    texture_output: TextureWriter,
-    gradient: TestGradient,
-    field_component: FieldComponent,
+    //
 }
 
 impl Observer {
@@ -333,20 +327,7 @@ impl Observer {
     where
         I: Field<Point3<usize>>,
     {
-        let view = instance.field(state, .., self.field_component);
-
-        self.texture_output
-            .write_colors(|point| {
-                let point = Point3::new(point.x as usize, point.y as usize, 0);
-
-                let value = view.at(&point).unwrap();
-                let value = value.z.clamp(-1.0, 1.0) as f32;
-
-                let color: Srgba = self.gradient.at(value).to_array().into();
-
-                color
-            })
-            .unwrap();
+        todo!();
     }
 }
 
@@ -368,11 +349,8 @@ impl Observers {
                 scene
                     .command_buffer
                     .insert_one(entity, texture_output.clone());
-                observers.push(Observer {
-                    texture_output,
-                    gradient: TestGradient,
-                    field_component: observer.field_component,
-                });
+
+                observers.push(Observer {});
             }
         }
 

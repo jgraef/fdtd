@@ -10,12 +10,11 @@ use std::{
 };
 
 use bytemuck::Pod;
-use image::RgbaImage;
 use nalgebra::Vector2;
 use parking_lot::Mutex;
 
 use crate::util::{
-    image_size,
+    ImageSizeExt,
     normalize_index_bounds,
 };
 
@@ -818,39 +817,48 @@ where
     }
 }
 
-pub fn write_image_to_texture(queue: &wgpu::Queue, image: &RgbaImage, texture: &wgpu::Texture) {
-    // todo: see https://docs.rs/wgpu/latest/wgpu/struct.Queue.html#performance-considerations-2
+pub trait WriteImageToTextureExt {
+    fn write_to_texture(&self, queue: &wgpu::Queue, texture: &wgpu::Texture);
+}
 
-    let size = Vector2::new(texture.width(), texture.height());
+impl<Container> WriteImageToTextureExt for image::ImageBuffer<image::Rgba<u8>, Container>
+where
+    Container: Deref<Target = [u8]>,
+{
+    fn write_to_texture(&self, queue: &wgpu::Queue, texture: &wgpu::Texture) {
+        // todo: see https://docs.rs/wgpu/latest/wgpu/struct.Queue.html#performance-considerations-2
 
-    let bytes_per_row = size.x * 4;
-    if bytes_per_row < 256 {
-        // https://docs.rs/wgpu/latest/wgpu/struct.TexelCopyBufferLayout.html#structfield.bytes_per_row
-        todo!("image needs padding")
+        let size = Vector2::new(texture.width(), texture.height());
+
+        let bytes_per_row = size.x * 4;
+        if bytes_per_row < 256 {
+            // https://docs.rs/wgpu/latest/wgpu/struct.TexelCopyBufferLayout.html#structfield.bytes_per_row
+            todo!("image needs padding")
+        }
+
+        assert_eq!(
+            self.size(),
+            size,
+            "provided image size doesn't match texture"
+        );
+
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture,
+                mip_level: 0,
+                origin: Default::default(),
+                aspect: Default::default(),
+            },
+            self.as_raw(),
+            wgpu::TexelCopyBufferLayout {
+                bytes_per_row: Some(bytes_per_row),
+                ..Default::default()
+            },
+            wgpu::Extent3d {
+                width: size.x,
+                height: size.y,
+                depth_or_array_layers: 1,
+            },
+        );
     }
-
-    assert_eq!(
-        image_size(image),
-        size,
-        "provided image size doesn't match texture"
-    );
-
-    queue.write_texture(
-        wgpu::TexelCopyTextureInfo {
-            texture,
-            mip_level: 0,
-            origin: Default::default(),
-            aspect: Default::default(),
-        },
-        image.as_raw(),
-        wgpu::TexelCopyBufferLayout {
-            bytes_per_row: Some(bytes_per_row),
-            ..Default::default()
-        },
-        wgpu::Extent3d {
-            width: size.x,
-            height: size.y,
-            depth_or_array_layers: 1,
-        },
-    );
 }

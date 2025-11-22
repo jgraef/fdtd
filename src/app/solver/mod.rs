@@ -4,7 +4,6 @@ pub mod observer;
 pub mod project;
 pub mod runner;
 pub mod ui;
-pub mod util;
 
 use std::ops::RangeBounds;
 
