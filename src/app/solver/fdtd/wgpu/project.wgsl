@@ -60,7 +60,7 @@ fn fs_main(input: VertexOutput) -> FragmentOutput {
     let index = point_to_index(point);
 
     let value = field[index].value;
-    let color = clamp(projection.color_map * vec4f(value, 1.0), 0.0, 1.0);
+    let color = clamp(projection.color_map * vec4f(value, 1.0), vec4f(0.0), vec4f(1.0));
 
     return FragmentOutput(color);
 }
