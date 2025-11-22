@@ -15,7 +15,6 @@ use crate::{
         Renderer,
         Stencil,
         mesh::Mesh,
-        texture::Texture,
     },
     util::{
         ReusableSharedBuffer,
@@ -66,10 +65,6 @@ impl DrawCommandBuffer {
                 .pipeline_enable_flags
                 .contains(DrawCommandEnablePipelineFlags::OUTLINE)
                 .then(|| renderer.outline_pipeline.pipeline.clone()),
-            quad_with_texture_pipeline: options
-                .pipeline_enable_flags
-                .contains(DrawCommandEnablePipelineFlags::QUADS_WITH_TEXTURE)
-                .then(|| renderer.quad_with_texture_pipeline.pipeline.clone()),
             instance_bind_group: renderer.instance_bind_group.clone(),
             buffer: self.buffer.get(),
         }
@@ -88,7 +83,6 @@ bitflags! {
         const SOLID = 0b0000_0010;
         const WIREFRAME = 0b0000_0100;
         const OUTLINE = 0b0000_1000;
-        const QUADS_WITH_TEXTURE = 0b0001_0000;
     }
 }
 
@@ -122,22 +116,12 @@ impl<'a> DrawCommandBuilder<'a> {
             stencil_reference,
         });
     }
-
-    pub fn draw_quad_with_texture(&mut self, instances: Range<u32>, texture: &Texture) {
-        self.buffer
-            .draw_quads_with_texture
-            .push(DrawQuadWithTexture {
-                instances,
-                texture: texture.bind_group.clone(),
-            })
-    }
 }
 
 #[derive(Debug, Default)]
 struct DrawCommandBuilderBuffer {
     draw_meshes: Vec<DrawMesh>,
     draw_outlines: Vec<DrawOutline>,
-    draw_quads_with_texture: Vec<DrawQuadWithTexture>,
 }
 
 impl DrawCommandBuilderBuffer {
@@ -169,14 +153,6 @@ struct DrawOutline {
 }
 
 #[derive(Debug)]
-struct DrawQuadWithTexture {
-    /// range in the instance buffer to use
-    instances: Range<u32>,
-
-    texture: wgpu::BindGroup,
-}
-
-#[derive(Debug)]
 pub struct DrawCommand {
     camera_bind_group: wgpu::BindGroup,
     clear_pipeline: Option<wgpu::RenderPipeline>,
@@ -185,7 +161,6 @@ pub struct DrawCommand {
     solid_pipeline: Option<wgpu::RenderPipeline>,
     wireframe_pipeline: Option<wgpu::RenderPipeline>,
     outline_pipeline: Option<wgpu::RenderPipeline>,
-    quad_with_texture_pipeline: Option<wgpu::RenderPipeline>,
     instance_bind_group: Option<wgpu::BindGroup>,
 
     buffer: Arc<DrawCommandBuilderBuffer>,
@@ -256,16 +231,6 @@ impl DrawCommand {
                 identity,
             );
         }
-
-        // quads with textures
-        if let Some(quad_with_texture_pipeline) = &self.quad_with_texture_pipeline
-            && !self.buffer.draw_quads_with_texture.is_empty()
-        {
-            render_pass.draw_quad_with_texture_with_pipeline(
-                quad_with_texture_pipeline,
-                &self.buffer.draw_quads_with_texture,
-            );
-        }
     }
 }
 
@@ -330,20 +295,6 @@ impl<'a> RenderPass<'a> {
             let indices = map_indices(draw_command.indices.clone());
 
             self.inner.draw(indices, draw_command.instances.clone());
-        }
-    }
-
-    fn draw_quad_with_texture_with_pipeline<'b>(
-        &mut self,
-        pipeline: &wgpu::RenderPipeline,
-        draw_quads_with_texture: impl IntoIterator<Item = &'b DrawQuadWithTexture>,
-    ) {
-        self.inner.set_pipeline(pipeline);
-
-        for draw_command in draw_quads_with_texture {
-            self.inner.set_bind_group(2, &draw_command.texture, &[]);
-
-            self.inner.draw(0..6, draw_command.instances.clone());
         }
     }
 }

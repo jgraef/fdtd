@@ -41,7 +41,6 @@ use crate::{
             renderer::{
                 ClearColor,
                 Outline,
-                Quad,
                 Render,
                 Renderer,
                 WgpuContext,
@@ -745,9 +744,6 @@ impl PopulateScene for ExampleScene {
                 field_component: FieldComponent::E,
             },
             Transform::identity(),
-            Quad {
-                half_extents: Vector2::new(1.0, 1.0),
-            },
             Render,
         ));
 

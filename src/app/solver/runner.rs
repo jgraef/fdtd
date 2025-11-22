@@ -13,10 +13,7 @@ use crate::{
     Error,
     app::{
         composer::{
-            renderer::{
-                WgpuContext,
-                texture::TextureWriter,
-            },
+            renderer::WgpuContext,
             scene::Scene,
         },
         solver::{
@@ -345,17 +342,13 @@ impl Observers {
 
             if observer.display_as_texture {
                 // todo: check if this already exists
-                let texture_output = TextureWriter::new(lattice_size.xy().cast());
-                scene
-                    .command_buffer
-                    .insert_one(entity, texture_output.clone());
 
                 observers.push(Observer {});
             }
         }
 
         // apply deferred commands
-        scene.apply_deferred();
+        //scene.apply_deferred();
 
         Self { observers }
     }

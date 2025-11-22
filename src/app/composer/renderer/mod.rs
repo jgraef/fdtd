@@ -3,7 +3,7 @@ pub mod draw_commands;
 pub mod grid;
 pub mod light;
 pub mod mesh;
-pub mod texture;
+//pub mod texture;
 
 use std::{
     num::NonZero,
@@ -15,11 +15,7 @@ use bytemuck::{
     Pod,
     Zeroable,
 };
-use nalgebra::{
-    Matrix4,
-    Vector2,
-    Vector3,
-};
+use nalgebra::Matrix4;
 use palette::{
     Srgb,
     Srgba,
@@ -55,7 +51,6 @@ use crate::{
                 Mesh,
                 WindingOrder,
             },
-            texture::Texture,
         },
         scene::{
             Scene,
@@ -155,7 +150,6 @@ pub struct Renderer {
     solid_pipeline: Pipeline,
     wireframe_pipeline: Pipeline,
     outline_pipeline: Pipeline,
-    quad_with_texture_pipeline: Pipeline,
 
     /// The instance buffer.
     ///
@@ -375,27 +369,6 @@ impl Renderer {
             Some("fs_main_single_color"),
         );
 
-        let quad_with_texture_pipeline = Pipeline::new(
-            wgpu_context,
-            "render/quad_with_texture",
-            &mesh_shader_module,
-            &[
-                &camera_bind_group_layout,
-                &instance_bind_group_layout,
-                &texture_bind_group_layout,
-            ],
-            DepthState {
-                write_enable: true,
-                compare: wgpu::CompareFunction::Less,
-                bias: Default::default(),
-            },
-            Default::default(),
-            wgpu::PrimitiveTopology::TriangleList,
-            Some("vs_main_quad_with_texture"),
-            Some("fs_main_quad_with_texture"),
-            false,
-        );
-
         let instance_buffer = StagedTypedArrayBuffer::new(
             &wgpu_context.device,
             "instance buffer",
@@ -424,7 +397,6 @@ impl Renderer {
             solid_pipeline,
             wireframe_pipeline,
             outline_pipeline,
-            quad_with_texture_pipeline,
             instance_buffer,
             instance_bind_group: None,
             draw_command_buffer: Default::default(),
@@ -459,15 +431,6 @@ impl Renderer {
             &mut scene.command_buffer,
             &self.wgpu_context.device,
             &self.camera_bind_group_layout,
-        );
-
-        texture::update_textures(
-            &mut scene.entities,
-            &mut scene.command_buffer,
-            &self.wgpu_context.device,
-            &self.wgpu_context.queue,
-            &self.texture_sampler,
-            &self.texture_bind_group_layout,
         );
 
         // apply buffered commands to world
@@ -525,17 +488,6 @@ impl Renderer {
 
             // prepare draw commands
             draw_command_builder.draw_mesh(instances(), mesh, outline.is_some());
-        }
-
-        // draw textured quads
-        for (_, (transform, quad, texture)) in world
-            .query_mut::<(&Transform, &Quad, &Texture)>()
-            .with::<&Render>()
-        {
-            self.instance_buffer
-                .push(InstanceData::new_quad(transform, &quad.half_extents));
-
-            draw_command_builder.draw_quad_with_texture(instances(), texture);
         }
 
         // send instance data to gpu
@@ -815,24 +767,6 @@ impl InstanceData {
             material: MaterialData::new(material, outline),
         }
     }
-
-    /// Creates instance data for quads
-    pub fn new_quad(transform: &Transform, half_extents: &Vector2<f32>) -> Self {
-        let mut transform = transform.transform.to_homogeneous();
-        transform.prepend_nonuniform_scaling_mut(&Vector3::new(
-            half_extents.x,
-            half_extents.y,
-            1.0,
-        ));
-
-        Self {
-            transform,
-            flags: Default::default(),
-            base_vertex: 0,
-            _padding: [0; _],
-            material: Default::default(),
-        }
-    }
 }
 
 bitflags! {
@@ -904,9 +838,4 @@ impl From<Stencil> for u32 {
     fn from(value: Stencil) -> Self {
         value.bits().into()
     }
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct Quad {
-    pub half_extents: Vector2<f32>,
 }
