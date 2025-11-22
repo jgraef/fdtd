@@ -7,6 +7,7 @@ use crate::app::composer::{
     renderer::Render,
     scene::{
         Label,
+        Scene,
         shape::{
             Shape,
             SharedShape,
@@ -115,24 +116,26 @@ impl WindingOrder {
 }
 
 pub(super) fn generate_meshes_for_shapes(
-    world: &mut hecs::World,
-    command_buffer: &mut hecs::CommandBuffer,
+    scene: &mut Scene,
     device: &wgpu::Device,
     mesh_bind_group_layout: &wgpu::BindGroupLayout,
 ) {
-    for (entity, (shape, label)) in world
+    for (entity, (shape, label)) in scene
+        .entities
         .query_mut::<(&SharedShape, Option<&Label>)>()
         .with::<&Render>()
         .without::<&Mesh>()
     {
         if let Some(mesh) = Mesh::from_shape(&*shape.0, device, mesh_bind_group_layout) {
-            command_buffer.insert_one(entity, mesh);
+            scene.command_buffer.insert_one(entity, mesh);
         }
         else {
             tracing::warn!(
                 "Entity {entity:?} (label {label:?}) was marked for rendering, but a mesh could not be constructed."
             );
-            command_buffer.remove::<(Render,)>(entity);
+            scene.command_buffer.remove::<(Render,)>(entity);
         }
     }
+
+    scene.apply_deferred();
 }

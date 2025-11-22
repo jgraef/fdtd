@@ -65,7 +65,6 @@ impl DrawCommandBuffer {
                 .pipeline_enable_flags
                 .contains(DrawCommandEnablePipelineFlags::OUTLINE)
                 .then(|| renderer.outline_pipeline.pipeline.clone()),
-            instance_bind_group: renderer.instance_bind_group.clone(),
             buffer: self.buffer.get(),
         }
     }
@@ -161,7 +160,6 @@ pub struct DrawCommand {
     solid_pipeline: Option<wgpu::RenderPipeline>,
     wireframe_pipeline: Option<wgpu::RenderPipeline>,
     outline_pipeline: Option<wgpu::RenderPipeline>,
-    instance_bind_group: Option<wgpu::BindGroup>,
 
     buffer: Arc<DrawCommandBuilderBuffer>,
 }
@@ -178,15 +176,6 @@ impl DrawCommand {
             render_pass.set_pipeline(clear_pipeline);
             render_pass.draw(0..3, 0..1);
         }
-
-        let Some(instance_bind_group) = &self.instance_bind_group
-        else {
-            // if there is no instance bind group, there's nothing else to render
-            return;
-        };
-
-        // set instance buffer (this is shared between all draw calls)
-        render_pass.set_bind_group(1, instance_bind_group, &[]);
 
         // solid mesh
         if let Some(solid_pipeline) = &self.solid_pipeline
@@ -286,7 +275,7 @@ impl<'a> RenderPass<'a> {
 
         // issue draw commands
         for draw_command in draw_meshes {
-            self.inner.set_bind_group(2, &draw_command.bind_group, &[]);
+            self.inner.set_bind_group(1, &draw_command.bind_group, &[]);
 
             if set_stencil_reference {
                 self.set_stencil_reference(draw_command.stencil_reference);

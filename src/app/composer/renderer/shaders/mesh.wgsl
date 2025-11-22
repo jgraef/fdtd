@@ -77,7 +77,7 @@ var<uniform> camera: Camera;
 
 // instance data
 
-@group(1) @binding(0)
+@group(0) @binding(1)
 var<storage, read> instance_buffer: array<Instance>;
 
 // this would be for camera-independent point lights
@@ -87,21 +87,18 @@ var<storage, read> instance_buffer: array<Instance>;
 
 // mesh bindings - used by mesh renderers (solid, wireframe)
 
-@group(2) @binding(0)
+@group(1) @binding(0)
 var<storage, read> index_buffer: array<u32>;
 
 // note: we interpret this as an array of f32's, otherwise we'll have to pad the vertices in the buffer.
-@group(2) @binding(1)
+@group(1) @binding(1)
 var<storage, read> vertex_buffer: array<f32>;
 
+//@group(1) @binding(2)
+//var texture_texture: texture_2d<f32>;
 
-// texture bindings - used by quad_with_textue pipeline
-
-@group(2) @binding(0)
-var texture_texture: texture_2d<f32>;
-
-@group(2) @binding(1)
-var texture_sampler: sampler;
+//@group(1) @binding(3)
+//var texture_sampler: sampler;
 
 
 @vertex

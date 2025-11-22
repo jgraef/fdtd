@@ -3,7 +3,7 @@ pub mod draw_commands;
 pub mod grid;
 pub mod light;
 pub mod mesh;
-//pub mod texture;
+pub mod texture;
 
 use std::{
     num::NonZero,
@@ -138,12 +138,10 @@ pub struct Renderer {
     wgpu_context: WgpuContext,
 
     camera_bind_group_layout: wgpu::BindGroupLayout,
-    instance_bind_group_layout: wgpu::BindGroupLayout,
     mesh_bind_group_layout: wgpu::BindGroupLayout,
-    texture_bind_group_layout: wgpu::BindGroupLayout,
 
     // this is actually used for everything, not just meshes. but we might split it into clear,
-    // mesh, quad_with_texture
+    // mesh, etc.
     mesh_shader_module: wgpu::ShaderModule,
 
     clear_pipeline: Pipeline,
@@ -157,13 +155,6 @@ pub struct Renderer {
     /// host staging buffer for the instance data, and the bind group for the
     /// GPU buffer.
     instance_buffer: StagedTypedArrayBuffer<InstanceData>,
-
-    /// The bind group. This needs to be replace when the instance buffer grows.
-    ///
-    /// This is purposefully not included in [`InstanceBuffer`], because we
-    /// might want to put other stuff in this bind group as well (e.g. point
-    /// lights).
-    instance_bind_group: Option<wgpu::BindGroup>,
 
     /// This stores all draw commands that are generated during `prepare_world`.
     /// Its `finish` method returns the finalized draw command (aggregate) for a
@@ -193,33 +184,28 @@ impl Renderer {
                 .device
                 .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                     label: Some("camera_bind_group_layout"),
-                    entries: &[wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
+                    entries: &[
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 0,
+                            visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Uniform,
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
                         },
-                        count: None,
-                    }],
-                });
-
-        let instance_bind_group_layout =
-            wgpu_context
-                .device
-                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                    label: Some("instance_bind_group_layout"),
-                    entries: &[wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 1,
+                            visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
                         },
-                        count: None,
-                    }],
+                    ],
                 });
 
         let mesh_bind_group_layout =
@@ -323,11 +309,7 @@ impl Renderer {
             false,
         );
 
-        let render_mesh_bind_group_layouts = [
-            &camera_bind_group_layout,
-            &instance_bind_group_layout,
-            &mesh_bind_group_layout,
-        ];
+        let render_mesh_bind_group_layouts = [&camera_bind_group_layout, &mesh_bind_group_layout];
 
         let solid_pipeline = Pipeline::new_mesh_render_pipeline(
             wgpu_context,
@@ -369,11 +351,13 @@ impl Renderer {
             Some("fs_main_single_color"),
         );
 
-        let instance_buffer = StagedTypedArrayBuffer::new(
+        let instance_buffer = StagedTypedArrayBuffer::with_capacity(
             &wgpu_context.device,
             "instance buffer",
             wgpu::BufferUsages::STORAGE,
+            128,
         );
+        assert!(instance_buffer.buffer.is_allocated());
 
         let texture_sampler = wgpu_context
             .device
@@ -389,16 +373,13 @@ impl Renderer {
         Self {
             wgpu_context: wgpu_context.clone(),
             camera_bind_group_layout,
-            instance_bind_group_layout,
             mesh_bind_group_layout,
-            texture_bind_group_layout,
             mesh_shader_module,
             clear_pipeline,
             solid_pipeline,
             wireframe_pipeline,
             outline_pipeline,
             instance_buffer,
-            instance_bind_group: None,
             draw_command_buffer: Default::default(),
             texture_sampler,
         }
@@ -419,35 +400,31 @@ impl Renderer {
     pub fn prepare_world(&mut self, scene: &mut Scene) {
         // generate meshes (for rendering) for objects that don't have them yet.
         mesh::generate_meshes_for_shapes(
-            &mut scene.entities,
-            &mut scene.command_buffer,
+            scene,
             &self.wgpu_context.device,
             &self.mesh_bind_group_layout,
         );
-
-        // update cameras
-        camera::update_cameras(
-            &mut scene.entities,
-            &mut scene.command_buffer,
-            &self.wgpu_context.device,
-            &self.camera_bind_group_layout,
-        );
-
-        // apply buffered commands to world
-        scene.apply_deferred();
-
-        // update uniforms for cameras
-        camera::update_camera_buffers(&mut scene.entities, &self.wgpu_context.queue);
 
         // next we prepare the draw commands.
         // this is done once in prepare, so multiple view widgets can then use the draw
         // commands to render their scenes from different cameras.
         // the draw commands are stored in an `Arc<Vec<_>>`, so they can be easily sent
         // via paint callbacks.
-        self.update_instance_buffer_and_draw_command(&mut scene.entities);
+        let instance_buffer_reallocated =
+            self.update_instance_buffer_and_draw_command(&mut scene.entities);
+
+        // update cameras
+        camera::update_cameras(
+            scene,
+            &self.wgpu_context.device,
+            &self.wgpu_context.queue,
+            &self.camera_bind_group_layout,
+            self.instance_buffer.buffer.buffer().unwrap(),
+            instance_buffer_reallocated,
+        );
     }
 
-    fn update_instance_buffer_and_draw_command(&mut self, world: &mut hecs::World) {
+    fn update_instance_buffer_and_draw_command(&mut self, world: &mut hecs::World) -> bool {
         // for now every draw call will only draw one instance, but we could do
         // instancing for real later.
         let mut first_instance = 0;
@@ -492,13 +469,7 @@ impl Renderer {
 
         // send instance data to gpu
         self.instance_buffer
-            .flush(&self.wgpu_context.queue, |buffer| {
-                self.instance_bind_group = Some(create_instance_bind_group(
-                    &self.wgpu_context.device,
-                    &self.instance_bind_group_layout,
-                    buffer,
-                ));
-            });
+            .flush(&self.wgpu_context.queue, |_buffer| {})
     }
 
     /// Prepares rendering a frame for a specific view.

@@ -34,6 +34,7 @@ use crate::app::composer::{
     },
     scene::{
         Changed,
+        Scene,
         transform::Transform,
     },
 };
@@ -165,6 +166,7 @@ impl CameraResources {
         camera_bind_group_layout: &wgpu::BindGroupLayout,
         device: &wgpu::Device,
         camera_data: &CameraData,
+        instance_buffer: &wgpu::Buffer,
     ) -> Self {
         let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("camera uniform buffer"),
@@ -172,21 +174,51 @@ impl CameraResources {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("camera uniform bind group"),
-            layout: camera_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::Buffer(buffer.as_entire_buffer_binding()),
-            }],
-        });
+        let bind_group =
+            create_camera_bind_group(device, camera_bind_group_layout, &buffer, instance_buffer);
 
         Self { buffer, bind_group }
     }
 
-    pub fn update(&mut self, queue: &wgpu::Queue, camera_data: &CameraData) {
+    pub fn update(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        camera_data: &CameraData,
+        updated_instance_buffer: Option<(&wgpu::BindGroupLayout, &wgpu::Buffer)>,
+    ) {
         queue.write_buffer(&self.buffer, 0, bytemuck::bytes_of(camera_data));
+        if let Some((camera_bind_group_layout, instance_buffer)) = updated_instance_buffer {
+            self.bind_group = create_camera_bind_group(
+                device,
+                camera_bind_group_layout,
+                &self.buffer,
+                instance_buffer,
+            );
+        }
     }
+}
+
+fn create_camera_bind_group(
+    device: &wgpu::Device,
+    camera_bind_group_layout: &wgpu::BindGroupLayout,
+    camera_buffer: &wgpu::Buffer,
+    instance_buffer: &wgpu::Buffer,
+) -> wgpu::BindGroup {
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("camera uniform bind group"),
+        layout: camera_bind_group_layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: camera_buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: instance_buffer.as_entire_binding(),
+            },
+        ],
+    })
 }
 
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
@@ -263,22 +295,26 @@ impl Default for CameraConfig {
 }
 
 pub(super) fn update_cameras(
-    world: &mut hecs::World,
-    command_buffer: &mut hecs::CommandBuffer,
+    scene: &mut Scene,
     device: &wgpu::Device,
+    queue: &wgpu::Queue,
     camera_bind_group_layout: &wgpu::BindGroupLayout,
+    instance_buffer: &wgpu::Buffer,
+    instance_buffer_reallocated: bool,
 ) {
     // update cameras whose viewports changed
-    for (entity, (camera_projection, viewport)) in world
+    for (entity, (camera_projection, viewport)) in scene
+        .entities
         .query_mut::<(&mut CameraProjection, &Viewport)>()
         .with::<&Changed<Viewport>>()
     {
         camera_projection.set_viewport(viewport);
-        command_buffer.remove_one::<Changed<Viewport>>(entity);
+        scene.command_buffer.remove_one::<Changed<Viewport>>(entity);
     }
 
     // create uniforms for cameras that don't have them yet
-    for (entity, (camera_projection, camera_transform, clear_color, camera_light_filter)) in world
+    for (entity, (camera_projection, camera_transform, clear_color, camera_light_filter)) in scene
+        .entities
         .query_mut::<(
             &CameraProjection,
             &Transform,
@@ -300,12 +336,18 @@ pub(super) fn update_cameras(
             clear_color,
             camera_light_filter,
         );
-        let camera_resources = CameraResources::new(camera_bind_group_layout, device, &camera_data);
-        command_buffer.insert_one(entity, camera_resources);
+        let camera_resources = CameraResources::new(
+            camera_bind_group_layout,
+            device,
+            &camera_data,
+            instance_buffer,
+        );
+        scene.command_buffer.insert_one(entity, camera_resources);
     }
 
     // remove camera resources for anything that isn't a valid camera anymore
-    for (entity, ()) in world
+    for (entity, ()) in scene
+        .entities
         .query_mut::<()>()
         .with::<&CameraResources>()
         .without::<hecs::Or<&Transform, &CameraProjection>>()
@@ -314,18 +356,19 @@ pub(super) fn update_cameras(
             ?entity,
             "not a valid camera anymore. removing `CameraResources`"
         );
-        command_buffer.remove_one::<CameraResources>(entity);
+        scene.command_buffer.remove_one::<CameraResources>(entity);
     }
-}
 
-/// Updates camera buffers
-///
-/// Run this after the changes made by [`update_camera`] have been applied.
-pub(super) fn update_camera_buffers(world: &mut hecs::World, queue: &wgpu::Queue) {
+    // apply commands
+    scene.apply_deferred();
+
+    // update camera buffers
+    let updated_instance_buffer =
+        instance_buffer_reallocated.then_some((camera_bind_group_layout, instance_buffer));
     for (
         _,
         (camera_resources, camera_projection, camera_transform, clear_color, camera_light_filter),
-    ) in world.query_mut::<(
+    ) in scene.entities.query_mut::<(
         &mut CameraResources,
         &CameraProjection,
         &Transform,
@@ -338,6 +381,6 @@ pub(super) fn update_camera_buffers(world: &mut hecs::World, queue: &wgpu::Queue
             clear_color,
             camera_light_filter,
         );
-        camera_resources.update(queue, &camera_data);
+        camera_resources.update(device, queue, &camera_data, updated_instance_buffer);
     }
 }

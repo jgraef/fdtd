@@ -138,7 +138,9 @@ impl<T> TypedArrayBuffer<T> {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.inner.is_none()
+        self.inner
+            .as_ref()
+            .is_none_or(|inner| inner.num_elements == 0)
     }
 
     pub fn usage(&self) -> wgpu::BufferUsages {
@@ -147,6 +149,10 @@ impl<T> TypedArrayBuffer<T> {
 
     pub fn device(&self) -> &wgpu::Device {
         &self.device
+    }
+
+    pub fn is_allocated(&self) -> bool {
+        self.inner.is_some()
     }
 }
 
@@ -804,16 +810,18 @@ where
         }
     }
 
-    pub fn flush(&mut self, queue: &wgpu::Queue, on_reallocate: impl FnMut(&wgpu::Buffer)) {
+    pub fn flush(&mut self, queue: &wgpu::Queue, on_reallocate: impl FnMut(&wgpu::Buffer)) -> bool {
         if self.staging.is_empty() {
             // the below code works fine for an empty instance buffer, and it'll basically
             // do nothing, but we can still exit early.
-            return;
+            return false;
         }
 
-        self.buffer.write_all(queue, &self.staging, on_reallocate);
+        let reallocated = self.buffer.write_all(queue, &self.staging, on_reallocate);
 
         self.staging.clear();
+
+        reallocated
     }
 }
 
