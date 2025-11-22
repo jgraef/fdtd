@@ -82,7 +82,7 @@ impl<'a> PopulateScene for PopulateWithNec<'a> {
                                     ),
                                 );
 
-                                scene.add_object(transform, shape, self.material);
+                                scene.add_object(transform, shape).material(self.material);
                             }
                             WireSegmentDimensions::Tapered { .. } => todo!("truncated cone shape"),
                         }

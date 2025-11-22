@@ -1,6 +1,11 @@
 use std::ops::Range;
 
-use nalgebra::Point3;
+use bytemuck::Pod;
+use nalgebra::{
+    Point2,
+    Point3,
+    Vector3,
+};
 use wgpu::util::DeviceExt;
 
 use crate::app::composer::{
@@ -23,6 +28,7 @@ use crate::app::composer::{
 pub struct Mesh {
     pub index_buffer: wgpu::Buffer,
     pub vertex_buffer: wgpu::Buffer,
+    pub normal_buffer: Option<wgpu::Buffer>,
     pub uv_buffer: Option<wgpu::Buffer>,
     pub indices: Range<u32>,
     pub base_vertex: u32,
@@ -34,17 +40,55 @@ impl Mesh {
         // todo: we could just fix the winding order here when we write the indices into
         // the buffer, and not bother doing that in the shader.
 
-        let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("mesh index buffer"),
-            contents: bytemuck::cast_slice(&surface_mesh.indices),
-            usage: wgpu::BufferUsages::STORAGE,
-        });
+        fn buffer<T>(device: &wgpu::Device, label: &str, data: &[T]) -> wgpu::Buffer
+        where
+            T: Pod,
+        {
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some(label),
+                contents: bytemuck::cast_slice(data),
+                usage: wgpu::BufferUsages::STORAGE,
+            })
+        }
 
-        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("mesh vertex buffer"),
-            contents: bytemuck::cast_slice(&surface_mesh.vertices),
-            usage: wgpu::BufferUsages::STORAGE,
-        });
+        fn buffer_opt<T>(device: &wgpu::Device, label: &str, data: &[T]) -> Option<wgpu::Buffer>
+        where
+            T: Pod,
+        {
+            (!data.is_empty()).then(|| buffer(device, label, data))
+        }
+
+        let num_indices = surface_mesh.indices.len();
+        let num_vertices = surface_mesh.vertices.len();
+        let num_normals = surface_mesh.normals.len();
+        let num_uvs = surface_mesh.uvs.len();
+
+        assert_ne!(num_indices, 0, "Mesh with no indices");
+        assert_ne!(num_vertices, 0, "Mesh with no vertices");
+
+        assert!(
+            num_normals == 0 || num_normals == num_vertices,
+            "Surface mesh has {num_vertices} vertices, but {num_normals} normals."
+        );
+        assert!(
+            num_uvs == 0 || num_uvs == num_vertices,
+            "Surface mesh has {num_vertices} vertices, but {num_uvs} UVs."
+        );
+
+        #[cfg(debug_assertions)]
+        {
+            for index in surface_mesh.indices.iter().flatten() {
+                assert!(
+                    (*index as usize) < num_vertices,
+                    "Vertex index out of bounds"
+                );
+            }
+        }
+
+        let index_buffer = buffer(device, "mesh index buffer", &surface_mesh.indices);
+        let vertex_buffer = buffer(device, "mesh vertex buffer", &surface_mesh.vertices);
+        let normal_buffer = buffer_opt(device, "mesh normal buffer", &surface_mesh.normals);
+        let uv_buffer = buffer_opt(device, "mesh uv buffer", &surface_mesh.uvs);
 
         // the indices array in surface_mesh is **not** flat (i.e. it consists of `[u32;
         // 3]`, one index per face), thus we need to multiply by 3.
@@ -53,7 +97,8 @@ impl Mesh {
         Self {
             index_buffer,
             vertex_buffer,
-            uv_buffer: None,
+            normal_buffer,
+            uv_buffer,
             indices: 0..num_indices,
             base_vertex: 0,
             winding_order: surface_mesh.winding_order,
@@ -130,8 +175,10 @@ impl MeshBindGroup {
 
 #[derive(Clone, Debug)]
 pub struct SurfaceMesh {
-    pub vertices: Vec<Point3<f32>>,
     pub indices: Vec<[u32; 3]>,
+    pub vertices: Vec<Point3<f32>>,
+    pub normals: Vec<Vector3<f32>>,
+    pub uvs: Vec<Point2<f32>>,
     pub winding_order: WindingOrder,
 }
 

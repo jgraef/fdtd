@@ -47,6 +47,7 @@ use crate::{
                 LoadMaterialTextures,
                 Material,
                 MaterialData,
+                MaterialTextures,
             },
             mesh::{
                 Mesh,
@@ -446,12 +447,13 @@ impl Renderer {
         let mut draw_command_builder = self.draw_command_buffer.builder();
 
         // draw meshes (solid, wireframe, outlines)
-        for (_, (transform, mesh, mesh_bind_group, material, outline)) in world
+        for (_, (transform, mesh, mesh_bind_group, material, material_textures, outline)) in world
             .query_mut::<(
                 &Transform,
                 &Mesh,
                 &MeshBindGroup,
-                &Material,
+                Option<&Material>,
+                Option<&MaterialTextures>,
                 Option<&Outline>,
             )>()
             .with::<&Render>()
@@ -471,6 +473,7 @@ impl Renderer {
             self.instance_buffer.push(InstanceData::new_mesh(
                 transform,
                 material,
+                material_textures,
                 flags,
                 mesh.base_vertex,
                 outline,
@@ -766,7 +769,8 @@ impl InstanceData {
     /// Creates instance data for mesh rendering
     pub fn new_mesh(
         transform: &Transform,
-        material: &Material,
+        material: Option<&Material>,
+        material_textures: Option<&MaterialTextures>,
         flags: InstanceFlags,
         base_vertex: u32,
         outline: Option<&Outline>,
@@ -776,7 +780,7 @@ impl InstanceData {
             flags,
             base_vertex,
             _padding: [0; _],
-            material: MaterialData::new(material, outline),
+            material: MaterialData::new(material, material_textures, outline),
         }
     }
 }

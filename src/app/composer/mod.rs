@@ -709,30 +709,41 @@ impl PopulateScene for ExampleScene {
         let shape = |size| parry3d::shape::Cuboid::new(Vector3::repeat(size));
         //let shape = |size| parry3d::shape::Ball::new(size);
 
+        let em_material = crate::physics::material::Material {
+            relative_permittivity: 3.9,
+            ..crate::physics::material::Material::VACUUM
+        };
+
         scene
-            .add_object(Point3::new(-0.2, 0.0, 0.0), shape(0.1), palette::named::RED)
-            .add(LoadMaterialTextures::default().with_diffuse("tmp/test_pattern.png"));
-        scene.add_object(Point3::new(0.2, 0.0, 0.0), shape(0.1), palette::named::BLUE);
-        scene.add_object(
-            Point3::new(0.0, -0.2, 0.0),
-            shape(0.1),
-            palette::named::LIME,
-        );
-        scene.add_object(
-            Point3::new(0.0, 0.2, 0.0),
-            shape(0.1),
-            palette::named::YELLOW,
-        );
-        scene.add_object(
-            Point3::new(-0.02, -0.02, 0.2),
-            shape(0.05),
-            palette::named::MAGENTA,
-        );
-        scene.add_object(
-            Point3::new(0.02, 0.02, -0.2),
-            shape(0.05),
-            palette::named::CYAN,
-        );
+            .add_object(Point3::new(-0.2, 0.0, 0.0), shape(0.1))
+            .material(palette::named::WHITE)
+            .add(LoadMaterialTextures::default().with_ambient_and_diffuse("tmp/test_pattern.png"))
+            .add(em_material);
+
+        scene
+            .add_object(Point3::new(0.2, 0.0, 0.0), shape(0.1))
+            .material(palette::named::BLUE)
+            .add(em_material);
+
+        scene
+            .add_object(Point3::new(0.0, -0.2, 0.0), shape(0.1))
+            .material(palette::named::LIME)
+            .add(em_material);
+
+        scene
+            .add_object(Point3::new(0.0, 0.2, 0.0), shape(0.1))
+            .material(palette::named::YELLOW)
+            .add(em_material);
+
+        scene
+            .add_object(Point3::new(-0.02, -0.02, 0.2), shape(0.05))
+            .material(palette::named::MAGENTA)
+            .add(em_material);
+
+        scene
+            .add_object(Point3::new(0.02, 0.02, -0.2), shape(0.05))
+            .material(palette::named::CYAN)
+            .add(em_material);
 
         scene.entities.spawn((
             // todo

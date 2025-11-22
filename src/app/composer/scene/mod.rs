@@ -92,7 +92,6 @@ impl Scene {
         &mut self,
         transform: impl Into<Transform>,
         shape: impl Into<SharedShape>,
-        material: impl Into<Material>,
     ) -> EntityBuilder<'_> {
         let mut builder = hecs::EntityBuilder::new();
 
@@ -102,17 +101,11 @@ impl Scene {
         builder.add_bundle((
             transform.into(),
             shape,
-            material.into(),
             Render,
             label,
             Collides,
             ShowInTree,
             Selectable,
-            // todo: added for testing for now.
-            crate::physics::material::Material {
-                relative_permittivity: 3.9,
-                ..crate::physics::material::Material::VACUUM
-            },
         ));
 
         EntityBuilder {
@@ -377,7 +370,12 @@ impl<'a> DerefMut for EntityBuilder<'a> {
 }
 
 impl<'a> EntityBuilder<'a> {
-    fn finish(mut self) -> hecs::Entity {
+    pub fn material(mut self, material: impl Into<Material>) -> Self {
+        self.builder.add(material.into());
+        self
+    }
+
+    pub fn finish(mut self) -> hecs::Entity {
         let bundle = self.builder.build();
         self.world.spawn(bundle)
     }

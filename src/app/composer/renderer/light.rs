@@ -41,8 +41,14 @@ use crate::{
 ///
 /// Note that these are only visual properties!
 ///
-/// # TODO: Needs to know if this is transparent, so we can sort by depth.
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+/// # TODO
+///
+/// - Needs to know if this is transparent, so we can sort by depth.
+/// - The colors should be `Option`s, so that if nothing is set, it can either
+///   default to black or white, depending of a texture is used for that
+///   material (see [`MaterialData::new`]). But this requires some work with the
+///   serde-integration (we can use the `serde_with` crate).
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
 pub struct Material {
     #[serde(with = "crate::util::serde::palette")]
     pub ambient: Srgba,
@@ -64,13 +70,16 @@ pub struct Material {
 
 impl From<Srgba> for Material {
     fn from(value: Srgba) -> Self {
+        const WHITE: Srgba = Srgba::new(1.0, 1.0, 1.0, 1.0);
+        const BLACK: Srgba = Srgba::new(0.0, 0.0, 0.0, 1.0);
+
         Self {
-            ambient: value,
+            ambient: value * 0.5,
             diffuse: value,
-            specular: Srgba::new(1.0, 1.0, 1.0, 1.0),
-            emissive: Srgba::new(0.0, 0.0, 0.0, 1.0),
+            specular: WHITE,
+            emissive: BLACK,
             shininess: 8.0,
-            wireframe: Srgba::new(0.0, 0.0, 0.0, 1.0),
+            wireframe: BLACK,
         }
     }
 }
@@ -222,8 +231,8 @@ impl Default for CameraLightFilter {
         // the ratios
         let rgb1 = |x| LinSrgba::new(x, x, x, 1.0);
         Self {
-            ambient: rgb1(0.3),
-            diffuse: rgb1(0.7),
+            ambient: rgb1(0.8),
+            diffuse: rgb1(0.8),
             specular: rgb1(0.5),
             emissive: rgb1(1.0),
         }
@@ -264,22 +273,50 @@ pub struct MaterialData {
 }
 
 impl MaterialData {
-    pub fn new(material: &Material, outline: Option<&Outline>) -> Self {
+    pub fn new(
+        material: Option<&Material>,
+        material_textures: Option<&MaterialTextures>,
+        outline: Option<&Outline>,
+    ) -> Self {
         let (outline, outline_thickness) = outline
             .map(|outline| (outline.color.into_linear(), outline.thickness))
             .unwrap_or_default();
 
-        Self {
-            wireframe: material.wireframe.into_linear(),
+        const BLACK: LinSrgba = LinSrgba::new(0.0, 0.0, 0.0, 1.0);
+        const WHITE: LinSrgba = LinSrgba::new(1.0, 1.0, 1.0, 1.0);
+
+        let mut data = Self {
             outline,
-            ambient: material.ambient.into_linear(),
-            diffuse: material.diffuse.into_linear(),
-            specular: material.specular.into_linear(),
-            emissive: material.emissive.into_linear(),
-            shininess: material.shininess,
             outline_thickness,
-            _padding: [0; _],
+            ..Default::default()
+        };
+
+        data.wireframe = material
+            .as_ref()
+            .map_or(BLACK, |material| material.wireframe.into_linear());
+        data.shininess = material
+            .as_ref()
+            .map_or(32.0, |material| material.shininess);
+
+        macro_rules! color {
+            ($name:ident) => {
+                data.$name = material.as_ref().map_or_else(
+                    || {
+                        let texture_present = material_textures
+                            .map_or(false, |material_textures| material_textures.$name.is_some());
+                        if texture_present { WHITE } else { BLACK }
+                    },
+                    |material| material.$name.into_linear(),
+                );
+            };
         }
+
+        color!(ambient);
+        color!(diffuse);
+        color!(specular);
+        color!(emissive);
+
+        data
     }
 }
 
@@ -316,6 +353,11 @@ impl LoadMaterialTextures {
     pub fn with_diffuse(mut self, path: impl Into<PathBuf>) -> Self {
         self.diffuse = Some(path.into());
         self
+    }
+
+    pub fn with_ambient_and_diffuse(self, path: impl Into<PathBuf>) -> Self {
+        let path = path.into();
+        self.with_ambient(path.clone()).with_diffuse(path)
     }
 
     pub fn with_specular(mut self, path: impl Into<PathBuf>) -> Self {

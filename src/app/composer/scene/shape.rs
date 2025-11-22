@@ -4,6 +4,10 @@ use std::{
     sync::Arc,
 };
 
+use nalgebra::{
+    Point2,
+    Point3,
+};
 use parry3d::shape::{
     Ball,
     Cuboid,
@@ -67,25 +71,42 @@ pub trait Shape: Debug + Send + Sync + parry3d::shape::Shape + 'static {
 /// [1]: https://docs.rs/parry3d/latest/parry3d/shape/struct.TriMesh.html#method.new
 pub const PARRY_WINDING_ORDER: WindingOrder = WindingOrder::CounterClockwise;
 
+fn parry_surface_mesh(vertices: Vec<Point3<f32>>, indices: Vec<[u32; 3]>) -> SurfaceMesh {
+    SurfaceMesh {
+        indices,
+        vertices,
+        normals: vec![],
+        uvs: vec![],
+        winding_order: PARRY_WINDING_ORDER,
+    }
+}
+
 impl Shape for Ball {
     fn to_surface_mesh(&self) -> Option<SurfaceMesh> {
         let (vertices, indices) = self.to_trimesh(20, 20);
-        Some(SurfaceMesh {
-            vertices,
-            indices,
-            winding_order: PARRY_WINDING_ORDER,
-        })
+        Some(parry_surface_mesh(vertices, indices))
     }
 }
 
 impl Shape for Cuboid {
     fn to_surface_mesh(&self) -> Option<SurfaceMesh> {
         let (vertices, indices) = self.to_trimesh();
-        Some(SurfaceMesh {
-            vertices,
-            indices,
-            winding_order: PARRY_WINDING_ORDER,
-        })
+
+        let mut mesh = parry_surface_mesh(vertices, indices);
+
+        // fake uvs
+        mesh.uvs = vec![
+            Point2::new(0.0, 0.0),
+            Point2::new(0.0, 1.0),
+            Point2::new(1.0, 0.0),
+            Point2::new(1.0, 1.0),
+            Point2::new(0.0, 0.0),
+            Point2::new(0.0, 1.0),
+            Point2::new(1.0, 0.0),
+            Point2::new(1.0, 1.0),
+        ];
+
+        Some(mesh)
     }
 }
 
@@ -98,20 +119,15 @@ impl Shape for HalfSpace {
 impl Shape for Cylinder {
     fn to_surface_mesh(&self) -> Option<SurfaceMesh> {
         let (vertices, indices) = self.to_trimesh(20);
-        Some(SurfaceMesh {
-            vertices,
-            indices,
-            winding_order: PARRY_WINDING_ORDER,
-        })
+        Some(parry_surface_mesh(vertices, indices))
     }
 }
 
 impl Shape for TriMesh {
     fn to_surface_mesh(&self) -> Option<SurfaceMesh> {
-        Some(SurfaceMesh {
-            vertices: self.vertices().to_owned(),
-            indices: self.indices().to_owned(),
-            winding_order: PARRY_WINDING_ORDER,
-        })
+        Some(parry_surface_mesh(
+            self.vertices().to_owned(),
+            self.indices().to_owned(),
+        ))
     }
 }
