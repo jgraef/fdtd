@@ -1,8 +1,11 @@
 pub mod camera;
+mod command;
 mod draw_commands;
 pub mod grid;
 pub mod light;
+pub mod loader;
 pub mod mesh;
+pub mod texture_channel;
 
 use std::{
     num::NonZero,
@@ -14,7 +17,10 @@ use bytemuck::{
     Pod,
     Zeroable,
 };
-use nalgebra::Matrix4;
+use nalgebra::{
+    Matrix4,
+    Vector2,
+};
 use palette::{
     Srgb,
     Srgba,
@@ -37,6 +43,10 @@ use crate::{
                 CameraConfig,
                 CameraResources,
             },
+            command::{
+                Command,
+                CommandQueue,
+            },
             draw_commands::{
                 DrawCommand,
                 DrawCommandBuffer,
@@ -48,6 +58,12 @@ use crate::{
                 Material,
                 MaterialData,
                 MaterialTextures,
+                TextureAndView,
+                TextureSource,
+            },
+            loader::{
+                Loader,
+                RunLoaders,
             },
             mesh::{
                 Mesh,
@@ -62,6 +78,8 @@ use crate::{
     },
     util::wgpu::{
         StagedTypedArrayBuffer,
+        WriteImageToTextureExt,
+        texture_descriptor,
         texture_view_from_color,
     },
 };
@@ -139,7 +157,7 @@ impl From<Arc<egui::mutex::RwLock<egui_wgpu::Renderer>>> for EguiWgpuRenderer {
 /// could separate these out, and e.g. put them into a resource into the scene.
 /// Note that `instance_data` can be shared. It's just a scratch buffer that is
 /// used during `prepare_world`. Same for `command_buffer`.
-#[derive(derive_more::Debug)]
+#[derive(Debug)]
 pub struct Renderer {
     wgpu_context: WgpuContext,
 
@@ -168,6 +186,8 @@ pub struct Renderer {
     draw_command_buffer: DrawCommandBuffer,
 
     texture_defaults: Fallbacks,
+
+    command_queue: CommandQueue,
 }
 
 impl Renderer {
@@ -379,6 +399,7 @@ impl Renderer {
             instance_buffer,
             draw_command_buffer: Default::default(),
             texture_defaults,
+            command_queue: CommandQueue::new(512),
         }
     }
 
@@ -395,8 +416,15 @@ impl Renderer {
     /// `Arc<Vec<_>>`, so they're cheap to clone (which is done in
     /// [`Self::prepare_frame`]).
     pub fn prepare_world(&mut self, scene: &mut Scene) -> Result<(), Error> {
+        // handle command queue
+        self.handle_commands();
+
         // load rendering assets
-        let load_result = self.load_all::<LoadMaterialTextures>(scene);
+        let mut run_loaders = RunLoaders::new(self, scene);
+        let load_result = run_loaders.run::<LoadMaterialTextures>();
+        if let Err(error) = &load_result {
+            tracing::warn!(?error);
+        }
 
         // generate meshes (for rendering) for objects that don't have them yet.
         mesh::generate_meshes_for_shapes(
@@ -548,33 +576,55 @@ impl Renderer {
         ))
     }
 
-    // todo: ideally this would be in an asset loader
-    fn load_all<L: Loader>(&mut self, scene: &mut Scene) -> Result<(), Error> {
-        fn load_all_inner<L: Loader>(scene: &mut Scene, renderer: &Renderer) -> Result<(), Error> {
-            for (entity, loader) in scene.entities.query_mut::<&L>() {
-                // remove first, so if an error occurs during loading, the loader will still be
-                // removed.
-                scene.command_buffer.remove_one::<L>(entity);
-
-                let loaded = loader.load(renderer)?;
-                scene.command_buffer.insert(entity, loaded);
-            }
-            Ok(())
-        }
-
-        let result = load_all_inner::<L>(scene, self);
-
-        // apply commands even if an error occurred.
-        scene.apply_deferred();
-
-        result
+    fn create_texture(&self, size: &Vector2<u32>, label: &str) -> wgpu::Texture {
+        self.wgpu_context
+            .device
+            .create_texture(&texture_descriptor(size, label))
     }
-}
 
-trait Loader: hecs::Component {
-    type Output: hecs::DynamicBundle;
+    fn load_texture(
+        &self,
+        texture_source: &mut TextureSource,
+    ) -> Result<Option<Arc<TextureAndView>>, Error> {
+        match texture_source {
+            TextureSource::File { path } => {
+                let texture_and_view = TextureAndView::from_path(
+                    &self.wgpu_context.device,
+                    &self.wgpu_context.queue,
+                    path,
+                )?;
 
-    fn load(&self, renderer: &Renderer) -> Result<Self::Output, Error>;
+                Ok(Some(Arc::new(texture_and_view)))
+            }
+            TextureSource::Channel { receiver } => {
+                let texture = receiver.register(&self.command_queue.sender, |size, label| {
+                    self.create_texture(size, label)
+                });
+                Ok(texture)
+            }
+        }
+    }
+
+    pub fn copy_image_to_texture(&self, image: &image::RgbaImage, texture: &wgpu::Texture) {
+        image.write_to_texture(&self.wgpu_context.queue, texture);
+    }
+
+    fn handle_commands(&mut self) {
+        // note: for now we handle everything on the same thread, having &mut access to
+        // the whole renderer. but many commands we would better handle in a separate
+        // thread (e.g. ones that only require access to device/queue).
+
+        for command in self.command_queue.receiver.drain() {
+            match command {
+                Command::CopyImageToTexture(command) => {
+                    command.handle(|image, texture| self.copy_image_to_texture(image, texture));
+                }
+                Command::CreateTextureForChannel(command) => {
+                    command.handle(|size, label| self.create_texture(size, label))
+                }
+            }
+        }
+    }
 }
 
 fn create_instance_bind_group(

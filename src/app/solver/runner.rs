@@ -320,7 +320,7 @@ struct Observer {
 }
 
 impl Observer {
-    pub fn run<I>(&mut self, instance: &I, state: &I::State)
+    pub fn run<I>(&mut self, _instance: &I, _state: &I::State)
     where
         I: Field<Point3<usize>>,
     {
@@ -334,10 +334,10 @@ struct Observers {
 }
 
 impl Observers {
-    pub fn from_scene(scene: &mut Scene, lattice_size: &Vector3<usize>) -> Self {
+    pub fn from_scene(scene: &mut Scene, _lattice_size: &Vector3<usize>) -> Self {
         let mut observers = vec![];
 
-        for (entity, observer) in scene.entities.query_mut::<&super::observer::Observer>() {
+        for (_entity, observer) in scene.entities.query_mut::<&super::observer::Observer>() {
             // todo: use observer extents
 
             if observer.display_as_texture {

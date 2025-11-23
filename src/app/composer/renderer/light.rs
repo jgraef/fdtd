@@ -1,4 +1,10 @@
-use std::path::PathBuf;
+use std::{
+    path::{
+        Path,
+        PathBuf,
+    },
+    sync::Arc,
+};
 
 use bytemuck::{
     Pod,
@@ -26,10 +32,18 @@ use crate::{
         renderer::{
             Loader,
             Outline,
-            Renderer,
+            loader::{
+                LoaderContext,
+                LoadingProgress,
+                LoadingState,
+            },
+            texture_channel::TextureReceiver,
         },
     },
-    util::wgpu::texture_view_from_path,
+    util::{
+        ImageLoadExt,
+        wgpu::texture_from_image,
+    },
 };
 
 /// Material properties that define how an object looks in the scene.
@@ -125,10 +139,10 @@ impl PropertiesUi for Material {
 
 #[derive(Clone, Debug, Default)]
 pub struct MaterialTextures {
-    pub ambient: Option<wgpu::TextureView>,
-    pub diffuse: Option<wgpu::TextureView>,
-    pub specular: Option<wgpu::TextureView>,
-    pub emissive: Option<wgpu::TextureView>,
+    pub ambient: Option<Arc<TextureAndView>>,
+    pub diffuse: Option<Arc<TextureAndView>>,
+    pub specular: Option<Arc<TextureAndView>>,
+    pub emissive: Option<Arc<TextureAndView>>,
 }
 
 /// A point light source.
@@ -338,62 +352,153 @@ impl PointLightData {
 
 #[derive(Clone, Debug, Default)]
 pub struct LoadMaterialTextures {
-    pub ambient: Option<PathBuf>,
-    pub diffuse: Option<PathBuf>,
-    pub specular: Option<PathBuf>,
-    pub emissive: Option<PathBuf>,
+    pub ambient: Option<TextureSource>,
+    pub diffuse: Option<TextureSource>,
+    pub specular: Option<TextureSource>,
+    pub emissive: Option<TextureSource>,
 }
 
 impl LoadMaterialTextures {
-    pub fn with_ambient(mut self, path: impl Into<PathBuf>) -> Self {
-        self.ambient = Some(path.into());
+    pub fn with_ambient(mut self, texture: impl Into<TextureSource>) -> Self {
+        self.ambient = Some(texture.into());
         self
     }
 
-    pub fn with_diffuse(mut self, path: impl Into<PathBuf>) -> Self {
-        self.diffuse = Some(path.into());
+    pub fn with_diffuse(mut self, texture: impl Into<TextureSource>) -> Self {
+        self.diffuse = Some(texture.into());
         self
     }
 
-    pub fn with_ambient_and_diffuse(self, path: impl Into<PathBuf>) -> Self {
-        let path = path.into();
-        self.with_ambient(path.clone()).with_diffuse(path)
+    pub fn with_ambient_and_diffuse(self, texture: impl Into<TextureSource>) -> Self {
+        let texture = texture.into();
+        self.with_ambient(texture.clone()).with_diffuse(texture)
     }
 
-    pub fn with_specular(mut self, path: impl Into<PathBuf>) -> Self {
-        self.specular = Some(path.into());
+    pub fn with_specular(mut self, texture: impl Into<TextureSource>) -> Self {
+        self.specular = Some(texture.into());
         self
     }
 
-    pub fn with_emissive(mut self, path: impl Into<PathBuf>) -> Self {
-        self.emissive = Some(path.into());
+    pub fn with_emissive(mut self, texture: impl Into<TextureSource>) -> Self {
+        self.emissive = Some(texture.into());
         self
     }
 }
 
 impl Loader for LoadMaterialTextures {
+    type State = LoadMaterialTexturesState;
+
+    fn start_loading(
+        &self,
+        context: &mut LoaderContext,
+    ) -> Result<LoadMaterialTexturesState, Error> {
+        let _ = context;
+        Ok(LoadMaterialTexturesState {
+            loader: self.clone(),
+            output: Default::default(),
+        })
+    }
+}
+
+#[derive(Debug)]
+pub struct LoadMaterialTexturesState {
+    pub loader: LoadMaterialTextures,
+    pub output: MaterialTextures,
+}
+
+impl LoadingState for LoadMaterialTexturesState {
     type Output = (MaterialTextures,);
 
-    fn load(&self, renderer: &Renderer) -> Result<Self::Output, Error> {
-        let mut output = MaterialTextures::default();
+    fn poll(
+        &mut self,
+        context: &mut LoaderContext,
+    ) -> Result<LoadingProgress<(MaterialTextures,)>, Error> {
+        let mut any_still_not_loaded = false;
 
-        macro_rules! texture {
+        macro_rules! material {
             ($name:ident) => {
-                if let Some(path) = &self.$name {
-                    output.$name = Some(texture_view_from_path(
-                        &renderer.wgpu_context.device,
-                        &renderer.wgpu_context.queue,
-                        path,
-                    )?);
+                if let Some(texture_source) = &mut self.loader.$name {
+                    assert!(self.output.$name.is_none());
+
+                    if let Some(texture_and_view) = context.renderer.load_texture(texture_source)? {
+                        self.loader.$name = None;
+                        self.output.$name = Some(texture_and_view);
+                    }
+                    else {
+                        any_still_not_loaded = true;
+                    }
                 }
             };
         }
 
-        texture!(ambient);
-        texture!(diffuse);
-        texture!(specular);
-        texture!(emissive);
+        material!(ambient);
+        material!(diffuse);
+        material!(specular);
+        material!(emissive);
 
-        Ok((output,))
+        if any_still_not_loaded {
+            Ok(LoadingProgress::Pending)
+        }
+        else {
+            let output = std::mem::take(&mut self.output);
+            Ok(LoadingProgress::Ready((output,)))
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum TextureSource {
+    File { path: PathBuf },
+    Channel { receiver: TextureReceiver },
+}
+
+impl From<PathBuf> for TextureSource {
+    fn from(value: PathBuf) -> Self {
+        Self::File { path: value }
+    }
+}
+
+impl From<&Path> for TextureSource {
+    fn from(value: &Path) -> Self {
+        Self::from(PathBuf::from(value))
+    }
+}
+
+impl From<&str> for TextureSource {
+    fn from(value: &str) -> Self {
+        Self::from(PathBuf::from(value))
+    }
+}
+
+impl From<TextureReceiver> for TextureSource {
+    fn from(value: TextureReceiver) -> Self {
+        Self::Channel { receiver: value }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct TextureAndView {
+    pub texture: wgpu::Texture,
+    pub view: wgpu::TextureView,
+}
+
+impl TextureAndView {
+    pub fn from_path<P>(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        path: P,
+    ) -> Result<Self, image::ImageError>
+    where
+        P: AsRef<Path>,
+    {
+        tracing::debug!(path = %path.as_ref().display(), "loading texture");
+        let image = image::RgbaImage::from_path(path.as_ref())?;
+        let label = path.as_ref().display().to_string();
+        let texture = texture_from_image(device, queue, &image, &label);
+        let view = texture.create_view(&wgpu::TextureViewDescriptor {
+            label: Some(&label),
+            ..Default::default()
+        });
+        Ok(Self { texture, view })
     }
 }

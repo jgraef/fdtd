@@ -1,6 +1,5 @@
 #![allow(dead_code)]
 #![allow(clippy::explicit_counter_loop)]
-#![warn(clippy::todo)]
 
 pub mod app;
 pub mod fdtd;

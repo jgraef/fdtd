@@ -6,7 +6,6 @@ use std::{
         Range,
         RangeBounds,
     },
-    path::Path,
     sync::Arc,
 };
 
@@ -17,7 +16,6 @@ use parking_lot::Mutex;
 use wgpu::util::DeviceExt;
 
 use crate::util::{
-    ImageLoadExt,
     ImageSizeExt,
     normalize_index_bounds,
 };
@@ -888,7 +886,7 @@ pub fn texture_view_from_color(
     let color: [u8; 4] = color.into();
     let texture = device.create_texture_with_data(
         queue,
-        &texture_descriptor(Vector2::repeat(1), label),
+        &texture_descriptor(&Vector2::repeat(1), label),
         Default::default(),
         &color,
     );
@@ -898,40 +896,25 @@ pub fn texture_view_from_color(
     })
 }
 
-pub fn texture_view_from_image<Container>(
+pub fn texture_from_image<Container>(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     image: &image::ImageBuffer<image::Rgba<u8>, Container>,
     label: &str,
-) -> wgpu::TextureView
+) -> wgpu::Texture
 where
     Container: Deref<Target = [u8]>,
 {
     let size = image.size();
-    let texture = device.create_texture_with_data(
+    device.create_texture_with_data(
         queue,
-        &texture_descriptor(size, label),
+        &texture_descriptor(&size, label),
         Default::default(),
         image.as_raw(),
-    );
-    texture.create_view(&wgpu::TextureViewDescriptor {
-        label: Some(label),
-        ..Default::default()
-    })
+    )
 }
 
-pub fn texture_view_from_path<P: AsRef<Path>>(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    path: P,
-) -> Result<wgpu::TextureView, image::ImageError> {
-    tracing::debug!(path = %path.as_ref().display(), "loading texture");
-    let image = image::RgbaImage::from_path(path.as_ref())?;
-    let label = path.as_ref().display().to_string();
-    Ok(texture_view_from_image(device, queue, &image, &label))
-}
-
-pub fn texture_descriptor<'a>(size: Vector2<u32>, label: &'a str) -> wgpu::TextureDescriptor<'a> {
+pub fn texture_descriptor<'a>(size: &Vector2<u32>, label: &'a str) -> wgpu::TextureDescriptor<'a> {
     wgpu::TextureDescriptor {
         label: Some(label),
         size: wgpu::Extent3d {

@@ -132,6 +132,7 @@ impl MeshBindGroup {
                     resource: wgpu::BindingResource::TextureView(
                         material_textures
                             .and_then(|material_textures| material_textures.$name.as_ref())
+                            .map(|texture_and_view| &texture_and_view.view)
                             .unwrap_or(&fallbacks.$default),
                     ),
                 }
