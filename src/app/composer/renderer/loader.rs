@@ -50,6 +50,14 @@ pub struct LoaderContext<'a> {
     pub renderer: &'a mut Renderer,
 }
 
+impl<'a> LoaderContext<'a> {
+    /// todo: some places (e.g. mesh from shape) need this. textures just use a
+    /// bespoke function on the renderer. we need a better api.
+    pub fn device(&self) -> &wgpu::Device {
+        &self.renderer.wgpu_context.device
+    }
+}
+
 pub struct RunLoaders<'a> {
     scene: &'a mut Scene,
     context: LoaderContext<'a>,

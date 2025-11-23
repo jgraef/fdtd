@@ -90,7 +90,7 @@ pub struct TextureSenderProjection {
     parameters: ProjectionParameters,
 }
 
-impl<'a, Threading> CreateProjection<UndecidedTextureSender> for FdtdCpuSolverInstance<Threading>
+impl<Threading> CreateProjection<UndecidedTextureSender> for FdtdCpuSolverInstance<Threading>
 where
     Threading: LatticeForEach,
 {

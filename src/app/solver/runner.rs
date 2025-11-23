@@ -3,7 +3,6 @@ use std::time::{
     Instant,
 };
 
-use colorgrad::Gradient;
 use nalgebra::{
     Matrix4,
     Point3,
@@ -27,7 +26,6 @@ use crate::{
         },
         solver::{
             DomainDescription,
-            Field,
             SolverBackend,
             SolverInstance,
             SourceValues,
@@ -53,6 +51,7 @@ use crate::{
                 },
                 wgpu::FdtdWgpuBackend,
             },
+            observer::Observer,
             project::{
                 BeginProjectionPass,
                 CreateProjection,
@@ -153,11 +152,8 @@ fn run_fdtd_with_backend<Backend>(
     backend: &Backend,
 ) where
     Backend: SolverBackend<FdtdSolverConfig, Point3<usize>>,
-    Backend::Instance: EvaluateStopCondition
-        + SolverInstance
-        + CreateProjection<UndecidedTextureSender>
-        + Send
-        + 'static,
+    Backend::Instance:
+        EvaluateStopCondition + CreateProjection<UndecidedTextureSender> + Send + 'static,
     <Backend::Instance as SolverInstance>::State: Time + Send + 'static,
     for<'a> <Backend::Instance as SolverInstance>::UpdatePass<'a>: UpdatePassForcing<Point3<usize>>,
     for<'a> <Backend::Instance as BeginProjectionPass>::ProjectionPass<'a>: ProjectionPassAdd<
@@ -307,7 +303,6 @@ fn spawn_solver<Instance>(
 
             observers.run(&instance, &state);
 
-            //run_observers(&simulation);
             std::thread::sleep(Duration::from_millis(10));
         }
     });
@@ -344,20 +339,6 @@ impl<'a, 'b> DomainDescription<Point3<usize>> for SceneDomainDescription<'a, 'b>
     }
 }
 
-#[derive(Debug)]
-struct Observer {
-    //
-}
-
-impl Observer {
-    pub fn run<I>(&mut self, _instance: &I, _state: &I::State)
-    where
-        I: Field<Point3<usize>>,
-    {
-        todo!();
-    }
-}
-
 #[derive(Debug, Default)]
 struct Observers<P> {
     projections: Vec<P>,
@@ -376,7 +357,7 @@ impl<P> Observers<P> {
     {
         let mut projections = vec![];
 
-        for (entity, observer) in scene.entities.query_mut::<&super::observer::Observer>() {
+        for (entity, observer) in scene.entities.query_mut::<&Observer>() {
             // todo: use observer extents
 
             if observer.display_as_texture {
@@ -461,27 +442,6 @@ impl Sources {
                 },
             );
         }
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct TestGradient;
-
-impl Gradient for TestGradient {
-    fn at(&self, t: f32) -> colorgrad::Color {
-        let mut red = 0.0;
-        let mut blue = 0.0;
-        if t > 0.0 {
-            red = t.min(1.0);
-        }
-        else {
-            blue = (-t).min(1.0);
-        }
-        [red, 0.0, blue, 1.0].into()
-    }
-
-    fn domain(&self) -> (f32, f32) {
-        (-1.0, 1.0)
     }
 }
 

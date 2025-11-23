@@ -16,8 +16,6 @@ use crate::app::composer::{
         Label,
         PopulateScene,
         Scene,
-        collisions::Collides,
-        shape::SharedShape,
         transform::Transform,
     },
 };
@@ -93,15 +91,16 @@ impl<'a> PopulateScene for PopulateSceneWithObjFile<'a> {
                 .map(|face| [face[0], face[1], face[2]])
                 .collect();
 
-            let tri_mesh = TriMesh::new(vertices, indices).expect("invalid triangle mesh");
+            // fixme: this should be integrated with the loader API
+            let _tri_mesh = TriMesh::new(vertices, indices).expect("invalid triangle mesh");
 
             scene.entities.spawn((
                 self.transform,
                 self.material,
-                SharedShape::from(tri_mesh),
+                //MeshFromShape::from(tri_mesh),
                 label,
                 Render,
-                Collides,
+                // todo: collider
             ));
         }
 

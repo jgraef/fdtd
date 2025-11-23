@@ -282,7 +282,7 @@ pub struct TextureProjection {
     texture_view: wgpu::TextureView,
 }
 
-impl<'a> CreateProjection<wgpu::Texture> for FdtdWgpuSolverInstance {
+impl CreateProjection<wgpu::Texture> for FdtdWgpuSolverInstance {
     type Projection = TextureProjection;
 
     fn create_projection(
@@ -304,7 +304,7 @@ impl<'a> CreateProjection<wgpu::Texture> for FdtdWgpuSolverInstance {
     }
 }
 
-impl<'a> CreateProjection<wgpu::TextureView> for FdtdWgpuSolverInstance {
+impl CreateProjection<wgpu::TextureView> for FdtdWgpuSolverInstance {
     type Projection = TextureProjection;
 
     fn create_projection(
@@ -329,7 +329,7 @@ pub struct TextureSenderProjection {
     parameters: ProjectionParameters,
 }
 
-impl<'a> CreateProjection<UndecidedTextureSender> for FdtdWgpuSolverInstance {
+impl CreateProjection<UndecidedTextureSender> for FdtdWgpuSolverInstance {
     type Projection = TextureSenderProjection;
 
     fn create_projection(
@@ -343,7 +343,7 @@ impl<'a> CreateProjection<UndecidedTextureSender> for FdtdWgpuSolverInstance {
     }
 }
 
-impl<'a> CreateProjection<TextureSender> for FdtdWgpuSolverInstance {
+impl CreateProjection<TextureSender> for FdtdWgpuSolverInstance {
     type Projection = TextureSenderProjection;
 
     fn create_projection(

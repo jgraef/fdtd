@@ -710,7 +710,6 @@ impl PopulateScene for ExampleScene {
 
     fn populate_scene(&self, scene: &mut Scene) -> Result<(), Self::Error> {
         let shape = |size| parry3d::shape::Cuboid::new(Vector3::repeat(size));
-        //let shape = |size| parry3d::shape::Ball::new(size);
 
         let em_material = crate::physics::material::Material {
             relative_permittivity: 3.9,
@@ -759,6 +758,8 @@ impl PopulateScene for ExampleScene {
             Transform::identity(),
             Render,
         ));
+
+        // Quad::new(Vector2::new(1.0, 1.0))
 
         Ok(())
     }

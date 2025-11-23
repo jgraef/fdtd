@@ -1,25 +1,44 @@
-use std::ops::Range;
+use std::{
+    fmt::Debug,
+    ops::{
+        Deref,
+        Range,
+    },
+    sync::Arc,
+};
 
 use bytemuck::Pod;
 use nalgebra::{
     Point2,
     Point3,
+    Vector2,
     Vector3,
+};
+use parry3d::shape::{
+    Ball,
+    Cuboid,
+    Cylinder,
+    TriMesh,
 };
 use wgpu::util::DeviceExt;
 
-use crate::app::composer::{
-    renderer::{
-        Fallbacks,
-        Render,
-        light::MaterialTextures,
-    },
-    scene::{
-        Label,
-        Scene,
-        shape::{
-            Shape,
-            SharedShape,
+use crate::{
+    Error,
+    app::composer::{
+        renderer::{
+            Fallbacks,
+            Render,
+            light::MaterialTextures,
+            loader::{
+                Loader,
+                LoaderContext,
+                LoadingProgress,
+                LoadingState,
+            },
+        },
+        scene::{
+            Label,
+            Scene,
         },
     },
 };
@@ -105,10 +124,9 @@ impl Mesh {
         }
     }
 
-    pub fn from_shape<S: Shape + ?Sized>(shape: &S, device: &wgpu::Device) -> Option<Self> {
-        shape
-            .to_surface_mesh()
-            .map(|surface_mesh| Self::from_surface_mesh(&surface_mesh, device))
+    pub fn from_shape<S: ToSurfaceMesh + ?Sized>(shape: &S, device: &wgpu::Device) -> Self {
+        let surface_mesh = shape.to_surface_mesh();
+        Self::from_surface_mesh(&surface_mesh, device)
     }
 }
 
@@ -205,39 +223,196 @@ impl WindingOrder {
     }
 }
 
-pub(super) fn generate_meshes_for_shapes(
+#[derive(Clone, Debug)]
+pub enum LoadMesh {
+    Shape(MeshFromShape),
+}
+
+impl From<MeshFromShape> for LoadMesh {
+    fn from(value: MeshFromShape) -> Self {
+        Self::Shape(value)
+    }
+}
+
+impl Loader for LoadMesh {
+    type State = LoadMeshState;
+
+    fn start_loading(&self, context: &mut LoaderContext) -> Result<LoadMeshState, Error> {
+        let _ = context;
+        match self {
+            LoadMesh::Shape(mesh_from_shape) => Ok(LoadMeshState::Shape(mesh_from_shape.clone())),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum LoadMeshState {
+    Shape(MeshFromShape),
+}
+
+impl LoadingState for LoadMeshState {
+    type Output = (Mesh,);
+
+    fn poll(&mut self, context: &mut LoaderContext) -> Result<LoadingProgress<(Mesh,)>, Error> {
+        match self {
+            LoadMeshState::Shape(shape) => {
+                tracing::debug!(?shape, "loading mesh from shape");
+                let mesh = Mesh::from_shape(&*shape.0, context.device());
+                Ok(LoadingProgress::Ready((mesh,)))
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct MeshFromShape(pub Arc<dyn MeshFromShapeTraits>);
+
+impl<S: MeshFromShapeTraits> From<S> for MeshFromShape {
+    fn from(value: S) -> Self {
+        Self(Arc::new(value))
+    }
+}
+
+impl Deref for MeshFromShape {
+    type Target = dyn MeshFromShapeTraits;
+
+    fn deref(&self) -> &Self::Target {
+        &*self.0
+    }
+}
+
+/*
+impl Serialize for MeshFromShape {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        self.0.as_typed_shape().serialize(serializer)
+    }
+}*/
+
+pub trait MeshFromShapeTraits: ToSurfaceMesh + Debug + Send + Sync + 'static {}
+
+impl<T> MeshFromShapeTraits for T where T: ToSurfaceMesh + Debug + Send + Sync + 'static {}
+
+pub trait ToSurfaceMesh {
+    /// Generate surface mesh.
+    ///
+    /// At the moment this is only used for rendering. If an entity has the
+    /// [`Render`] tag and a [`SharedShape`], the renderer will generate a mesh
+    /// for it and send it to the GPU. If this method returns `None` though, the
+    /// [`Render`] tag will be removed.
+    fn to_surface_mesh(&self) -> SurfaceMesh;
+}
+
+/// according to the [documentation][1] the tri mesh should be wound
+/// counter-clockwise.
+///
+/// [1]: https://docs.rs/parry3d/latest/parry3d/shape/struct.TriMesh.html#method.new
+pub const PARRY_WINDING_ORDER: WindingOrder = WindingOrder::CounterClockwise;
+
+fn parry_surface_mesh(vertices: Vec<Point3<f32>>, indices: Vec<[u32; 3]>) -> SurfaceMesh {
+    SurfaceMesh {
+        indices,
+        vertices,
+        normals: vec![],
+        uvs: vec![],
+        winding_order: PARRY_WINDING_ORDER,
+    }
+}
+
+impl ToSurfaceMesh for Ball {
+    fn to_surface_mesh(&self) -> SurfaceMesh {
+        let (vertices, indices) = self.to_trimesh(20, 20);
+        parry_surface_mesh(vertices, indices)
+    }
+}
+
+impl ToSurfaceMesh for Cuboid {
+    fn to_surface_mesh(&self) -> SurfaceMesh {
+        let (vertices, indices) = self.to_trimesh();
+
+        let mut mesh = parry_surface_mesh(vertices, indices);
+
+        // fake uvs
+        mesh.uvs = vec![
+            Point2::new(0.0, 0.0),
+            Point2::new(0.0, 1.0),
+            Point2::new(1.0, 0.0),
+            Point2::new(1.0, 1.0),
+            Point2::new(0.0, 0.0),
+            Point2::new(0.0, 1.0),
+            Point2::new(1.0, 0.0),
+            Point2::new(1.0, 1.0),
+        ];
+
+        mesh
+    }
+}
+
+impl ToSurfaceMesh for Cylinder {
+    fn to_surface_mesh(&self) -> SurfaceMesh {
+        let (vertices, indices) = self.to_trimesh(20);
+        parry_surface_mesh(vertices, indices)
+    }
+}
+
+impl ToSurfaceMesh for TriMesh {
+    fn to_surface_mesh(&self) -> SurfaceMesh {
+        parry_surface_mesh(self.vertices().to_owned(), self.indices().to_owned())
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct Quad {
+    pub half_extents: Vector2<f32>,
+}
+
+impl ToSurfaceMesh for Quad {
+    fn to_surface_mesh(&self) -> SurfaceMesh {
+        const VERTICES: [(f32, f32); 4] = [(-1.0, -1.0), (-1.0, 1.0), (1.0, 1.0), (1.0, -1.0)];
+        const INDICES: [[u32; 3]; 2] = [[0, 1, 2], [0, 2, 3]];
+
+        SurfaceMesh {
+            indices: INDICES.into(),
+            vertices: VERTICES
+                .iter()
+                .map(|(x, y)| Point3::new(self.half_extents.x * *x, self.half_extents.y * *y, 0.0))
+                .collect(),
+            normals: vec![],
+            uvs: vec![],
+            winding_order: WindingOrder::CounterClockwise,
+        }
+    }
+}
+
+pub(super) fn update_mesh_bind_groups(
     scene: &mut Scene,
     device: &wgpu::Device,
     mesh_bind_group_layout: &wgpu::BindGroupLayout,
     texture_defaults: &Fallbacks,
 ) {
-    for (entity, (shape, material_textures, label)) in scene
+    // todo: changed tags?
+
+    for (entity, (mesh, material_textures, label)) in scene
         .entities
-        .query_mut::<(&SharedShape, Option<&MaterialTextures>, Option<&Label>)>()
+        .query_mut::<(&Mesh, Option<&MaterialTextures>, Option<&Label>)>()
         .with::<&Render>()
-        .without::<&Mesh>()
+        .without::<&MeshBindGroup>()
     {
-        if let Some(mesh) = Mesh::from_shape(&*shape.0, device) {
-            if mesh.uv_buffer.is_none() && material_textures.is_some() {
-                tracing::warn!(?label, "Mesh with textures, but no UV buffer");
-            }
-
-            let mesh_bind_group = MeshBindGroup::new(
-                device,
-                mesh_bind_group_layout,
-                &mesh,
-                material_textures,
-                texture_defaults,
-            );
-
-            scene.command_buffer.insert(entity, (mesh, mesh_bind_group));
+        if mesh.uv_buffer.is_none() && material_textures.is_some() {
+            tracing::warn!(?label, "Mesh with textures, but no UV buffer");
         }
-        else {
-            tracing::warn!(
-                "Entity {entity:?} (label {label:?}) was marked for rendering, but a mesh could not be constructed."
-            );
-            scene.command_buffer.remove::<(Render,)>(entity);
-        }
+
+        let mesh_bind_group = MeshBindGroup::new(
+            device,
+            mesh_bind_group_layout,
+            mesh,
+            material_textures,
+            texture_defaults,
+        );
+
+        scene.command_buffer.insert_one(entity, mesh_bind_group);
     }
 
     scene.apply_deferred();

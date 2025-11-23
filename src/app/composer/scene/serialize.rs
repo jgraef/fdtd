@@ -277,10 +277,7 @@ mod register_global {
         },
         scene::{
             Label,
-            collisions::{
-                BoundingBox,
-                Collides,
-            },
+            collisions::BoundingBox,
             serialize::EntitySerializer,
             transform::Transform,
         },
@@ -301,7 +298,6 @@ mod register_global {
             Material,
             Label,
             Render,
-            Collides,
             BoundingBox,
             ShowInTree,
             Outline,

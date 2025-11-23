@@ -68,6 +68,7 @@ use crate::{
                 TextureCache,
             },
             mesh::{
+                LoadMesh,
                 Mesh,
                 MeshBindGroup,
                 WindingOrder,
@@ -88,6 +89,7 @@ use crate::{
 
 /// Tag for entities that should be rendered
 #[derive(Copy, Clone, Debug, Default, Serialize, Deserialize)]
+//#[deprecated]
 pub struct Render;
 
 // todo: respect eguis theme. we might just pass this in from the view when
@@ -435,13 +437,14 @@ impl Renderer {
 
         // load rendering assets
         let mut run_loaders = RunLoaders::new(self, scene);
-        let load_result = run_loaders.run::<LoadMaterialTextures>();
+        let mut load_result = run_loaders.run::<LoadMaterialTextures>();
+        load_result = load_result.and_then(|()| run_loaders.run::<LoadMesh>());
         if let Err(error) = &load_result {
             tracing::warn!(?error);
         }
 
         // generate meshes (for rendering) for objects that don't have them yet.
-        mesh::generate_meshes_for_shapes(
+        mesh::update_mesh_bind_groups(
             scene,
             &self.wgpu_context.device,
             &self.mesh_bind_group_layout,

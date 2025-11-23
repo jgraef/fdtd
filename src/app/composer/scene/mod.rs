@@ -1,6 +1,5 @@
 pub mod collisions;
 pub mod serialize;
-pub mod shape;
 pub mod transform;
 pub mod ui;
 pub mod undo;
@@ -16,13 +15,13 @@ use std::{
         Deref,
         DerefMut,
     },
+    sync::Arc,
 };
 
 use nalgebra::{
     Isometry3,
     Point3,
     Vector2,
-    Vector3,
 };
 use parry3d::{
     bounding_volume::Aabb,
@@ -30,10 +29,7 @@ use parry3d::{
         Contact,
         Ray,
     },
-    shape::{
-        HalfSpace,
-        Shape,
-    },
+    shape::Shape,
 };
 use serde::{
     Deserialize,
@@ -46,17 +42,22 @@ use crate::app::composer::{
         Render,
         grid::GridPlane,
         light::Material,
+        mesh::{
+            LoadMesh,
+            MeshFromShape,
+            MeshFromShapeTraits,
+        },
     },
     scene::{
         collisions::{
             BoundingBox,
-            Collides,
+            Collider,
+            ColliderTraits,
             OctTree,
             RayHit,
             merge_aabbs,
         },
         serialize::SerializeEntity,
-        shape::SharedShape,
         transform::Transform,
     },
     tree::ShowInTree,
@@ -88,22 +89,23 @@ pub struct Scene {
 }
 
 impl Scene {
-    pub fn add_object(
-        &mut self,
-        transform: impl Into<Transform>,
-        shape: impl Into<SharedShape>,
-    ) -> EntityBuilder<'_> {
+    pub fn add_object<S>(&mut self, transform: impl Into<Transform>, shape: S) -> EntityBuilder<'_>
+    where
+        S: ColliderTraits + MeshFromShapeTraits,
+    {
         let mut builder = hecs::EntityBuilder::new();
 
-        let shape = shape.into();
         let label = Label::from(format!("object.{:?}", shape.shape_type()));
+        let shape = Arc::new(shape);
+        let mesh_loader = LoadMesh::from(MeshFromShape(shape.clone()));
+        let collider = Collider(shape);
 
         builder.add_bundle((
             transform.into(),
-            shape,
+            mesh_loader,
+            collider,
             Render,
             label,
-            Collides,
             ShowInTree,
             Selectable,
         ));
@@ -121,7 +123,7 @@ impl Scene {
     ) -> hecs::Entity {
         self.entities.spawn((
             transform.into(),
-            SharedShape::from(HalfSpace::new(Vector3::y_axis())),
+            //MeshFromShape::from(HalfSpace::new(Vector3::y_axis())),
             GridPlane { line_spacing },
             Label::new_static("grid-plane"),
         ))
@@ -197,10 +199,10 @@ impl Scene {
             merge_aabbs(aabbs)
         }
         else {
-            let mut query = self.entities.query::<(&Transform, &SharedShape)>();
-            let aabbs = query.iter().map(|(_entity, (transform, shape))| {
+            let mut query = self.entities.query::<(&Transform, &Collider)>();
+            let aabbs = query.iter().map(|(_entity, (transform, collider))| {
                 let transform = relative_to_inv * transform.transform;
-                shape.compute_aabb(&transform)
+                collider.compute_aabb(&transform)
             });
             merge_aabbs(aabbs)
         }

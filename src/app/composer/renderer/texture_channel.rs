@@ -86,16 +86,20 @@ pub(super) struct CreateTextureForChannelCommand {
 impl CreateTextureForChannelCommand {
     pub fn handle(&self, create_texture: impl FnOnce(&Vector2<u32>, &str) -> wgpu::Texture) {
         let mut state = self.state.write();
-        let texture_specification = state
-            .sender_spec
-            .as_ref()
-            .expect("command to create texture, but texture_specification not set");
-        assert!(state.texture_and_view.is_none());
 
-        state.texture_and_view = Some(create_texture_and_view(
-            texture_specification,
-            create_texture,
-        ));
+        // note: this command is only sent if the sender can't find a texture, but by
+        // the time we got around to handling it, we might already have created it.
+        if state.texture_and_view.is_none() {
+            let texture_specification = state
+                .sender_spec
+                .as_ref()
+                .expect("command to create texture, but texture_specification not set");
+
+            state.texture_and_view = Some(create_texture_and_view(
+                texture_specification,
+                create_texture,
+            ));
+        }
     }
 }
 
@@ -139,17 +143,12 @@ impl UndecidedTextureSender {
         {
             let mut state = self.state.write();
 
-            state.sender_spec = Some(SenderSpec {
-                size: *size,
-                label: label.to_string(),
-            });
             state.image_buffer = Some(RgbaImage::new(size.x, size.y));
 
-            if let Some(command_sender) = &state.command_sender {
-                command_sender.send(CreateTextureForChannelCommand {
-                    state: self.state.clone(),
-                });
-            }
+            // note: even though we don't need the texture to send images, we need to notify
+            // the renderer that we have set the size, and it'll create it and manage it for
+            // us.
+            request_texture(&mut state, &self.state, *size, label.to_string());
         }
 
         ImageSender { state: self.state }
@@ -157,10 +156,7 @@ impl UndecidedTextureSender {
 
     pub fn send_texture(self, size: &Vector2<u32>, label: impl ToString) -> TextureSender {
         let mut state = self.state.write();
-        state.sender_spec = Some(SenderSpec {
-            size: *size,
-            label: label.to_string(),
-        });
+        request_texture(&mut state, &self.state, *size, label.to_string());
         drop(state);
         TextureSender { state: self.state }
     }
@@ -250,6 +246,30 @@ struct State {
     sender_spec: Option<SenderSpec>,
     receiver_spec: Option<ReceiverSpec>,
     command_sender: Option<CommandSender>,
+}
+
+fn request_texture(
+    state_guard: &mut State,
+    state_shared: &Arc<RwLock<State>>,
+    size: Vector2<u32>,
+    label: String,
+) {
+    assert!(
+        state_guard.texture_and_view.is_none(),
+        "We should not have a texture and view yet, because we haven't requested a size yet"
+    );
+    assert!(
+        state_guard.sender_spec.is_none(),
+        "request_texture called with a sender_spec already present"
+    );
+
+    state_guard.sender_spec = Some(SenderSpec { size, label });
+
+    if let Some(command_sender) = &state_guard.command_sender {
+        command_sender.send(CreateTextureForChannelCommand {
+            state: state_shared.clone(),
+        });
+    }
 }
 
 #[derive(Clone, Debug)]
