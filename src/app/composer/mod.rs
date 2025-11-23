@@ -89,7 +89,10 @@ use crate::{
             },
             fdtd,
             observer::Observer,
-            runner::SolverRunner,
+            runner::{
+                SolverRunner,
+                test_color_map,
+            },
             ui::SolverConfigUiWindow,
         },
     },
@@ -750,7 +753,8 @@ impl PopulateScene for ExampleScene {
             Observer {
                 write_to_gif: None,
                 display_as_texture: true,
-                field_component: FieldComponent::E,
+                field: FieldComponent::E,
+                color_map: test_color_map(0.5, Vector3::z_axis()),
             },
             Transform::identity(),
             Render,

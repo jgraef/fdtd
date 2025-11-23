@@ -51,7 +51,7 @@ where
 impl<Threading, Target> CreateProjection<Target> for FdtdCpuSolverInstance<Threading>
 where
     Threading: LatticeForEach,
-    Target: ImageTarget,
+    Target: ImageTarget<Pixel = image::Rgba<u8>>,
 {
     type Projection = ImageProjection<Target>;
 
@@ -69,7 +69,8 @@ where
     }
 }
 
-impl<'a, Target> ProjectionPassAdd<'a, ImageProjection<Target>> for FdtdCpuProjectionPass<'a>
+impl<'a, Threading, Target> ProjectionPassAdd<'a, ImageProjection<Target>>
+    for FdtdCpuProjectionPass<'a, Threading>
 where
     Target: ImageTarget<Pixel = image::Rgba<u8>>,
 {
@@ -112,36 +113,41 @@ where
     }
 }
 
-impl<'a> ProjectionPassAdd<'a, TextureSenderProjection> for FdtdCpuProjectionPass<'a> {
+impl<'a, Threading> ProjectionPassAdd<'a, TextureSenderProjection>
+    for FdtdCpuProjectionPass<'a, Threading>
+{
     fn add_projection(&mut self, projection: &'a mut TextureSenderProjection) {
         let mut image_buffer = projection.image_sender.update_image();
         self.project_to_image(&mut image_buffer, &projection.parameters);
     }
 }
 
-impl BeginProjectionPass for FdtdCpuSolverInstance {
+impl<Threading> BeginProjectionPass for FdtdCpuSolverInstance<Threading>
+where
+    Threading: LatticeForEach,
+{
     type ProjectionPass<'a>
-        = FdtdCpuProjectionPass<'a>
+        = FdtdCpuProjectionPass<'a, Threading>
     where
         Self: 'a;
 
     fn begin_projection_pass<'a>(
         &'a self,
         state: &'a FdtdCpuSolverState,
-    ) -> FdtdCpuProjectionPass<'a> {
+    ) -> FdtdCpuProjectionPass<'a, Threading> {
         FdtdCpuProjectionPass::new(self, state)
     }
 }
 
 #[derive(Debug)]
-pub struct FdtdCpuProjectionPass<'a> {
-    instance: &'a FdtdCpuSolverInstance,
+pub struct FdtdCpuProjectionPass<'a, Threading> {
+    instance: &'a FdtdCpuSolverInstance<Threading>,
     state: &'a FdtdCpuSolverState,
     swap_buffer_index: SwapBufferIndex,
 }
 
-impl<'a> FdtdCpuProjectionPass<'a> {
-    fn new(instance: &'a FdtdCpuSolverInstance, state: &'a FdtdCpuSolverState) -> Self {
+impl<'a, Threading> FdtdCpuProjectionPass<'a, Threading> {
+    fn new(instance: &'a FdtdCpuSolverInstance<Threading>, state: &'a FdtdCpuSolverState) -> Self {
         let swap_buffer_index = SwapBufferIndex::from_tick(state.tick + 1);
 
         Self {
@@ -188,7 +194,7 @@ impl<'a> FdtdCpuProjectionPass<'a> {
     }
 }
 
-impl<'a> ProjectionPass for FdtdCpuProjectionPass<'a> {
+impl<'a, Threading> ProjectionPass for FdtdCpuProjectionPass<'a, Threading> {
     fn finish(self) {
         // we do projections immediately, so there's nothing to do here
     }

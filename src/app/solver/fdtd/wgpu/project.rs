@@ -375,7 +375,7 @@ where
 
 impl<Target> CreateProjection<Target> for FdtdWgpuSolverInstance
 where
-    Target: ImageTarget,
+    Target: ImageTarget<Pixel = image::Rgba<u8>>,
 {
     type Projection = ImageProjection<Target>;
 

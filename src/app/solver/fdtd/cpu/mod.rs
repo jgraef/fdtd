@@ -63,7 +63,7 @@ use crate::{
 
 /// Defines how a single/multi-threading iterates over the lattice in the state
 /// update.
-pub trait LatticeForEach: Send + Sync {
+pub trait LatticeForEach: Send + Sync + 'static {
     fn for_each<T, F>(&self, strider: &Strider, lattice: &mut Lattice<T>, f: F)
     where
         T: Send + Sync,

@@ -5,7 +5,9 @@ use std::time::{
 
 use colorgrad::Gradient;
 use nalgebra::{
+    Matrix4,
     Point3,
+    UnitVector3,
     Vector3,
 };
 
@@ -13,7 +15,14 @@ use crate::{
     Error,
     app::{
         composer::{
-            renderer::WgpuContext,
+            renderer::{
+                WgpuContext,
+                light::LoadMaterialTextures,
+                texture_channel::{
+                    UndecidedTextureSender,
+                    texture_channel,
+                },
+            },
             scene::Scene,
         },
         solver::{
@@ -43,6 +52,12 @@ use crate::{
                     SourceFunction,
                 },
                 wgpu::FdtdWgpuBackend,
+            },
+            project::{
+                BeginProjectionPass,
+                CreateProjection,
+                ProjectionParameters,
+                ProjectionPassAdd,
             },
         },
     },
@@ -138,10 +153,18 @@ fn run_fdtd_with_backend<Backend>(
     backend: &Backend,
 ) where
     Backend: SolverBackend<FdtdSolverConfig, Point3<usize>>,
-    Backend::Instance:
-        EvaluateStopCondition + SolverInstance + Field<Point3<usize>> + Send + 'static,
+    Backend::Instance: EvaluateStopCondition
+        + SolverInstance
+        + CreateProjection<UndecidedTextureSender>
+        + Send
+        + 'static,
     <Backend::Instance as SolverInstance>::State: Time + Send + 'static,
     for<'a> <Backend::Instance as SolverInstance>::UpdatePass<'a>: UpdatePassForcing<Point3<usize>>,
+    for<'a> <Backend::Instance as BeginProjectionPass>::ProjectionPass<'a>: ProjectionPassAdd<
+            'a,
+            <Backend::Instance as CreateProjection<UndecidedTextureSender>>::Projection,
+        >,
+    <Backend::Instance as CreateProjection<UndecidedTextureSender>>::Projection: Send + 'static,
 {
     let time_start = Instant::now();
 
@@ -209,7 +232,7 @@ fn run_fdtd_with_backend<Backend>(
         .create_instance(&config, materials)
         .expect("fdtd solver instance creation never fails");
 
-    let state = instance.create_state();
+    let mut state = instance.create_state();
 
     // create sources
     // todo: from scene
@@ -232,7 +255,7 @@ fn run_fdtd_with_backend<Backend>(
     );
 
     // create observers
-    let observers = Observers::from_scene(scene, &lattice_size);
+    let observers = Observers::from_scene(&instance, &mut state, scene, &lattice_size);
 
     tracing::debug!("time to create simulation: {:?}", time_start.elapsed());
 
@@ -251,11 +274,18 @@ fn spawn_solver<Instance>(
     mut state: Instance::State,
     stop_condition: StopCondition,
     sources: Sources,
-    mut observers: Observers,
+    mut observers: Observers<<Instance as CreateProjection<UndecidedTextureSender>>::Projection>,
 ) where
-    Instance: SolverInstance + EvaluateStopCondition + Field<Point3<usize>> + Send + 'static,
+    Instance: SolverInstance
+        + EvaluateStopCondition
+        + CreateProjection<UndecidedTextureSender>
+        + Send
+        + 'static,
     Instance::State: Time + Send + 'static,
     for<'a> Instance::UpdatePass<'a>: UpdatePassForcing<Point3<usize>>,
+    for<'a> <Instance as BeginProjectionPass>::ProjectionPass<'a>:
+        ProjectionPassAdd<'a, <Instance as CreateProjection<UndecidedTextureSender>>::Projection>,
+    <Instance as CreateProjection<UndecidedTextureSender>>::Projection: Send + 'static,
 {
     let _join_handle = std::thread::spawn(move || {
         let time_start = Instant::now();
@@ -329,36 +359,61 @@ impl Observer {
 }
 
 #[derive(Debug, Default)]
-struct Observers {
-    observers: Vec<Observer>,
+struct Observers<P> {
+    projections: Vec<P>,
 }
 
-impl Observers {
-    pub fn from_scene(scene: &mut Scene, _lattice_size: &Vector3<usize>) -> Self {
-        let mut observers = vec![];
+impl<P> Observers<P> {
+    pub fn from_scene<I>(
+        instance: &I,
+        state: &mut I::State,
+        scene: &mut Scene,
+        lattice_size: &Vector3<usize>,
+    ) -> Self
+    where
+        I: CreateProjection<UndecidedTextureSender, Projection = P>,
+        for<'a> <I as BeginProjectionPass>::ProjectionPass<'a>: ProjectionPassAdd<'a, P>,
+    {
+        let mut projections = vec![];
 
-        for (_entity, observer) in scene.entities.query_mut::<&super::observer::Observer>() {
+        for (entity, observer) in scene.entities.query_mut::<&super::observer::Observer>() {
             // todo: use observer extents
 
             if observer.display_as_texture {
-                // todo: check if this already exists
+                let parameters = ProjectionParameters {
+                    projection: Matrix4::identity(),
+                    field: observer.field,
+                    color_map: observer.color_map,
+                    size: lattice_size.xy().cast(),
+                };
 
-                observers.push(Observer {});
+                let (sender, receiver) = texture_channel();
+
+                let projection = instance.create_projection(state, sender, &parameters);
+
+                projections.push(projection);
+                scene.command_buffer.insert_one(
+                    entity,
+                    LoadMaterialTextures::default().with_ambient_and_diffuse(receiver),
+                );
             }
         }
 
         // apply deferred commands
-        //scene.apply_deferred();
+        scene.apply_deferred();
 
-        Self { observers }
+        Self { projections }
     }
 
     pub fn run<I>(&mut self, instance: &I, state: &I::State)
     where
-        I: Field<Point3<usize>>,
+        I: BeginProjectionPass,
+        for<'a> <I as BeginProjectionPass>::ProjectionPass<'a>: ProjectionPassAdd<'a, P>,
     {
-        for observer in &mut self.observers {
-            observer.run(instance, state);
+        let mut pass = instance.begin_projection_pass(state);
+
+        for projection in &mut self.projections {
+            pass.add_projection(projection);
         }
     }
 }
@@ -428,4 +483,19 @@ impl Gradient for TestGradient {
     fn domain(&self) -> (f32, f32) {
         (-1.0, 1.0)
     }
+}
+
+pub fn test_color_map(scale: f32, axis: UnitVector3<f32>) -> Matrix4<f32> {
+    let mut m = Matrix4::zeros();
+
+    // scale axis, add a 0 (affine coordinates), and turn into row-vector
+    let x = scale * axis.into_inner().to_homogeneous().transpose();
+
+    // red (row 0) will be positive
+    m.set_row(0, &x);
+
+    // blue (row 2) will be negative
+    m.set_row(0, &(-x));
+
+    m
 }

@@ -72,7 +72,14 @@ pub struct ProjectionParameters {
 
 /// Trait for [`SolverInstance`]s that can create projections to a specific
 /// target.
-pub trait CreateProjection<Target>: SolverInstance {
+///
+/// The overly convoluted where clause forces that implementors of this trait,
+/// also can begin a projection pass which accepts the returned projections.
+pub trait CreateProjection<Target>: SolverInstance + BeginProjectionPass
+where
+    for<'a> <Self as BeginProjectionPass>::ProjectionPass<'a>:
+        ProjectionPassAdd<'a, Self::Projection>,
+{
     /// A projection handle that can then be passed to the
     /// [`ProjectionPassAdd::add_projection`].
     type Projection;
