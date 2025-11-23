@@ -132,7 +132,7 @@ fn vs_main_solid(input: VertexInput) -> VertexOutputSolid {
     output.world_normal = instance.transform * vec4f(normal, 0.0);
     output.fragment_position = camera.projection * camera.transform * output.world_position;
     if (instance.flags & FLAG_UV_BUFFER_VALID) != 0 {
-        output.texture_position = uv_buffer[input.vertex_index];
+        output.texture_position = uv_buffer[index_buffer[input.vertex_index]];
     }
 
     return output;

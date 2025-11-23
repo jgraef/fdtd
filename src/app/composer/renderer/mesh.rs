@@ -367,19 +367,36 @@ pub struct Quad {
     pub half_extents: Vector2<f32>,
 }
 
+impl Quad {
+    pub fn new(half_extents: impl Into<Vector2<f32>>) -> Self {
+        Self {
+            half_extents: half_extents.into(),
+        }
+    }
+}
+
 impl ToSurfaceMesh for Quad {
     fn to_surface_mesh(&self) -> SurfaceMesh {
-        const VERTICES: [(f32, f32); 4] = [(-1.0, -1.0), (-1.0, 1.0), (1.0, 1.0), (1.0, -1.0)];
+        const VERTICES: [(f32, f32); 4] = [(0.0, 0.0), (0.0, 1.0), (1.0, 1.0), (1.0, 0.0)];
         const INDICES: [[u32; 3]; 2] = [[0, 1, 2], [0, 2, 3]];
 
         SurfaceMesh {
             indices: INDICES.into(),
             vertices: VERTICES
                 .iter()
-                .map(|(x, y)| Point3::new(self.half_extents.x * *x, self.half_extents.y * *y, 0.0))
+                .map(|(x, y)| {
+                    Point3::new(
+                        self.half_extents.x * (2.0 * *x - 1.0),
+                        self.half_extents.y * (2.0 * *y - 1.0),
+                        0.0,
+                    )
+                })
                 .collect(),
-            normals: vec![],
-            uvs: vec![],
+            normals: std::iter::repeat_n(Vector3::z(), 4).collect(),
+            uvs: VERTICES
+                .iter()
+                .map(|(x, y)| Point2::new(*x, 1.0 - *y))
+                .collect(),
             winding_order: WindingOrder::CounterClockwise,
         }
     }

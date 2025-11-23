@@ -47,6 +47,11 @@ use crate::{
                     CameraProjection,
                 },
                 light::LoadMaterialTextures,
+                mesh::{
+                    LoadMesh,
+                    MeshFromShape,
+                    Quad,
+                },
             },
             scene::{
                 EntityDebugLabel,
@@ -87,11 +92,11 @@ use crate::{
                 StopCondition,
             },
             fdtd,
-            observer::Observer,
-            runner::{
-                SolverRunner,
+            observer::{
+                Observer,
                 test_color_map,
             },
+            runner::SolverRunner,
             ui::SolverConfigUiWindow,
         },
     },
@@ -747,17 +752,16 @@ impl PopulateScene for ExampleScene {
             .add(em_material);
 
         scene.entities.spawn((
-            // todo
             Observer {
                 write_to_gif: None,
                 display_as_texture: true,
                 field: FieldComponent::E,
                 color_map: test_color_map(0.5, Vector3::z_axis()),
             },
+            LoadMaterialTextures::default().with_ambient_and_diffuse("tmp/test_pattern.png"),
             Transform::identity(),
+            LoadMesh::from(MeshFromShape::from(Quad::new(Vector2::new(1.0, 1.0)))),
         ));
-
-        // Quad::new(Vector2::new(1.0, 1.0))
 
         Ok(())
     }

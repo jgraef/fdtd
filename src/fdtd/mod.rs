@@ -40,7 +40,6 @@ use crate::{
         FieldView,
         SolverBackend,
         SolverInstance,
-        SourceValues,
         Time,
         UpdatePass,
         UpdatePassForcing,
@@ -52,14 +51,15 @@ use crate::{
                 FdtdCpuSolverInstance,
                 SingleThreaded,
             },
-            source::{
-                GaussianPulse,
-                SourceFunction,
-            },
             wgpu::{
                 FdtdWgpuBackend,
                 FdtdWgpuSolverInstance,
             },
+        },
+        source::{
+            GaussianPulse,
+            SourceFunction,
+            SourceValues,
         },
     },
     fdtd::executor::Executor,
@@ -338,8 +338,8 @@ where
         update_pass.set_forcing(
             &Point3::new(50, 0, 0),
             &SourceValues {
-                j_source: Vector3::y() * value,
-                m_source: Vector3::z() * value,
+                j: Vector3::y() * value,
+                m: Vector3::z() * value,
             },
         );
         update_pass.finish();

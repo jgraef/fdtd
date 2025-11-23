@@ -4,6 +4,7 @@ This app is work-in-progress. It's intended to model electromagnetic behavior. I
 
 # TODO
 
+ - I think we can get rid of the `CreateProjectionPass` trait. The size of the image buffer/texture can be specified with the target (which it is afaik for the image buffers, so we would specify the texture size when creating the texture channel). Then when in the projection pass the setup (pipeline creation) could be done lazily. Either way we really only need to know the size of the image/texture when setting up the simulation, so it should be passed to `texture_channel()` (this avoids that the renderer has to wait for the size before it can create the texture and the backend can project as soon as it gets a texture from the renderer).
  - PRs for `egui_ltreeview`
  - fdtd: compress material buffer:
   - most points in the lattice contain the same material values

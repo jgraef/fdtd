@@ -360,11 +360,9 @@ impl<'a> UpdatePassForcing<Point3<usize>> for FdtdWgpuUpdatePass<'a> {
         if let Some(cell_index) = self.instance.strider.index(point) {
             // note: unlike in the cpu implementation, here we can't check if that point was
             // already inserted
-            self.state.source_buffer.push(SourceData::new(
-                cell_index,
-                value.j_source,
-                value.m_source,
-            ));
+            self.state
+                .source_buffer
+                .push(SourceData::new(cell_index, value.j, value.m));
         }
     }
 }

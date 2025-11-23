@@ -6,7 +6,6 @@ use std::time::{
 use nalgebra::{
     Matrix4,
     Point3,
-    UnitVector3,
     Vector3,
 };
 
@@ -17,18 +16,21 @@ use crate::{
             renderer::{
                 WgpuContext,
                 light::LoadMaterialTextures,
+                mesh::Quad,
                 texture_channel::{
                     UndecidedTextureSender,
                     texture_channel,
                 },
             },
-            scene::Scene,
+            scene::{
+                Scene,
+                transform::Transform,
+            },
         },
         solver::{
             DomainDescription,
             SolverBackend,
             SolverInstance,
-            SourceValues,
             Time,
             UpdatePass,
             UpdatePassForcing,
@@ -45,10 +47,6 @@ use crate::{
                 self,
                 FdtdSolverConfig,
                 cpu::FdtdCpuBackend,
-                source::{
-                    GaussianPulse,
-                    SourceFunction,
-                },
                 wgpu::FdtdWgpuBackend,
             },
             observer::Observer,
@@ -57,6 +55,11 @@ use crate::{
                 CreateProjection,
                 ProjectionParameters,
                 ProjectionPassAdd,
+            },
+            source::{
+                GaussianPulse,
+                ScalarSourceFunctionExt,
+                Source,
             },
         },
     },
@@ -232,6 +235,7 @@ fn run_fdtd_with_backend<Backend>(
 
     // create sources
     // todo: from scene
+    //let mut sources = Sources::from_scene(scene);
     let mut sources = Sources::default();
     /*let source = fdtd::source::ContinousWave {
         electric_current_density_amplitude: Vector3::z() / config.resolution.temporal,
@@ -240,14 +244,13 @@ fn run_fdtd_with_backend<Backend>(
         magnetic_current_density_phase: 0.0,
         frequency: 2.0,
     };*/
-    sources.add(
-        (lattice_size / 2).into(),
-        Vector3::z() / config.resolution.temporal,
-        Vector3::zeros(),
-        GaussianPulse {
-            time: config.resolution.temporal * 50.0,
-            duration: config.resolution.temporal * 10.0,
-        },
+    sources.push(
+        Point3::from(lattice_size / 2),
+        GaussianPulse::new(
+            config.resolution.temporal * 50.0,
+            config.resolution.temporal * 10.0,
+        )
+        .with_amplitudes(Vector3::z() / config.resolution.temporal, Vector3::zeros()),
     );
 
     // create observers
@@ -357,7 +360,11 @@ impl<P> Observers<P> {
     {
         let mut projections = vec![];
 
-        for (entity, observer) in scene.entities.query_mut::<&Observer>() {
+        // todo:
+        // - derive projection from observer quad/transform
+        // - transform projection into simulation coordinate space
+
+        for (entity, (observer, _quad)) in scene.entities.query_mut::<(&Observer, &Quad)>() {
             // todo: use observer extents
 
             if observer.display_as_texture {
@@ -399,63 +406,41 @@ impl<P> Observers<P> {
     }
 }
 
-#[derive(Debug)]
-struct Source {
-    function: Box<dyn SourceFunction>,
-    j_amplitude: Vector3<f64>,
-    m_amplitude: Vector3<f64>,
-    point: Point3<usize>,
-}
-
 #[derive(Debug, Default)]
 struct Sources {
-    sources: Vec<Source>,
+    sources: Vec<(Point3<usize>, Source)>,
 }
 
 impl Sources {
-    pub fn add(
-        &mut self,
-        point: Point3<usize>,
-        j_amplitude: Vector3<f64>,
-        m_amplitude: Vector3<f64>,
-        function: impl SourceFunction,
-    ) {
-        self.sources.push(Source {
-            function: Box::new(function),
-            j_amplitude,
-            m_amplitude,
-            point,
-        });
+    pub fn from_scene(scene: &mut Scene) -> Self {
+        let sources = scene
+            .entities
+            .query_mut::<(&Transform, &Source)>()
+            .into_iter()
+            .map(|(_entity, (transform, source))| {
+                let _world_point = transform.position();
+
+                // todo: transform to simulation coordinate space
+
+                let sim_point = Point3::origin();
+                (sim_point, source.clone())
+            })
+            .collect();
+
+        Self { sources }
+    }
+
+    pub fn push(&mut self, point: Point3<usize>, source: impl Into<Source>) {
+        self.sources.push((point, source.into()));
     }
 
     pub fn apply<UpdatePass>(&self, time: f64, update_pass: &mut UpdatePass)
     where
         UpdatePass: UpdatePassForcing<Point3<usize>>,
     {
-        for source in &self.sources {
-            let value = source.function.evaluate(time);
-            update_pass.set_forcing(
-                &source.point,
-                &SourceValues {
-                    j_source: value * source.j_amplitude,
-                    m_source: value * source.m_amplitude,
-                },
-            );
+        for (point, source) in &self.sources {
+            let values = source.0.evaluate(time);
+            update_pass.set_forcing(point, &values);
         }
     }
-}
-
-pub fn test_color_map(scale: f32, axis: UnitVector3<f32>) -> Matrix4<f32> {
-    let mut m = Matrix4::zeros();
-
-    // scale axis, add a 0 (affine coordinates), and turn into row-vector
-    let x = scale * axis.into_inner().to_homogeneous().transpose();
-
-    // red (row 0) will be positive
-    m.set_row(0, &x);
-
-    // blue (row 2) will be negative
-    m.set_row(0, &(-x));
-
-    m
 }

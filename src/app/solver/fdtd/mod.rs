@@ -1,7 +1,6 @@
 mod boundary_condition;
 pub mod cpu;
 mod pml;
-pub(crate) mod source;
 mod strider;
 mod util;
 pub mod wgpu;

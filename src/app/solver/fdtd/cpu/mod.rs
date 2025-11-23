@@ -443,7 +443,7 @@ where
 
                 let source_id = self.state.source_field[index];
                 let m_source = if source_id != 0 {
-                    self.state.source_buffer[source_id].1.m_source
+                    self.state.source_buffer[source_id].1.m
                 }
                 else {
                     Default::default()
@@ -487,7 +487,7 @@ where
 
                 let source_id = self.state.source_field[index];
                 let j_source = if source_id != 0 {
-                    self.state.source_buffer[source_id].1.j_source
+                    self.state.source_buffer[source_id].1.j
                 }
                 else {
                     Default::default()

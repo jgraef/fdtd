@@ -3,13 +3,20 @@ pub mod fdtd;
 pub mod observer;
 pub mod project;
 pub mod runner;
+pub mod source;
 pub mod ui;
 
-use std::ops::RangeBounds;
+use std::{
+    fmt::Debug,
+    ops::RangeBounds,
+};
 
 use nalgebra::Vector3;
 
-use crate::physics::material::Material;
+use crate::{
+    app::solver::source::SourceValues,
+    physics::material::Material,
+};
 
 /// TODO: Reconcile the use of a config and domain description. Should they be
 /// the same thing? E.g. our FDTD implementation takes domain-specific
@@ -124,10 +131,4 @@ pub trait FieldView<P> {
 pub enum FieldComponent {
     E,
     H,
-}
-
-#[derive(Clone, Copy, Debug, Default)]
-pub struct SourceValues {
-    pub j_source: Vector3<f64>,
-    pub m_source: Vector3<f64>,
 }
