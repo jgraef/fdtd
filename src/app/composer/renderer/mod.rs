@@ -612,10 +612,11 @@ impl Renderer {
                 Ok(LoadingProgress::Ready(texture_and_view))
             }
             TextureSource::Channel { receiver } => {
-                let texture_and_view = receiver
-                    .register(&self.command_queue.sender, |size, label| {
-                        self.create_texture(size, label)
-                    });
+                let texture_and_view = receiver.register(
+                    &self.command_queue.sender,
+                    wgpu::TextureFormat::Rgba8Unorm,
+                    |size, label| self.create_texture(size, label),
+                );
                 Ok(texture_and_view.into())
             }
         }

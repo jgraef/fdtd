@@ -14,8 +14,12 @@ use palette::{
     Srgba,
 };
 
-use crate::{
-    app::solver::{
+use crate::app::{
+    composer::renderer::texture_channel::{
+        ImageSender,
+        UndecidedTextureSender,
+    },
+    solver::{
         fdtd::{
             cpu::{
                 FdtdCpuSolverInstance,
@@ -31,10 +35,8 @@ use crate::{
             ProjectionParameters,
             ProjectionPass,
             ProjectionPassAdd,
-            TextureTarget,
         },
     },
-    util::wgpu::WriteImageToTextureExt,
 };
 
 #[derive(Debug)]
@@ -82,44 +84,38 @@ where
 // TextureWrite that shares an image buffer with the rendering engine and will
 // write them to GPU before rendering.
 #[derive(Debug)]
-pub struct TextureProjection {
-    texture: wgpu::Texture,
-    queue: wgpu::Queue,
+pub struct TextureSenderProjection {
+    image_sender: ImageSender,
     parameters: ProjectionParameters,
-    frame_buffer: image::RgbaImage,
 }
 
-impl<'a, Threading> CreateProjection<TextureTarget<'a>> for FdtdCpuSolverInstance<Threading>
+impl<'a, Threading> CreateProjection<UndecidedTextureSender> for FdtdCpuSolverInstance<Threading>
 where
     Threading: LatticeForEach,
 {
-    type Projection = TextureProjection;
+    type Projection = TextureSenderProjection;
 
     fn create_projection(
         &self,
         state: &Self::State,
-        target: TextureTarget<'a>,
+        target: UndecidedTextureSender,
         parameters: &ProjectionParameters,
-    ) -> TextureProjection {
+    ) -> TextureSenderProjection {
         let _ = state;
 
-        let frame_buffer = image::RgbaImage::new(target.texture.width(), target.texture.height());
+        let image_sender = target.send_images(&parameters.size, "fdtd-cpu/projection");
 
-        TextureProjection {
-            texture: target.texture.clone(),
-            queue: target.queue.clone(),
+        TextureSenderProjection {
+            image_sender,
             parameters: *parameters,
-            frame_buffer,
         }
     }
 }
 
-impl<'a> ProjectionPassAdd<'a, TextureProjection> for FdtdCpuProjectionPass<'a> {
-    fn add_projection(&mut self, projection: &'a mut TextureProjection) {
-        self.project_to_image(&mut projection.frame_buffer, &projection.parameters);
-        projection
-            .frame_buffer
-            .write_to_texture(&projection.queue, &projection.texture);
+impl<'a> ProjectionPassAdd<'a, TextureSenderProjection> for FdtdCpuProjectionPass<'a> {
+    fn add_projection(&mut self, projection: &'a mut TextureSenderProjection) {
+        let mut image_buffer = projection.image_sender.update_image();
+        self.project_to_image(&mut image_buffer, &projection.parameters);
     }
 }
 

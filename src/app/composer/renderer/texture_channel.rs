@@ -1,10 +1,16 @@
-use std::sync::Arc;
+use std::{
+    ops::{
+        Deref,
+        DerefMut,
+    },
+    sync::Arc,
+};
 
 use image::RgbaImage;
 use nalgebra::Vector2;
 use parking_lot::{
     RwLock,
-    RwLockReadGuard,
+    RwLockWriteGuard,
 };
 
 use crate::app::composer::renderer::{
@@ -31,21 +37,27 @@ impl TextureReceiver {
     pub fn register(
         &mut self,
         command_sender: &CommandSender,
+        format: wgpu::TextureFormat,
         create_texture: impl FnOnce(&Vector2<u32>, &str) -> wgpu::Texture,
     ) -> Option<Arc<TextureAndView>> {
         let mut state = self.state.write();
 
-        if let Some(texture_specification) = &state.texture_specification
-            && state.texture_and_view.is_none()
-        {
-            state.texture_and_view = Some(create_texture_and_view(
-                texture_specification,
-                create_texture,
-            ));
+        let receiver_spec = ReceiverSpec { format };
+
+        if state.receiver_spec.is_none() {
+            state.receiver_spec = Some(receiver_spec);
         }
 
         if state.command_sender.is_none() {
             state.command_sender = Some(command_sender.clone());
+        }
+
+        if let Some(sender_spec) = &state.sender_spec
+            && state.texture_and_view.is_none()
+        {
+            let texture_and_view = create_texture_and_view(sender_spec, create_texture);
+            assert_eq!(texture_and_view.texture.format(), receiver_spec.format);
+            state.texture_and_view = Some(texture_and_view);
         }
 
         state.texture_and_view.clone()
@@ -53,12 +65,13 @@ impl TextureReceiver {
 }
 
 fn create_texture_and_view(
-    texture_specification: &TextureSpecification,
+    sender_spec: &SenderSpec,
     create_texture: impl FnOnce(&Vector2<u32>, &str) -> wgpu::Texture,
 ) -> Arc<TextureAndView> {
-    let texture = create_texture(&texture_specification.size, &texture_specification.label);
+    let texture = create_texture(&sender_spec.size, &sender_spec.label);
+
     let view = texture.create_view(&wgpu::TextureViewDescriptor {
-        label: Some(&texture_specification.label),
+        label: Some(&sender_spec.label),
         ..Default::default()
     });
 
@@ -74,7 +87,7 @@ impl CreateTextureForChannelCommand {
     pub fn handle(&self, create_texture: impl FnOnce(&Vector2<u32>, &str) -> wgpu::Texture) {
         let mut state = self.state.write();
         let texture_specification = state
-            .texture_specification
+            .sender_spec
             .as_ref()
             .expect("command to create texture, but texture_specification not set");
         assert!(state.texture_and_view.is_none());
@@ -126,7 +139,7 @@ impl UndecidedTextureSender {
         {
             let mut state = self.state.write();
 
-            state.texture_specification = Some(TextureSpecification {
+            state.sender_spec = Some(SenderSpec {
                 size: *size,
                 label: label.to_string(),
             });
@@ -144,7 +157,7 @@ impl UndecidedTextureSender {
 
     pub fn send_texture(self, size: &Vector2<u32>, label: impl ToString) -> TextureSender {
         let mut state = self.state.write();
-        state.texture_specification = Some(TextureSpecification {
+        state.sender_spec = Some(SenderSpec {
             size: *size,
             label: label.to_string(),
         });
@@ -158,6 +171,18 @@ pub struct TextureSender {
     state: Arc<RwLock<State>>,
 }
 
+impl TextureSender {
+    pub fn get(&self) -> Option<Arc<TextureAndView>> {
+        let state = self.state.read();
+        state.texture_and_view.clone()
+    }
+
+    pub fn format(&self) -> Option<wgpu::TextureFormat> {
+        let state = self.state.read();
+        Some(state.receiver_spec.as_ref()?.format)
+    }
+}
+
 #[derive(Debug)]
 pub struct ImageSender {
     state: Arc<RwLock<State>>,
@@ -165,7 +190,7 @@ pub struct ImageSender {
 
 impl ImageSender {
     pub fn update_image(&mut self) -> ImageGuard<'_> {
-        let state = self.state.read();
+        let state = self.state.write();
         let dirty_before = state.image_dirty;
 
         ImageGuard {
@@ -179,7 +204,7 @@ impl ImageSender {
 #[derive(Debug)]
 pub struct ImageGuard<'a> {
     state_shared: &'a Arc<RwLock<State>>,
-    state_guard: RwLockReadGuard<'a, State>,
+    state_guard: RwLockWriteGuard<'a, State>,
     dirty_before: bool,
 }
 
@@ -196,17 +221,44 @@ impl<'a> Drop for ImageGuard<'a> {
     }
 }
 
+impl<'a> Deref for ImageGuard<'a> {
+    type Target = image::RgbaImage;
+
+    fn deref(&self) -> &Self::Target {
+        self.state_guard
+            .image_buffer
+            .as_ref()
+            .expect("image sender, but image not set")
+    }
+}
+
+impl<'a> DerefMut for ImageGuard<'a> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.state_guard.image_dirty = true;
+        self.state_guard
+            .image_buffer
+            .as_mut()
+            .expect("image sender, but image not set")
+    }
+}
+
 #[derive(Debug, Default)]
 struct State {
     texture_and_view: Option<Arc<TextureAndView>>,
     image_buffer: Option<image::RgbaImage>,
     image_dirty: bool,
-    texture_specification: Option<TextureSpecification>,
+    sender_spec: Option<SenderSpec>,
+    receiver_spec: Option<ReceiverSpec>,
     command_sender: Option<CommandSender>,
 }
 
-#[derive(Debug)]
-struct TextureSpecification {
+#[derive(Clone, Debug)]
+struct SenderSpec {
     size: Vector2<u32>,
     label: String,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct ReceiverSpec {
+    format: wgpu::TextureFormat,
 }

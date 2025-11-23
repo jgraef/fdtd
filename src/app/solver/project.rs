@@ -63,6 +63,11 @@ pub struct ProjectionParameters {
     /// can be achieved. The output vector will be interpreted as linear
     /// `(r, g, b, a)`.
     pub color_map: Matrix4<f32>,
+
+    /// Size of target texture.
+    ///
+    /// TODO: This should be determined somewhere else
+    pub size: Vector2<u32>,
 }
 
 /// Trait for [`SolverInstance`]s that can create projections to a specific
@@ -119,16 +124,6 @@ pub trait ProjectionPass {
 /// accept them to be added to its projection pass.
 pub trait ProjectionPassAdd<'a, Projection>: 'a {
     fn add_projection(&mut self, projection: &'a mut Projection);
-}
-
-/// Project into a [`wgpu::Texture`]
-#[derive(Clone, Copy, Debug)]
-pub struct TextureTarget<'a> {
-    /// The texture to project into
-    pub texture: &'a wgpu::Texture,
-
-    /// Queue that might be needed to copy image data to the texture.
-    pub queue: &'a wgpu::Queue,
 }
 
 /// A generic image target.
