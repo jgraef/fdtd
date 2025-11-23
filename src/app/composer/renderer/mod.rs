@@ -89,8 +89,7 @@ use crate::{
 
 /// Tag for entities that should be rendered
 #[derive(Copy, Clone, Debug, Default, Serialize, Deserialize)]
-//#[deprecated]
-pub struct Render;
+pub struct Hidden;
 
 // todo: respect eguis theme. we might just pass this in from the view when
 // rendering and remove this component.
@@ -501,7 +500,7 @@ impl Renderer {
                 Option<&MaterialTextures>,
                 Option<&Outline>,
             )>()
-            .with::<&Render>()
+            .without::<&Hidden>()
         {
             // instance flags
             let mut flags = InstanceFlags::SHOW_SOLID

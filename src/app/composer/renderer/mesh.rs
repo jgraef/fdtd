@@ -27,7 +27,6 @@ use crate::{
     app::composer::{
         renderer::{
             Fallbacks,
-            Render,
             light::MaterialTextures,
             loader::{
                 Loader,
@@ -256,7 +255,7 @@ impl LoadingState for LoadMeshState {
     fn poll(&mut self, context: &mut LoaderContext) -> Result<LoadingProgress<(Mesh,)>, Error> {
         match self {
             LoadMeshState::Shape(shape) => {
-                tracing::debug!(?shape, "loading mesh from shape");
+                tracing::debug!(shape = ?shape.0, "loading mesh from shape");
                 let mesh = Mesh::from_shape(&*shape.0, context.device());
                 Ok(LoadingProgress::Ready((mesh,)))
             }
@@ -397,7 +396,6 @@ pub(super) fn update_mesh_bind_groups(
     for (entity, (mesh, material_textures, label)) in scene
         .entities
         .query_mut::<(&Mesh, Option<&MaterialTextures>, Option<&Label>)>()
-        .with::<&Render>()
         .without::<&MeshBindGroup>()
     {
         if mesh.uv_buffer.is_none() && material_textures.is_some() {

@@ -40,7 +40,6 @@ use crate::{
             renderer::{
                 ClearColor,
                 Outline,
-                Render,
                 Renderer,
                 WgpuContext,
                 camera::{
@@ -756,7 +755,6 @@ impl PopulateScene for ExampleScene {
                 color_map: test_color_map(0.5, Vector3::z_axis()),
             },
             Transform::identity(),
-            Render,
         ));
 
         // Quad::new(Vector2::new(1.0, 1.0))

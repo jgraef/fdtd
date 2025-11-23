@@ -39,7 +39,6 @@ use serde::{
 use crate::app::composer::{
     Selectable,
     renderer::{
-        Render,
         grid::GridPlane,
         light::Material,
         mesh::{
@@ -104,7 +103,6 @@ impl Scene {
             transform.into(),
             mesh_loader,
             collider,
-            Render,
             label,
             ShowInTree,
             Selectable,

@@ -262,8 +262,8 @@ mod register_global {
         Selected,
         renderer::{
             ClearColor,
+            Hidden,
             Outline,
-            Render,
             camera::{
                 CameraConfig,
                 CameraProjection,
@@ -297,7 +297,7 @@ mod register_global {
             Transform,
             Material,
             Label,
-            Render,
+            Hidden,
             BoundingBox,
             ShowInTree,
             Outline,

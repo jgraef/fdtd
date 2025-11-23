@@ -8,10 +8,7 @@ use parry3d::shape::TriMesh;
 use tobj::LoadOptions;
 
 use crate::app::composer::{
-    renderer::{
-        Render,
-        light::Material,
-    },
+    renderer::light::Material,
     scene::{
         Label,
         PopulateScene,
@@ -99,8 +96,6 @@ impl<'a> PopulateScene for PopulateSceneWithObjFile<'a> {
                 self.material,
                 //MeshFromShape::from(tri_mesh),
                 label,
-                Render,
-                // todo: collider
             ));
         }
 
