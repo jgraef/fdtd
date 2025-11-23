@@ -63,7 +63,9 @@ use crate::{
             },
             loader::{
                 Loader,
+                LoadingProgress,
                 RunLoaders,
+                TextureCache,
             },
             mesh::{
                 Mesh,
@@ -185,9 +187,20 @@ pub struct Renderer {
     /// specific camera.
     draw_command_buffer: DrawCommandBuffer,
 
+    /// Fallbacks for textures and sampler
     texture_defaults: Fallbacks,
 
+    /// Command queue to asynchronously send commands to the renderer.
+    ///
+    /// The queue is checked in [`prepare_world`](Self::prepare_world). Senders
+    /// are e.g. handed out to
+    /// [`TextureSender`s](texture_channel::TextureSender).
     command_queue: CommandQueue,
+
+    /// Texture cache
+    ///
+    /// Caches textures loaded from files.
+    texture_cache: TextureCache,
 }
 
 impl Renderer {
@@ -400,6 +413,7 @@ impl Renderer {
             draw_command_buffer: Default::default(),
             texture_defaults,
             command_queue: CommandQueue::new(512),
+            texture_cache: Default::default(),
         }
     }
 
@@ -583,24 +597,26 @@ impl Renderer {
     }
 
     fn load_texture(
-        &self,
+        &mut self,
         texture_source: &mut TextureSource,
-    ) -> Result<Option<Arc<TextureAndView>>, Error> {
+    ) -> Result<LoadingProgress<Arc<TextureAndView>>, Error> {
         match texture_source {
             TextureSource::File { path } => {
-                let texture_and_view = TextureAndView::from_path(
-                    &self.wgpu_context.device,
-                    &self.wgpu_context.queue,
-                    path,
-                )?;
-
-                Ok(Some(Arc::new(texture_and_view)))
+                let texture_and_view = self.texture_cache.get_or_insert(path, || {
+                    Ok::<_, Error>(Arc::new(TextureAndView::from_path(
+                        &self.wgpu_context.device,
+                        &self.wgpu_context.queue,
+                        &path,
+                    )?))
+                })?;
+                Ok(LoadingProgress::Ready(texture_and_view))
             }
             TextureSource::Channel { receiver } => {
-                let texture = receiver.register(&self.command_queue.sender, |size, label| {
-                    self.create_texture(size, label)
-                });
-                Ok(texture)
+                let texture_and_view = receiver
+                    .register(&self.command_queue.sender, |size, label| {
+                        self.create_texture(size, label)
+                    });
+                Ok(texture_and_view.into())
             }
         }
     }

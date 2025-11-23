@@ -1,7 +1,22 @@
+use std::{
+    collections::HashMap,
+    path::{
+        Path,
+        PathBuf,
+    },
+    sync::{
+        Arc,
+        Weak,
+    },
+};
+
 use crate::{
     Error,
     app::composer::{
-        renderer::Renderer,
+        renderer::{
+            Renderer,
+            light::TextureAndView,
+        },
         scene::Scene,
     },
 };
@@ -25,8 +40,14 @@ pub enum LoadingProgress<T> {
     Ready(T),
 }
 
+impl<T> From<Option<T>> for LoadingProgress<T> {
+    fn from(value: Option<T>) -> Self {
+        value.map_or(LoadingProgress::Pending, LoadingProgress::Ready)
+    }
+}
+
 pub struct LoaderContext<'a> {
-    pub renderer: &'a Renderer,
+    pub renderer: &'a mut Renderer,
 }
 
 pub struct RunLoaders<'a> {
@@ -91,5 +112,34 @@ impl<'a> RunLoaders<'a> {
         self.scene.apply_deferred();
 
         result
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct TextureCache {
+    cache: HashMap<PathBuf, Weak<TextureAndView>>,
+}
+
+impl TextureCache {
+    pub fn get_or_insert<E, L>(&mut self, path: &Path, load: L) -> Result<Arc<TextureAndView>, E>
+    where
+        L: FnOnce() -> Result<Arc<TextureAndView>, E>,
+    {
+        if let Some(weak) = self.cache.get_mut(path) {
+            if let Some(texture_and_view) = weak.upgrade() {
+                Ok(texture_and_view)
+            }
+            else {
+                let texture_and_view = load()?;
+                *weak = Arc::downgrade(&texture_and_view);
+                Ok(texture_and_view)
+            }
+        }
+        else {
+            let texture_and_view = load()?;
+            self.cache
+                .insert(path.to_owned(), Arc::downgrade(&texture_and_view));
+            Ok(texture_and_view)
+        }
     }
 }

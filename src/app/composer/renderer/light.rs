@@ -420,7 +420,9 @@ impl LoadingState for LoadMaterialTexturesState {
                 if let Some(texture_source) = &mut self.loader.$name {
                     assert!(self.output.$name.is_none());
 
-                    if let Some(texture_and_view) = context.renderer.load_texture(texture_source)? {
+                    if let LoadingProgress::Ready(texture_and_view) =
+                        context.renderer.load_texture(texture_source)?
+                    {
                         self.loader.$name = None;
                         self.output.$name = Some(texture_and_view);
                     }
