@@ -14,14 +14,56 @@ use crate::{
     Error,
     app::composer::{
         renderer::{
-            Renderer,
-            light::TextureAndView,
+            light::{
+                LoadMaterialTextures,
+                TextureAndView,
+            },
+            mesh::LoadMesh,
+            resource::RenderResourceCreator,
         },
         scene::Scene,
     },
+    util::ImageLoadExt,
 };
 
-pub trait Loader: hecs::Component {
+#[derive(Debug)]
+pub struct AssetLoader {
+    render: RenderResourceCreator,
+
+    /// Texture cache
+    ///
+    /// Caches textures loaded from files.
+    texture_cache: TextureCache,
+}
+
+impl AssetLoader {
+    pub fn new(render: RenderResourceCreator) -> Self {
+        Self {
+            render,
+            texture_cache: Default::default(),
+        }
+    }
+
+    pub fn run_all(&mut self, scene: &mut Scene) -> Result<(), Error> {
+        let mut run_loaders = RunLoaders {
+            scene,
+            context: LoaderContext {
+                render: &mut self.render,
+                texture_cache: &mut self.texture_cache,
+            },
+        };
+
+        let mut load_result = run_loaders.run::<LoadMaterialTextures>();
+        load_result = load_result.and_then(|()| run_loaders.run::<LoadMesh>());
+        if let Err(error) = &load_result {
+            tracing::warn!(?error);
+        }
+
+        load_result
+    }
+}
+
+pub trait LoadAsset: hecs::Component {
     type State: LoadingState;
 
     fn start_loading(&self, context: &mut LoaderContext) -> Result<Self::State, Error>;
@@ -46,32 +88,34 @@ impl<T> From<Option<T>> for LoadingProgress<T> {
     }
 }
 
+#[derive(Debug)]
 pub struct LoaderContext<'a> {
-    pub renderer: &'a mut Renderer,
+    pub render: &'a mut RenderResourceCreator,
+    texture_cache: &'a mut TextureCache,
 }
 
 impl<'a> LoaderContext<'a> {
-    /// todo: some places (e.g. mesh from shape) need this. textures just use a
-    /// bespoke function on the renderer. we need a better api.
-    pub fn device(&self) -> &wgpu::Device {
-        &self.renderer.wgpu_context.device
+    pub fn load_texture_from_file<P>(&mut self, path: P) -> Result<Arc<TextureAndView>, Error>
+    where
+        P: AsRef<Path>,
+    {
+        let path = path.as_ref();
+        self.texture_cache.get_or_insert(path, || {
+            let label = path.display().to_string();
+            let image = image::RgbaImage::from_path(path)?;
+            let texture = self.render.create_texture_from_image(&image, &label);
+            Ok(TextureAndView::from_texture(texture, &label))
+        })
     }
 }
 
-pub struct RunLoaders<'a> {
+struct RunLoaders<'a> {
     scene: &'a mut Scene,
     context: LoaderContext<'a>,
 }
 
 impl<'a> RunLoaders<'a> {
-    pub fn new(renderer: &'a mut Renderer, scene: &'a mut Scene) -> Self {
-        Self {
-            scene,
-            context: LoaderContext { renderer },
-        }
-    }
-
-    fn start_loading<L: Loader>(&mut self) -> Result<(), Error> {
+    fn start_loading<L: LoadAsset>(&mut self) -> Result<(), Error> {
         for (entity, loader) in self.scene.entities.query_mut::<&L>() {
             // remove first, so if an error occurs during loading, the loader will still be
             // removed.
@@ -110,7 +154,7 @@ impl<'a> RunLoaders<'a> {
         Ok(())
     }
 
-    pub fn run<L: Loader>(&mut self) -> Result<(), Error> {
+    pub fn run<L: LoadAsset>(&mut self) -> Result<(), Error> {
         let mut result = self.start_loading::<L>();
         if result.is_ok() {
             result = self.poll_loaders::<L::State>();
@@ -123,6 +167,7 @@ impl<'a> RunLoaders<'a> {
     }
 }
 
+// todo: make this generic
 #[derive(Debug, Default)]
 pub struct TextureCache {
     cache: HashMap<PathBuf, Weak<TextureAndView>>,
@@ -131,20 +176,20 @@ pub struct TextureCache {
 impl TextureCache {
     pub fn get_or_insert<E, L>(&mut self, path: &Path, load: L) -> Result<Arc<TextureAndView>, E>
     where
-        L: FnOnce() -> Result<Arc<TextureAndView>, E>,
+        L: FnOnce() -> Result<TextureAndView, E>,
     {
         if let Some(weak) = self.cache.get_mut(path) {
             if let Some(texture_and_view) = weak.upgrade() {
                 Ok(texture_and_view)
             }
             else {
-                let texture_and_view = load()?;
+                let texture_and_view = Arc::new(load()?);
                 *weak = Arc::downgrade(&texture_and_view);
                 Ok(texture_and_view)
             }
         }
         else {
-            let texture_and_view = load()?;
+            let texture_and_view = Arc::new(load()?);
             self.cache
                 .insert(path.to_owned(), Arc::downgrade(&texture_and_view));
             Ok(texture_and_view)

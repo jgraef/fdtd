@@ -877,26 +877,33 @@ where
     }
 }
 
-pub fn texture_view_from_color(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    color: Srgba<u8>,
-    label: &str,
-) -> wgpu::TextureView {
-    let color: [u8; 4] = color.into();
-    let texture = device.create_texture_with_data(
-        queue,
-        &texture_descriptor(&Vector2::repeat(1), label),
-        Default::default(),
-        &color,
-    );
+pub fn create_texture(device: &wgpu::Device, size: &Vector2<u32>, label: &str) -> wgpu::Texture {
+    device.create_texture(&texture_descriptor(size, label))
+}
+
+pub fn create_texture_view_from_texture(texture: &wgpu::Texture, label: &str) -> wgpu::TextureView {
     texture.create_view(&wgpu::TextureViewDescriptor {
         label: Some(label),
         ..Default::default()
     })
 }
 
-pub fn texture_from_image<Container>(
+pub fn create_texture_from_color(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    color: &Srgba<u8>,
+    label: &str,
+) -> wgpu::Texture {
+    let color: [u8; 4] = (*color).into();
+    device.create_texture_with_data(
+        queue,
+        &texture_descriptor(&Vector2::repeat(1), label),
+        Default::default(),
+        &color,
+    )
+}
+
+pub fn create_texture_from_image<Container>(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     image: &image::ImageBuffer<image::Rgba<u8>, Container>,

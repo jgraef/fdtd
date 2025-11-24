@@ -1,3 +1,4 @@
+pub mod loader;
 pub mod menubar;
 pub mod properties;
 pub mod renderer;
@@ -36,12 +37,12 @@ use crate::{
     Error,
     app::{
         composer::{
+            loader::AssetLoader,
             menubar::ComposerMenuElements,
             renderer::{
                 ClearColor,
                 Outline,
                 Renderer,
-                WgpuContext,
                 camera::{
                     CameraConfig,
                     CameraProjection,
@@ -99,6 +100,7 @@ use crate::{
             runner::SolverRunner,
             ui::SolverConfigUiWindow,
         },
+        start::CreateAppContext,
     },
     file_formats::{
         FileFormat,
@@ -127,18 +129,25 @@ pub struct Composer {
     /// The renderer used to render a scene (if a file is open)
     renderer: Renderer,
 
+    asset_loader: AssetLoader,
+
     solver_runner: SolverRunner,
 }
 
 impl Composer {
-    pub fn new(wgpu_context: &WgpuContext) -> Self {
-        let renderer = Renderer::new(wgpu_context);
-        let solver_runner = SolverRunner::new(wgpu_context);
+    pub fn new(context: &CreateAppContext) -> Self {
+        let renderer = Renderer::from_app_context(context);
+        let render_resource_creator = renderer.resource_creator();
+
+        let asset_loader = AssetLoader::new(render_resource_creator.clone());
+
+        let solver_runner = SolverRunner::from_wgpu_context(&context.wgpu_context);
 
         Self {
             state: None,
             renderer,
             solver_runner,
+            asset_loader,
         }
     }
 
@@ -218,7 +227,7 @@ impl Composer {
 
     pub fn show(&mut self, ctx: &egui::Context) {
         if let Some(state) = &mut self.state {
-            state.show(ctx, &mut self.renderer);
+            state.show(ctx, &mut self.renderer, &mut self.asset_loader);
         }
         else {
             // what is being shown when no file is open
@@ -379,11 +388,17 @@ impl ComposerState {
 }
 
 impl ComposerState {
-    pub fn show(&mut self, ctx: &egui::Context, renderer: &mut Renderer) {
+    pub fn show(
+        &mut self,
+        ctx: &egui::Context,
+        renderer: &mut Renderer,
+        asset_loader: &mut AssetLoader,
+    ) {
         // prepare world
         self.scene.prepare();
 
-        renderer.prepare_world(&mut self.scene).ok_or_handle(ctx);
+        asset_loader.run_all(&mut self.scene).ok_or_handle(ctx);
+        renderer.prepare_world(&mut self.scene);
         ctx.request_repaint_after(Duration::from_millis(1000 / 60));
 
         {

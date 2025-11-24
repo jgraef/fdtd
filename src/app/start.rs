@@ -18,17 +18,26 @@ use crate::app::{
     args::Args,
     clipboard::EguiClipboardPlugin,
     composer::renderer::{
+        EguiWgpuRenderer,
         RendererConfig,
-        WgpuContext,
     },
     config::AppConfig,
     files::AppFiles,
 };
 
 #[derive(Clone, Debug)]
+pub struct WgpuContext {
+    pub adapter: wgpu::Adapter,
+    pub device: wgpu::Device,
+    pub queue: wgpu::Queue,
+}
+
+#[derive(Clone, Debug)]
 pub struct CreateAppContext {
     pub wgpu_context: WgpuContext,
     pub egui_context: egui::Context,
+    pub renderer_config: RendererConfig,
+    pub egui_wgpu_renderer: EguiWgpuRenderer,
     pub app_files: AppFiles,
     pub config: AppConfig,
     pub args: Args,
@@ -151,9 +160,9 @@ pub(super) fn run_app(args: Args) -> Result<(), Error> {
                 adapter: render_state.adapter.clone(),
                 device: render_state.device.clone(),
                 queue: render_state.queue.clone(),
-                renderer_config,
-                egui_wgpu_renderer: render_state.renderer.clone().into(),
             };
+
+            let egui_wgpu_renderer = render_state.renderer.clone().into();
 
             // store wgpu context in egui context
             cc.egui_ctx.data_mut(|data| {
@@ -169,6 +178,8 @@ pub(super) fn run_app(args: Args) -> Result<(), Error> {
                 app_files,
                 config,
                 args,
+                renderer_config,
+                egui_wgpu_renderer,
             };
 
             Ok(Box::new(App::new(create_app_context)))

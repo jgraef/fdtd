@@ -24,26 +24,23 @@ use serde::{
 use crate::{
     Error,
     app::composer::{
+        loader::{
+            LoadAsset,
+            LoaderContext,
+            LoadingProgress,
+            LoadingState,
+        },
         properties::{
             PropertiesUi,
             TrackChanges,
             label_and_value,
         },
         renderer::{
-            Loader,
             Outline,
-            loader::{
-                LoaderContext,
-                LoadingProgress,
-                LoadingState,
-            },
             texture_channel::TextureReceiver,
         },
     },
-    util::{
-        ImageLoadExt,
-        wgpu::texture_from_image,
-    },
+    util::wgpu::create_texture_view_from_texture,
 };
 
 /// Material properties that define how an object looks in the scene.
@@ -385,7 +382,7 @@ impl LoadMaterialTextures {
     }
 }
 
-impl Loader for LoadMaterialTextures {
+impl LoadAsset for LoadMaterialTextures {
     type State = LoadMaterialTexturesState;
 
     fn start_loading(
@@ -415,13 +412,23 @@ impl LoadingState for LoadMaterialTexturesState {
     ) -> Result<LoadingProgress<(MaterialTextures,)>, Error> {
         let mut any_still_not_loaded = false;
 
+        let mut load_texture =
+            |source: &TextureSource| -> Result<LoadingProgress<Arc<TextureAndView>>, Error> {
+                match source {
+                    TextureSource::File { path } => {
+                        let texture_and_view = context.load_texture_from_file(path)?;
+                        Ok(LoadingProgress::Ready(texture_and_view))
+                    }
+                    TextureSource::Channel { receiver: _ } => todo!(),
+                }
+            };
+
         macro_rules! material {
             ($name:ident) => {
                 if let Some(texture_source) = &mut self.loader.$name {
                     assert!(self.output.$name.is_none());
 
-                    if let LoadingProgress::Ready(texture_and_view) =
-                        context.renderer.load_texture(texture_source)?
+                    if let LoadingProgress::Ready(texture_and_view) = load_texture(texture_source)?
                     {
                         self.loader.$name = None;
                         self.output.$name = Some(texture_and_view);
@@ -485,22 +492,8 @@ pub struct TextureAndView {
 }
 
 impl TextureAndView {
-    pub fn from_path<P>(
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        path: P,
-    ) -> Result<Self, image::ImageError>
-    where
-        P: AsRef<Path>,
-    {
-        tracing::debug!(path = %path.as_ref().display(), "loading texture");
-        let image = image::RgbaImage::from_path(path.as_ref())?;
-        let label = path.as_ref().display().to_string();
-        let texture = texture_from_image(device, queue, &image, &label);
-        let view = texture.create_view(&wgpu::TextureViewDescriptor {
-            label: Some(&label),
-            ..Default::default()
-        });
-        Ok(Self { texture, view })
+    pub fn from_texture(texture: wgpu::Texture, label: &str) -> Self {
+        let view = create_texture_view_from_texture(&texture, label);
+        Self { texture, view }
     }
 }

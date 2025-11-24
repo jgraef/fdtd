@@ -3,8 +3,8 @@ mod command;
 mod draw_commands;
 pub mod grid;
 pub mod light;
-pub mod loader;
 pub mod mesh;
+pub mod resource;
 pub mod texture_channel;
 
 use std::{
@@ -17,10 +17,7 @@ use bytemuck::{
     Pod,
     Zeroable,
 };
-use nalgebra::{
-    Matrix4,
-    Vector2,
-};
+use nalgebra::Matrix4;
 use palette::{
     Srgb,
     Srgba,
@@ -31,59 +28,56 @@ use serde::{
 };
 
 use crate::{
-    Error,
-    app::composer::{
-        properties::{
-            PropertiesUi,
-            TrackChanges,
-            label_and_value,
-        },
-        renderer::{
-            camera::{
-                CameraConfig,
-                CameraResources,
+    app::{
+        composer::{
+            properties::{
+                PropertiesUi,
+                TrackChanges,
+                label_and_value,
             },
-            command::{
-                Command,
-                CommandQueue,
+            renderer::{
+                camera::{
+                    CameraConfig,
+                    CameraResources,
+                },
+                command::{
+                    Command,
+                    CommandQueue,
+                },
+                draw_commands::{
+                    DrawCommand,
+                    DrawCommandBuffer,
+                    DrawCommandEnablePipelineFlags,
+                    DrawCommandOptions,
+                },
+                light::{
+                    Material,
+                    MaterialData,
+                    MaterialTextures,
+                },
+                mesh::{
+                    Mesh,
+                    MeshBindGroup,
+                    WindingOrder,
+                },
+                resource::RenderResourceCreator,
             },
-            draw_commands::{
-                DrawCommand,
-                DrawCommandBuffer,
-                DrawCommandEnablePipelineFlags,
-                DrawCommandOptions,
-            },
-            light::{
-                LoadMaterialTextures,
-                Material,
-                MaterialData,
-                MaterialTextures,
-                TextureAndView,
-                TextureSource,
-            },
-            loader::{
-                Loader,
-                LoadingProgress,
-                RunLoaders,
-                TextureCache,
-            },
-            mesh::{
-                LoadMesh,
-                Mesh,
-                MeshBindGroup,
-                WindingOrder,
+            scene::{
+                Scene,
+                transform::Transform,
             },
         },
-        scene::{
-            Scene,
-            transform::Transform,
+        start::{
+            CreateAppContext,
+            WgpuContext,
         },
     },
     util::wgpu::{
         StagedTypedArrayBuffer,
         WriteImageToTextureExt,
-        texture_descriptor,
-        texture_view_from_color,
+        create_texture,
+        create_texture_from_color,
+        create_texture_view_from_texture,
     },
 };
 
@@ -108,19 +102,6 @@ impl From<Srgb<u8>> for ClearColor {
     fn from(value: Srgb<u8>) -> Self {
         Self::from(value.into_format::<f32>())
     }
-}
-
-#[derive(Clone, Debug)]
-pub struct WgpuContext {
-    pub adapter: wgpu::Adapter,
-    pub device: wgpu::Device,
-    pub queue: wgpu::Queue,
-    pub renderer_config: RendererConfig,
-
-    /// should this go in here? we need it to get egui texture handles for
-    /// textures if we want to render them in widgets, and the other way if we
-    /// want to get a wgpu texture from a egui texture id
-    pub egui_wgpu_renderer: EguiWgpuRenderer,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -163,6 +144,8 @@ impl From<Arc<egui::mutex::RwLock<egui_wgpu::Renderer>>> for EguiWgpuRenderer {
 #[derive(Debug)]
 pub struct Renderer {
     wgpu_context: WgpuContext,
+    egui_wgpu_renderer: EguiWgpuRenderer,
+    renderer_config: RendererConfig,
 
     camera_bind_group_layout: wgpu::BindGroupLayout,
     mesh_bind_group_layout: wgpu::BindGroupLayout,
@@ -197,11 +180,6 @@ pub struct Renderer {
     /// are e.g. handed out to
     /// [`TextureSender`s](texture_channel::TextureSender).
     command_queue: CommandQueue,
-
-    /// Texture cache
-    ///
-    /// Caches textures loaded from files.
-    texture_cache: TextureCache,
 }
 
 impl Renderer {
@@ -217,35 +195,34 @@ impl Renderer {
     pub const MESH_SHADER_MODULE: wgpu::ShaderModuleDescriptor<'static> =
         wgpu::include_wgsl!("shaders/mesh.wgsl");
 
-    pub fn new(wgpu_context: &WgpuContext) -> Self {
-        let camera_bind_group_layout =
-            wgpu_context
-                .device
-                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                    label: Some("camera_bind_group_layout"),
-                    entries: &[
-                        wgpu::BindGroupLayoutEntry {
-                            binding: 0,
-                            visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                            ty: wgpu::BindingType::Buffer {
-                                ty: wgpu::BufferBindingType::Uniform,
-                                has_dynamic_offset: false,
-                                min_binding_size: None,
-                            },
-                            count: None,
+    pub fn from_app_context(context: &CreateAppContext) -> Self {
+        let camera_bind_group_layout = context.wgpu_context.device.create_bind_group_layout(
+            &wgpu::BindGroupLayoutDescriptor {
+                label: Some("camera_bind_group_layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
                         },
-                        wgpu::BindGroupLayoutEntry {
-                            binding: 1,
-                            visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                            ty: wgpu::BindingType::Buffer {
-                                ty: wgpu::BufferBindingType::Storage { read_only: true },
-                                has_dynamic_offset: false,
-                                min_binding_size: None,
-                            },
-                            count: None,
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
                         },
-                    ],
-                });
+                        count: None,
+                    },
+                ],
+            },
+        );
 
         let mesh_bind_group_layout = {
             let vertex_buffer = |binding| {
@@ -274,7 +251,8 @@ impl Renderer {
                 }
             };
 
-            wgpu_context
+            context
+                .wgpu_context
                 .device
                 .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                     label: Some("mesh_bind_group_layout"),
@@ -305,12 +283,14 @@ impl Renderer {
         };
 
         // should we store this in the struct?
-        let mesh_shader_module = wgpu_context
+        let mesh_shader_module = context
+            .wgpu_context
             .device
             .create_shader_module(Self::MESH_SHADER_MODULE);
 
         let clear_pipeline = Pipeline::new(
-            wgpu_context,
+            &context.wgpu_context,
+            &context.renderer_config,
             "render/clear",
             &mesh_shader_module,
             &[&camera_bind_group_layout],
@@ -352,7 +332,8 @@ impl Renderer {
         let render_mesh_bind_group_layouts = [&camera_bind_group_layout, &mesh_bind_group_layout];
 
         let solid_pipeline = Pipeline::new_mesh_render_pipeline(
-            wgpu_context,
+            &context.wgpu_context,
+            &context.renderer_config,
             "render/object/solid",
             &mesh_shader_module,
             &render_mesh_bind_group_layouts,
@@ -365,7 +346,8 @@ impl Renderer {
         );
 
         let wireframe_pipeline = Pipeline::new_mesh_render_pipeline(
-            wgpu_context,
+            &context.wgpu_context,
+            &context.renderer_config,
             "render/object/wireframe",
             &mesh_shader_module,
             &render_mesh_bind_group_layouts,
@@ -378,7 +360,8 @@ impl Renderer {
         );
 
         let outline_pipeline = Pipeline::new_mesh_render_pipeline(
-            wgpu_context,
+            &context.wgpu_context,
+            &context.renderer_config,
             "render/object/outline",
             &mesh_shader_module,
             &render_mesh_bind_group_layouts,
@@ -392,17 +375,20 @@ impl Renderer {
         );
 
         let instance_buffer = StagedTypedArrayBuffer::with_capacity(
-            &wgpu_context.device,
+            &context.wgpu_context.device,
             "instance buffer",
             wgpu::BufferUsages::STORAGE,
             128,
         );
         assert!(instance_buffer.buffer.is_allocated());
 
-        let texture_defaults = Fallbacks::new(&wgpu_context.device, &wgpu_context.queue);
+        let texture_defaults =
+            Fallbacks::new(&context.wgpu_context.device, &context.wgpu_context.queue);
 
         Self {
-            wgpu_context: wgpu_context.clone(),
+            wgpu_context: context.wgpu_context.clone(),
+            egui_wgpu_renderer: context.egui_wgpu_renderer.clone(),
+            renderer_config: context.renderer_config,
             camera_bind_group_layout,
             mesh_bind_group_layout,
             mesh_shader_module,
@@ -414,8 +400,11 @@ impl Renderer {
             draw_command_buffer: Default::default(),
             texture_defaults,
             command_queue: CommandQueue::new(512),
-            texture_cache: Default::default(),
         }
+    }
+
+    pub fn resource_creator(&self) -> RenderResourceCreator {
+        RenderResourceCreator::from_renderer(self)
     }
 
     /// Prepares for the world to be rendered
@@ -430,17 +419,9 @@ impl Renderer {
     /// views that render the same scene. Internally they're put into a
     /// `Arc<Vec<_>>`, so they're cheap to clone (which is done in
     /// [`Self::prepare_frame`]).
-    pub fn prepare_world(&mut self, scene: &mut Scene) -> Result<(), Error> {
+    pub fn prepare_world(&mut self, scene: &mut Scene) {
         // handle command queue
         self.handle_commands();
-
-        // load rendering assets
-        let mut run_loaders = RunLoaders::new(self, scene);
-        let mut load_result = run_loaders.run::<LoadMaterialTextures>();
-        load_result = load_result.and_then(|()| run_loaders.run::<LoadMesh>());
-        if let Err(error) = &load_result {
-            tracing::warn!(?error);
-        }
 
         // generate meshes (for rendering) for objects that don't have them yet.
         mesh::update_mesh_bind_groups(
@@ -467,8 +448,6 @@ impl Renderer {
             self.instance_buffer.buffer.buffer().unwrap(),
             instance_buffer_reallocated,
         );
-
-        load_result
     }
 
     fn update_instance_buffer_and_draw_command(&mut self, world: &mut hecs::World) -> bool {
@@ -592,38 +571,6 @@ impl Renderer {
         ))
     }
 
-    fn create_texture(&self, size: &Vector2<u32>, label: &str) -> wgpu::Texture {
-        self.wgpu_context
-            .device
-            .create_texture(&texture_descriptor(size, label))
-    }
-
-    fn load_texture(
-        &mut self,
-        texture_source: &mut TextureSource,
-    ) -> Result<LoadingProgress<Arc<TextureAndView>>, Error> {
-        match texture_source {
-            TextureSource::File { path } => {
-                let texture_and_view = self.texture_cache.get_or_insert(path, || {
-                    Ok::<_, Error>(Arc::new(TextureAndView::from_path(
-                        &self.wgpu_context.device,
-                        &self.wgpu_context.queue,
-                        &path,
-                    )?))
-                })?;
-                Ok(LoadingProgress::Ready(texture_and_view))
-            }
-            TextureSource::Channel { receiver } => {
-                let texture_and_view = receiver.register(
-                    &self.command_queue.sender,
-                    wgpu::TextureFormat::Rgba8Unorm,
-                    |size, label| self.create_texture(size, label),
-                );
-                Ok(texture_and_view.into())
-            }
-        }
-    }
-
     pub fn copy_image_to_texture(&self, image: &image::RgbaImage, texture: &wgpu::Texture) {
         image.write_to_texture(&self.wgpu_context.queue, texture);
     }
@@ -639,7 +586,9 @@ impl Renderer {
                     command.handle(|image, texture| self.copy_image_to_texture(image, texture));
                 }
                 Command::CreateTextureForChannel(command) => {
-                    command.handle(|size, label| self.create_texture(size, label))
+                    command.handle(|size, label| {
+                        create_texture(&self.wgpu_context.device, size, label)
+                    })
                 }
             }
         }
@@ -671,6 +620,7 @@ impl Pipeline {
     #[allow(clippy::too_many_arguments)]
     fn new(
         wgpu_context: &WgpuContext,
+        renderer_config: &RendererConfig,
         label: &str,
         shader_module: &wgpu::ShaderModule,
         bind_group_layouts: &[&wgpu::BindGroupLayout],
@@ -717,7 +667,7 @@ impl Pipeline {
                         polygon_mode: Default::default(),
                         conservative: false,
                     },
-                    depth_stencil: wgpu_context.renderer_config.depth_texture_format.map(
+                    depth_stencil: renderer_config.depth_texture_format.map(
                         |depth_texture_format| {
                             wgpu::DepthStencilState {
                                 format: depth_texture_format,
@@ -729,7 +679,7 @@ impl Pipeline {
                         },
                     ),
                     multisample: wgpu::MultisampleState {
-                        count: wgpu_context.renderer_config.multisample_count.get(),
+                        count: renderer_config.multisample_count.get(),
                         mask: !0,
                         alpha_to_coverage_enabled: false,
                     },
@@ -738,7 +688,7 @@ impl Pipeline {
                         entry_point: fragment_shader_entry_point,
                         compilation_options: Default::default(),
                         targets: &[Some(wgpu::ColorTargetState {
-                            format: wgpu_context.renderer_config.target_texture_format,
+                            format: renderer_config.target_texture_format,
                             blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                             write_mask: wgpu::ColorWrites::ALL,
                         })],
@@ -756,6 +706,7 @@ impl Pipeline {
     #[allow(clippy::too_many_arguments)]
     fn new_mesh_render_pipeline(
         wgpu_context: &WgpuContext,
+        renderer_config: &RendererConfig,
         label: &str,
         shader_module: &wgpu::ShaderModule,
         bind_group_layouts: &[&wgpu::BindGroupLayout],
@@ -803,6 +754,7 @@ impl Pipeline {
 
         Self::new(
             wgpu_context,
+            renderer_config,
             label,
             shader_module,
             bind_group_layouts,
@@ -938,8 +890,12 @@ struct Fallbacks {
 
 impl Fallbacks {
     pub fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
-        let white = texture_view_from_color(device, queue, Srgba::new(255, 255, 255, 255), "white");
-        let black = texture_view_from_color(device, queue, Srgba::new(0, 0, 0, 255), "black");
+        let white =
+            create_texture_from_color(device, queue, &Srgba::new(255, 255, 255, 255), "white");
+        let white = create_texture_view_from_texture(&white, "white");
+
+        let black = create_texture_from_color(device, queue, &Srgba::new(0, 0, 0, 255), "black");
+        let black = create_texture_view_from_texture(&black, "black");
 
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("default texture sampler"),

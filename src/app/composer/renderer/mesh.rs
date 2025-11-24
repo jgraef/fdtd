@@ -25,15 +25,15 @@ use wgpu::util::DeviceExt;
 use crate::{
     Error,
     app::composer::{
+        loader::{
+            LoadAsset,
+            LoaderContext,
+            LoadingProgress,
+            LoadingState,
+        },
         renderer::{
             Fallbacks,
             light::MaterialTextures,
-            loader::{
-                Loader,
-                LoaderContext,
-                LoadingProgress,
-                LoadingState,
-            },
         },
         scene::{
             Label,
@@ -233,7 +233,7 @@ impl From<MeshFromShape> for LoadMesh {
     }
 }
 
-impl Loader for LoadMesh {
+impl LoadAsset for LoadMesh {
     type State = LoadMeshState;
 
     fn start_loading(&self, context: &mut LoaderContext) -> Result<LoadMeshState, Error> {
@@ -256,7 +256,7 @@ impl LoadingState for LoadMeshState {
         match self {
             LoadMeshState::Shape(shape) => {
                 tracing::debug!(shape = ?shape.0, "loading mesh from shape");
-                let mesh = Mesh::from_shape(&*shape.0, context.device());
+                let mesh = Mesh::from_shape(&*shape.0, context.render.device());
                 Ok(LoadingProgress::Ready((mesh,)))
             }
         }

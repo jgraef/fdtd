@@ -14,7 +14,6 @@ use crate::{
     app::{
         composer::{
             renderer::{
-                WgpuContext,
                 light::LoadMaterialTextures,
                 mesh::Quad,
                 texture_channel::{
@@ -62,6 +61,7 @@ use crate::{
                 Source,
             },
         },
+        start::WgpuContext,
     },
     physics::material::Material,
     util::format_size,
@@ -73,7 +73,7 @@ pub struct SolverRunner {
 }
 
 impl SolverRunner {
-    pub fn new(wgpu_context: &WgpuContext) -> Self {
+    pub fn from_wgpu_context(wgpu_context: &WgpuContext) -> Self {
         Self {
             fdtd_wgpu: FdtdWgpuBackend::new(&wgpu_context.device, &wgpu_context.queue),
         }

@@ -63,7 +63,7 @@ impl App {
             .add_file_filter_extensions("NEC", vec!["nec"]);
 
         // create composer ui
-        let mut composer = Composer::new(&context.wgpu_context);
+        let mut composer = Composer::new(&context);
 
         if context.args.new_file {
             // command line telling us to directly go to a new file
