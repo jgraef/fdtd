@@ -833,7 +833,7 @@ pub trait WriteImageToTextureExt {
 
 impl<Container> WriteImageToTextureExt for image::ImageBuffer<image::Rgba<u8>, Container>
 where
-    Container: Deref<Target = [u8]>,
+    Container: AsRef<[u8]> + Deref<Target = [u8]>,
 {
     fn write_to_texture(&self, queue: &wgpu::Queue, texture: &wgpu::Texture) {
         // todo: see https://docs.rs/wgpu/latest/wgpu/struct.Queue.html#performance-considerations-2
@@ -841,20 +841,47 @@ where
         // note: the 256 bytes per row alignment doesn't apply for Queue::write_texture:
         // https://docs.rs/wgpu/latest/wgpu/constant.COPY_BYTES_PER_ROW_ALIGNMENT.html
 
-        let size = Vector2::new(texture.width(), texture.height());
+        let texture_size = Vector2::new(texture.width(), texture.height());
 
-        let bytes_per_row = size.x * 4;
-        if bytes_per_row < wgpu::COPY_BYTES_PER_ROW_ALIGNMENT {
-            // https://docs.rs/wgpu/latest/wgpu/struct.TexelCopyBufferLayout.html#structfield.bytes_per_row
-            //
-            todo!("image needs padding")
-        }
+        let samples = self.as_flat_samples();
 
+        let image_size = Vector2::new(samples.layout.width, samples.layout.height);
         assert_eq!(
-            self.size(),
-            size,
+            image_size, texture_size,
             "provided image size doesn't match texture"
         );
+
+        let bytes_per_row: u32 = samples.layout.height_stride.try_into().unwrap();
+
+        // this doesn't apply. of course I only read my comment above after implementing
+        // it
+        /*
+        // declare outside of if, so it is still in scope after it
+        let mut padded_buf;
+
+        let (bytes_per_row_padded, data_padded) =
+            if bytes_per_row_unpadded < wgpu::COPY_BYTES_PER_ROW_ALIGNMENT {
+                // we need to pad the image
+
+                let bytes_per_row_padded = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+                padded_buf = Vec::with_capacity(bytes_per_row_padded as usize * size.y as usize);
+
+                for (y, row) in self.enumerate_rows() {
+                    let row_offset = y as usize * bytes_per_row_padded as usize;
+                    for (x, _y, pixel) in row {
+                        let pixel_offset = row_offset + x as usize * BYTES_PER_PIXEL as usize;
+                        padded_buf[pixel_offset..][..BYTES_PER_PIXEL as usize]
+                            .copy_from_slice(&pixel.0);
+                        //
+                    }
+                }
+
+                (bytes_per_row_padded, &*padded_buf)
+            }
+            else {
+                (bytes_per_row_unpadded, &**self.as_raw())
+            };
+        */
 
         queue.write_texture(
             wgpu::TexelCopyTextureInfo {
@@ -863,14 +890,14 @@ where
                 origin: Default::default(),
                 aspect: Default::default(),
             },
-            self.as_raw(),
+            samples.samples,
             wgpu::TexelCopyBufferLayout {
                 bytes_per_row: Some(bytes_per_row),
                 ..Default::default()
             },
             wgpu::Extent3d {
-                width: size.x,
-                height: size.y,
+                width: texture_size.x,
+                height: texture_size.y,
                 depth_or_array_layers: 1,
             },
         );

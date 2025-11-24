@@ -39,6 +39,7 @@ use crate::{
             Outline,
             texture_channel::TextureReceiver,
         },
+        scene::Changed,
     },
     util::wgpu::create_texture_view_from_texture,
 };
@@ -404,12 +405,12 @@ pub struct LoadMaterialTexturesState {
 }
 
 impl LoadingState for LoadMaterialTexturesState {
-    type Output = (MaterialTextures,);
+    type Output = (MaterialTextures, Changed<MaterialTextures>);
 
     fn poll(
         &mut self,
         context: &mut LoaderContext,
-    ) -> Result<LoadingProgress<(MaterialTextures,)>, Error> {
+    ) -> Result<LoadingProgress<(MaterialTextures, Changed<MaterialTextures>)>, Error> {
         let mut any_still_not_loaded = false;
 
         let mut load_texture =
@@ -454,7 +455,7 @@ impl LoadingState for LoadMaterialTexturesState {
         }
         else {
             let output = std::mem::take(&mut self.output);
-            Ok(LoadingProgress::Ready((output,)))
+            Ok(LoadingProgress::Ready((output, Changed::default())))
         }
     }
 }

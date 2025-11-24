@@ -36,6 +36,7 @@ use crate::{
             light::MaterialTextures,
         },
         scene::{
+            Changed,
             Label,
             Scene,
         },
@@ -250,16 +251,20 @@ pub enum LoadMeshState {
 }
 
 impl LoadingState for LoadMeshState {
-    type Output = (Mesh,);
+    type Output = (Mesh, Changed<Mesh>);
 
-    fn poll(&mut self, context: &mut LoaderContext) -> Result<LoadingProgress<(Mesh,)>, Error> {
-        match self {
+    fn poll(
+        &mut self,
+        context: &mut LoaderContext,
+    ) -> Result<LoadingProgress<(Mesh, Changed<Mesh>)>, Error> {
+        let mesh = match self {
             LoadMeshState::Shape(shape) => {
                 tracing::debug!(shape = ?shape.0, "loading mesh from shape");
-                let mesh = Mesh::from_shape(&*shape.0, context.render_resource_creator.device());
-                Ok(LoadingProgress::Ready((mesh,)))
+                Mesh::from_shape(&*shape.0, context.render_resource_creator.device())
             }
-        }
+        };
+
+        Ok(LoadingProgress::Ready((mesh, Changed::default())))
     }
 }
 
@@ -408,13 +413,10 @@ pub(super) fn update_mesh_bind_groups(
     mesh_bind_group_layout: &wgpu::BindGroupLayout,
     texture_defaults: &Fallbacks,
 ) {
-    // todo: changed tags?
-
-    for (entity, (mesh, material_textures, label)) in scene
-        .entities
-        .query_mut::<(&Mesh, Option<&MaterialTextures>, Option<&Label>)>()
-        .without::<&MeshBindGroup>()
-    {
+    let mut update_mesh_bind_group = |entity: hecs::Entity,
+                                      mesh: &Mesh,
+                                      material_textures: Option<&MaterialTextures>,
+                                      label: Option<&Label>| {
         if mesh.uv_buffer.is_none() && material_textures.is_some() {
             tracing::warn!(?label, "Mesh with textures, but no UV buffer");
         }
@@ -427,7 +429,30 @@ pub(super) fn update_mesh_bind_groups(
             texture_defaults,
         );
 
+        scene.command_buffer.remove_one::<Changed<Mesh>>(entity);
+        scene
+            .command_buffer
+            .remove_one::<Changed<MaterialTextures>>(entity);
         scene.command_buffer.insert_one(entity, mesh_bind_group);
+    };
+
+    for (entity, (mesh, material_textures, label)) in scene
+        .entities
+        .query_mut::<(&Mesh, Option<&MaterialTextures>, Option<&Label>)>()
+        .without::<&MeshBindGroup>()
+    {
+        tracing::debug!(?label, "creating mesh bind group");
+        update_mesh_bind_group(entity, mesh, material_textures, label);
+    }
+
+    for (entity, (mesh, material_textures, label)) in scene
+        .entities
+        .query_mut::<(&Mesh, Option<&MaterialTextures>, Option<&Label>)>()
+        .with::<&MeshBindGroup>()
+        .with::<hecs::Or<&Changed<Mesh>, &Changed<MaterialTextures>>>()
+    {
+        tracing::debug!(?label, "updating mesh bind group");
+        update_mesh_bind_group(entity, mesh, material_textures, label);
     }
 
     scene.apply_deferred();
