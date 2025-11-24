@@ -17,18 +17,21 @@ struct Instance {
     transform: mat4x4f,
     flags: u32,
     base_vertex: u32,
+    outline_thickness: f32,
+    // padding 4 bytes
+    outline_color: vec4f,
     material: Material,
 }
 
 struct Material {
     wireframe: vec4f,
-    outline: vec4f,
+    edges: vec4f,
     ambient: vec4f,
     diffuse: vec4f,
     specular: vec4f,
     emissive: vec4f,
     shininess: f32,
-    outline_thickness: f32,
+    // padding 12 bytes
 }
 
 struct PointLight {
@@ -186,7 +189,9 @@ fn fs_main_solid(input: VertexOutputSolid, @builtin(front_facing) front_face: bo
         let emissive_color = camera.light_filter.emissive * instance.material.emissive * texture_color_emissive;
 
         let final_color = ambient_color + diffuse_color + specular_color + emissive_color;
-        output.color = vec4f(final_color.xyz, 1.0);
+
+        //output.color = vec4f(final_color.xyz, 1.0);
+        output.color = vec4f(final_color.xyz, diffuse_color.w);
     }
     else {
         // for debugging purposes we'll show back-faces as pink for now
@@ -236,10 +241,10 @@ fn vs_main_outline(input: VertexInput) -> VertexOutputSingleColor {
     let instance = instance_buffer[input.instance_index];
 
     let vertex = get_vertex(input.vertex_index);
-    let scaling = 1.0 + instance.material.outline_thickness;
+    let scaling = 1.0 + instance.outline_thickness;
 
     var output: VertexOutputSingleColor;
-    output.color = instance.material.outline;
+    output.color = instance.outline_color;
     output.fragment_position = camera.projection * camera.transform * instance.transform * vec4f(vertex, 1.0 / scaling);
 
     return output;

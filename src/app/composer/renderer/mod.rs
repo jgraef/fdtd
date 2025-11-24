@@ -19,6 +19,7 @@ use bytemuck::{
 };
 use nalgebra::Matrix4;
 use palette::{
+    LinSrgba,
     Srgb,
     Srgba,
 };
@@ -333,7 +334,7 @@ impl Renderer {
         let solid_pipeline = Pipeline::new_mesh_render_pipeline(
             &context.wgpu_context,
             &context.renderer_config,
-            "render/object/solid",
+            "render/mesh/solid",
             &mesh_shader_module,
             &render_mesh_bind_group_layouts,
             wgpu::CompareFunction::Less,
@@ -347,7 +348,7 @@ impl Renderer {
         let wireframe_pipeline = Pipeline::new_mesh_render_pipeline(
             &context.wgpu_context,
             &context.renderer_config,
-            "render/object/wireframe",
+            "render/mesh/wireframe",
             &mesh_shader_module,
             &render_mesh_bind_group_layouts,
             wgpu::CompareFunction::LessEqual,
@@ -361,12 +362,11 @@ impl Renderer {
         let outline_pipeline = Pipeline::new_mesh_render_pipeline(
             &context.wgpu_context,
             &context.renderer_config,
-            "render/object/outline",
+            "render/mesh/outline",
             &mesh_shader_module,
             &render_mesh_bind_group_layouts,
             wgpu::CompareFunction::Always,
             None,
-            // mask used, todo: don't hardcode values like this :D
             Some(Stencil::OUTLINE),
             wgpu::PrimitiveTopology::TriangleList,
             Some("vs_main_outline"),
@@ -481,14 +481,15 @@ impl Renderer {
             .without::<&Hidden>()
         {
             // instance flags
-            let mut flags = InstanceFlags::SHOW_SOLID
-                | InstanceFlags::SHOW_WIREFRAME
-                | InstanceFlags::ENABLE_TEXTURES;
+            let mut flags = InstanceFlags::SHOW_SOLID | InstanceFlags::SHOW_WIREFRAME;
             if mesh.winding_order != Self::WINDING_ORDER {
                 flags |= InstanceFlags::REVERSE_WINDING;
             }
             if mesh.uv_buffer.is_some() {
                 flags |= InstanceFlags::UV_BUFFER_VALID;
+            }
+            if material_textures.is_some() {
+                flags |= InstanceFlags::ENABLE_TEXTURES;
             }
 
             // write per-instance data into a buffer
@@ -774,7 +775,9 @@ struct InstanceData {
     transform: Matrix4<f32>,
     flags: InstanceFlags,
     base_vertex: u32,
-    _padding: [u32; 2],
+    outline_thickness: f32,
+    _padding: [u32; 1],
+    outline_color: LinSrgba,
     material: MaterialData,
 }
 
@@ -788,12 +791,18 @@ impl InstanceData {
         base_vertex: u32,
         outline: Option<&Outline>,
     ) -> Self {
+        let (outline_thickness, outline_color) = outline.map_or_else(Default::default, |outline| {
+            (outline.thickness, outline.color.into_linear())
+        });
+
         Self {
             transform: transform.transform.to_homogeneous(),
             flags,
             base_vertex,
+            outline_thickness,
             _padding: [0; _],
-            material: MaterialData::new(material, material_textures, outline),
+            outline_color,
+            material: MaterialData::new(material, material_textures),
         }
     }
 }

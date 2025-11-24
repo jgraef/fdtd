@@ -28,6 +28,7 @@ use nalgebra::{
     Vector2,
     Vector3,
 };
+use palette::WithAlpha;
 use serde::{
     Deserialize,
     Serialize,
@@ -85,12 +86,14 @@ use crate::{
         solver::{
             FieldComponent,
             config::{
+                FixedVolume,
                 Parallelization,
                 SolverConfig,
                 SolverConfigCommon,
                 SolverConfigFdtd,
                 SolverConfigSpecifics,
                 StopCondition,
+                Volume,
             },
             fdtd,
             observer::{
@@ -325,7 +328,7 @@ impl ComposerState {
         let view_config = &config.views.view_3d;
         let camera_entity = scene.entities.spawn((
             Transform::look_at(
-                &Point3::new(0.0, 0.0, -2.0),
+                &Point3::new(0.0, 0.0, -4.0),
                 &Point3::origin(),
                 &Vector3::y_axis(),
             ),
@@ -345,15 +348,19 @@ impl ComposerState {
                 SolverConfig {
                     label: format!("Test FDTD ({name})"),
                     common: SolverConfigCommon {
-                        volume: Default::default(),
+                        volume: Volume::Fixed(FixedVolume {
+                            isometry: Isometry3::identity(),
+                            half_extents: Vector3::new(0.5, 0.5, 0.0),
+                        }),
                         physical_constants: PhysicalConstants::REDUCED,
                         default_material: Material::VACUUM,
                         parallelization,
+                        memory_limit: Some(200_000_000),
                     },
                     specifics: SolverConfigSpecifics::Fdtd(SolverConfigFdtd {
                         resolution: fdtd::Resolution {
                             spatial: Vector3::repeat(0.01),
-                            temporal: 0.01,
+                            temporal: 0.001,
                         },
                         stop_condition: StopCondition::Never,
                     }),
@@ -730,7 +737,7 @@ impl PopulateScene for ExampleScene {
     type Error = Infallible;
 
     fn populate_scene(&self, scene: &mut Scene) -> Result<(), Self::Error> {
-        /*let shape = |size| parry3d::shape::Cuboid::new(Vector3::repeat(size));
+        let shape = |size| parry3d::shape::Cuboid::new(Vector3::repeat(size));
 
         let em_material = crate::physics::material::Material {
             relative_permittivity: 3.9,
@@ -739,11 +746,10 @@ impl PopulateScene for ExampleScene {
 
         scene
             .add_object(Point3::new(-0.2, 0.0, 0.0), shape(0.1))
-            .material(palette::named::WHITE)
-            .add(LoadMaterialTextures::default().with_ambient_and_diffuse("tmp/test_pattern.png"))
+            .material(palette::named::RED.into_format::<f32>().with_alpha(0.5))
             .add(em_material);
 
-        scene
+        /*scene
             .add_object(Point3::new(0.2, 0.0, 0.0), shape(0.1))
             .material(palette::named::BLUE)
             .add(em_material);
@@ -780,6 +786,17 @@ impl PopulateScene for ExampleScene {
             Transform::identity(),
             LoadMesh::from(MeshFromShape::from(Quad::new(Vector2::new(1.0, 1.0)))),
         ));
+
+        /*scene.entities.spawn((
+            Source::from(
+                GaussianPulse::new(
+                    config.resolution.temporal * 50.0,
+                    config.resolution.temporal * 10.0,
+                )
+                .with_amplitudes(Vector3::z() / config.resolution.temporal, Vector3::zeros()),
+            ),
+            Transform::identity(),
+        ));*/
 
         Ok(())
     }

@@ -206,6 +206,7 @@ impl Default for SolverConfigUiWindow {
                     physical_constants: PhysicalConstants::REDUCED,
                     default_material: Default::default(),
                     parallelization: None,
+                    memory_limit: None,
                 },
                 specifics: SolverConfigSpecifics::Fdtd(SolverConfigFdtd {
                     resolution: fdtd::Resolution {

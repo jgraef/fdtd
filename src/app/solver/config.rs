@@ -52,6 +52,8 @@ pub struct SolverConfigCommon {
     pub default_material: Material,
 
     pub parallelization: Option<Parallelization>,
+
+    pub memory_limit: Option<usize>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

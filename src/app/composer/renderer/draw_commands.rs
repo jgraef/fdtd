@@ -120,7 +120,7 @@ impl<'a> DrawCommandBuilder<'a> {
         self.buffer.draw_meshes.push(DrawMesh {
             instances,
             indices: mesh.indices.clone(),
-            bind_group: mesh_bind_group.bind_group.clone(),
+            mesh_bind_group: mesh_bind_group.bind_group.clone(),
             stencil_reference,
         });
     }
@@ -148,7 +148,7 @@ struct DrawMesh {
     indices: Range<u32>,
 
     /// the bind group containing the index and vertex buffer for the mesh.
-    bind_group: wgpu::BindGroup,
+    mesh_bind_group: wgpu::BindGroup,
 
     /// the stencil reference to set before the draw call is issued.
     stencil_reference: Stencil,
@@ -284,7 +284,8 @@ impl<'a> RenderPass<'a> {
 
         // issue draw commands
         for draw_command in draw_meshes {
-            self.inner.set_bind_group(1, &draw_command.bind_group, &[]);
+            self.inner
+                .set_bind_group(1, &draw_command.mesh_bind_group, &[]);
 
             if set_stencil_reference {
                 self.set_stencil_reference(draw_command.stencil_reference);

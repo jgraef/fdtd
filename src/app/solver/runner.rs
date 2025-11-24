@@ -3,9 +3,13 @@ use std::time::{
     Instant,
 };
 
+use color_eyre::eyre::bail;
 use nalgebra::{
+    Isometry3,
     Matrix4,
     Point3,
+    Translation3,
+    UnitQuaternion,
     Vector3,
 };
 use parry3d::bounding_volume::Aabb;
@@ -43,6 +47,7 @@ use crate::{
             fdtd::{
                 self,
                 FdtdSolverConfig,
+                Resolution,
                 cpu::FdtdCpuBackend,
                 wgpu::FdtdWgpuBackend,
             },
@@ -115,7 +120,7 @@ impl SolverRunner {
 
         match &common_config.parallelization {
             None => {
-                run_single_threaded();
+                run_single_threaded()?;
             }
             Some(Parallelization::MultiThreaded { num_threads }) => {
                 if num_threads.is_some_and(|num_threads| num_threads <= 1) {
@@ -123,7 +128,7 @@ impl SolverRunner {
                         ?num_threads,
                         "switching to single-threaded backend, because num_threads <= 1"
                     );
-                    run_single_threaded();
+                    run_single_threaded()?;
                 }
                 else {
                     #[cfg(not(feature = "rayon"))]
@@ -132,7 +137,7 @@ impl SolverRunner {
                         tracing::warn!(
                             "Compiled without rayon feature. Falling back to single-threaded"
                         );
-                        run_single_threaded();
+                        run_single_threaded()?;
                     }
 
                     tracing::debug!(?num_threads, "using multi-threaded cpu backend");
@@ -143,7 +148,7 @@ impl SolverRunner {
                         fdtd_config,
                         &FdtdCpuBackend::multi_threaded(*num_threads)?,
                         &self.render_resource_creator,
-                    )
+                    )?;
                 }
             }
             Some(Parallelization::Wgpu) => {
@@ -154,7 +159,7 @@ impl SolverRunner {
                     fdtd_config,
                     &self.fdtd_wgpu,
                     &self.render_resource_creator,
-                )
+                )?;
             }
         }
 
@@ -168,7 +173,8 @@ fn run_fdtd_with_backend<Backend>(
     fdtd_config: &SolverConfigFdtd,
     backend: &Backend,
     render_resource_creator: &RenderResourceCreator,
-) where
+) -> Result<(), Error>
+where
     Backend: SolverBackend<FdtdSolverConfig, Point3<usize>>,
     Backend::Instance:
         EvaluateStopCondition + CreateProjection<UndecidedTextureSender> + Send + 'static,
@@ -182,34 +188,28 @@ fn run_fdtd_with_backend<Backend>(
 {
     let time_start = Instant::now();
 
-    //let aabb = common_config.volume.aabb(scene);
-    let aabb = Aabb::from_half_extents(Point3::origin(), Vector3::repeat(0.5));
-    let _rotation = common_config.volume.rotation(); // ignored for now
+    let aabb = common_config.volume.aabb(scene);
 
-    let _origin = aabb.mins;
-    let mut size = aabb.extents();
-    assert!(
-        size.iter().all(|c| c.is_finite() && *c > 0.0),
-        "invalid aabb: {aabb:?}"
-    );
+    let size = aabb.extents();
+    if !size.iter().all(|c| c.is_finite() && *c >= 0.0) {
+        bail!("invalid aabb: {aabb:?}");
+    }
 
-    // only a 2d plane for now
-    size.z = 0.0;
-
-    let mut config = FdtdSolverConfig {
+    let config = FdtdSolverConfig {
         resolution: fdtd_config.resolution,
         physical_constants: common_config.physical_constants,
         size: size.cast(),
     };
 
-    // overwriting temporal resolution to satisfy courant condition
-    // todo: whether the courant condition is satisfied should be checked by the
-    // solver config ui.
-    config.resolution.temporal = 0.2
-        * fdtd::estimate_temporal_from_spatial_resolution(
+    // check courant condition
+    let temporal_resolution_satisfying_courant_condition =
+        fdtd::estimate_temporal_from_spatial_resolution(
             common_config.physical_constants.speed_of_light(),
             &config.resolution.spatial,
         );
+    if config.resolution.temporal > temporal_resolution_satisfying_courant_condition {
+        tracing::warn!(resolution = ?config.resolution, "resolution doesn't satisfy courant condition");
+    }
 
     // good config for debugging
     /*let config = fdtd::SimulationConfig {
@@ -237,15 +237,27 @@ fn run_fdtd_with_backend<Backend>(
         "creating fdtd simulation"
     );
 
-    // todo: remove this. we want a ui flow that prepares the solver-run anyway, so
+    // todo: we want an ui flow that prepares the solver-run anyway, so
     // we could display and warn about memory requirements there.
     // for now this is just a safe-guard that I don't crash my system xD
-    if memory_required.is_some_and(|memory_required| memory_required > 200_000_000) {
-        tracing::warn!("abort. too much memory required");
-        return;
+    if let (Some(memory_required), Some(memory_limit)) =
+        (memory_required, common_config.memory_limit)
+        && memory_required > memory_limit
+    {
+        bail!(
+            "too much memory required: {memory_required_str} > {}",
+            format_size(memory_limit)
+        );
     }
 
-    let materials = SceneDomainDescription::new(scene);
+    // coordinate transformations
+    let coordinate_transformations = CoordinateTransformations::for_fdtd(
+        &config.resolution,
+        &common_config.volume.rotation(),
+        &aabb,
+    );
+
+    let materials = SceneDomainDescription::new(scene, &coordinate_transformations);
 
     let instance = backend
         .create_instance(&config, materials)
@@ -254,8 +266,10 @@ fn run_fdtd_with_backend<Backend>(
     let mut state = instance.create_state();
 
     // create sources
-    // todo: from scene
-    //let mut sources = Sources::from_scene(scene);
+    // todo: from scene. this is blocked by the fact that this specific source needs
+    // config parameters.
+
+    // let sources = Sources::from_scene(scene);
     let mut sources = Sources::default();
     /*let source = fdtd::source::ContinousWave {
         electric_current_density_amplitude: Vector3::z() / config.resolution.temporal,
@@ -292,6 +306,8 @@ fn run_fdtd_with_backend<Backend>(
         sources,
         observers,
     );
+
+    Ok(())
 }
 
 fn spawn_solver<Instance>(
@@ -357,24 +373,42 @@ fn spawn_solver<Instance>(
     });
 }
 
+#[derive(derive_more::Debug)]
 struct SceneDomainDescription<'a, 'b> {
     scene: &'a Scene,
+    #[debug("hecs::ViewBorrow {{ ... }}")]
     materials: hecs::ViewBorrow<'a, &'b Material>,
+    coordinate_transformations: &'a CoordinateTransformations,
 }
 
 impl<'a, 'b> SceneDomainDescription<'a, 'b> {
-    pub fn new(scene: &'a Scene) -> Self {
+    pub fn new(
+        scene: &'a Scene,
+        coordinate_transformations: &'a CoordinateTransformations,
+    ) -> Self {
         // access to the material properties
         let materials = scene.entities.view::<&Material>();
 
-        Self { scene, materials }
+        Self {
+            scene,
+            materials,
+            coordinate_transformations,
+        }
     }
 }
 
 impl<'a, 'b> DomainDescription<Point3<usize>> for SceneDomainDescription<'a, 'b> {
     fn material(&self, point: &Point3<usize>) -> Material {
-        // todo: map back to proper world coordinates
-        let point = point.cast::<f32>();
+        let point = Point3::from_homogeneous(
+            self.coordinate_transformations
+                .transform_from_solver_to_world
+                * point.cast::<f64>().to_homogeneous(),
+        )
+        .unwrap()
+        .coords
+        .try_cast::<f32>()
+        .unwrap()
+        .into();
 
         let mut point_materials = self
             .scene
@@ -509,6 +543,38 @@ impl Sources {
         for (point, source) in &self.sources {
             let values = source.0.evaluate(time);
             update_pass.set_forcing(point, &values);
+        }
+    }
+}
+
+/// TODO: This should be created by the backend and probably be a trait
+#[derive(Clone, Copy, Debug)]
+pub struct CoordinateTransformations {
+    pub transform_from_solver_to_world: Matrix4<f64>,
+    pub transform_from_world_to_solver: Matrix4<f64>,
+}
+
+impl CoordinateTransformations {
+    pub fn for_fdtd(resolution: &Resolution, rotation: &UnitQuaternion<f32>, aabb: &Aabb) -> Self {
+        let scaling_from_solver_to_world = Matrix4::new_nonuniform_scaling(&resolution.spatial);
+        let scaling_from_world_to_solver =
+            Matrix4::new_nonuniform_scaling(&resolution.spatial.map(|x| 1.0 / x));
+        let rotation_from_solver_to_world = rotation.cast::<f64>();
+        let translation_from_solver_to_world = Translation3::from(aabb.mins.coords.cast::<f64>());
+        let isometry_from_solver_to_world = Isometry3::from_parts(
+            translation_from_solver_to_world,
+            rotation_from_solver_to_world,
+        );
+        let isometry_from_world_to_solver = isometry_from_solver_to_world.inverse();
+
+        let transform_from_solver_to_world =
+            isometry_from_solver_to_world.to_homogeneous() * scaling_from_solver_to_world;
+        let transform_from_world_to_solver =
+            scaling_from_world_to_solver * isometry_from_world_to_solver.to_homogeneous();
+
+        Self {
+            transform_from_solver_to_world,
+            transform_from_world_to_solver,
         }
     }
 }

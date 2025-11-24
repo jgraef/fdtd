@@ -35,10 +35,7 @@ use crate::{
             TrackChanges,
             label_and_value,
         },
-        renderer::{
-            Outline,
-            texture_channel::TextureReceiver,
-        },
+        renderer::texture_channel::TextureReceiver,
         scene::Changed,
     },
     util::wgpu::create_texture_view_from_texture,
@@ -274,41 +271,29 @@ impl PropertiesUi for CameraLightFilter {
 #[repr(C)]
 pub struct MaterialData {
     wireframe: LinSrgba,
-    outline: LinSrgba,
+    edges: LinSrgba,
     ambient: LinSrgba,
     diffuse: LinSrgba,
     specular: LinSrgba,
     emissive: LinSrgba,
     shininess: f32,
-    outline_thickness: f32,
-    _padding: [u32; 2],
+    _padding: [u32; 3],
 }
 
 impl MaterialData {
-    pub fn new(
-        material: Option<&Material>,
-        material_textures: Option<&MaterialTextures>,
-        outline: Option<&Outline>,
-    ) -> Self {
-        let (outline, outline_thickness) = outline
-            .map(|outline| (outline.color.into_linear(), outline.thickness))
-            .unwrap_or_default();
-
+    pub fn new(material: Option<&Material>, material_textures: Option<&MaterialTextures>) -> Self {
         const BLACK: LinSrgba = LinSrgba::new(0.0, 0.0, 0.0, 1.0);
         const WHITE: LinSrgba = LinSrgba::new(1.0, 1.0, 1.0, 1.0);
 
         let mut data = Self {
-            outline,
-            outline_thickness,
+            wireframe: material
+                .as_ref()
+                .map_or(BLACK, |material| material.wireframe.into_linear()),
+            shininess: material
+                .as_ref()
+                .map_or(32.0, |material| material.shininess),
             ..Default::default()
         };
-
-        data.wireframe = material
-            .as_ref()
-            .map_or(BLACK, |material| material.wireframe.into_linear());
-        data.shininess = material
-            .as_ref()
-            .map_or(32.0, |material| material.shininess);
 
         macro_rules! color {
             ($name:ident) => {

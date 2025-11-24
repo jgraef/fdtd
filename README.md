@@ -16,8 +16,6 @@ This app is work-in-progress. It's intended to model electromagnetic behavior. I
   - most points in the lattice contain the same material values
   - turn the current buffer into a buffer that only contains indices to a second buffer that holds the actual data
   - we could then also store the original properties (eps, mu, etc.) for rendering.
- - fdtd-wgpu:
-  - render pipeline that renders field values
  - manipulating objects's isometry in scene view
  - pass more config to properties_ui for floats for proper formatting
  - persist settings like `CameraConfig`, `CameraLightFilters` (global or per project?)

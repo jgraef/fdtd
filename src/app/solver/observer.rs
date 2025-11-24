@@ -29,5 +29,8 @@ pub fn test_color_map(scale: f32, axis: UnitVector3<f32>) -> Matrix4<f32> {
     // blue (row 2) will be negative
     m.set_row(2, &(-x));
 
+    // alpha will be 1
+    m[(3, 3)] = 1.0;
+
     m
 }
