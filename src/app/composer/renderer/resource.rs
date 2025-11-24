@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use nalgebra::Vector2;
 use palette::Srgba;
 
@@ -6,9 +8,11 @@ use crate::{
         composer::renderer::{
             Renderer,
             command::CommandSender,
+            light::TextureAndView,
             texture_channel::{
                 TextureReceiver,
-                TextureSender,
+                UndecidedTextureSender,
+                texture_channel,
             },
         },
         start::WgpuContext,
@@ -62,10 +66,16 @@ impl RenderResourceCreator {
 
     pub fn create_texture_channel(
         &self,
-        _size: &Vector2<u32>,
-        _label: &str,
-    ) -> (TextureSender, TextureReceiver) {
-        todo!();
+        size: &Vector2<u32>,
+        label: &str,
+    ) -> (UndecidedTextureSender, TextureReceiver) {
+        let texture = self.create_texture(size, label);
+
+        texture_channel(
+            Arc::new(TextureAndView::from_texture(texture, label)),
+            *size,
+            self.command_sender.clone(),
+        )
     }
 
     /*

@@ -75,7 +75,6 @@ use crate::{
     util::wgpu::{
         StagedTypedArrayBuffer,
         WriteImageToTextureExt,
-        create_texture,
         create_texture_from_color,
         create_texture_view_from_texture,
     },
@@ -571,10 +570,6 @@ impl Renderer {
         ))
     }
 
-    pub fn copy_image_to_texture(&self, image: &image::RgbaImage, texture: &wgpu::Texture) {
-        image.write_to_texture(&self.wgpu_context.queue, texture);
-    }
-
     fn handle_commands(&mut self) {
         // note: for now we handle everything on the same thread, having &mut access to
         // the whole renderer. but many commands we would better handle in a separate
@@ -583,12 +578,9 @@ impl Renderer {
         for command in self.command_queue.receiver.drain() {
             match command {
                 Command::CopyImageToTexture(command) => {
-                    command.handle(|image, texture| self.copy_image_to_texture(image, texture));
-                }
-                Command::CreateTextureForChannel(command) => {
-                    command.handle(|size, label| {
-                        create_texture(&self.wgpu_context.device, size, label)
-                    })
+                    command.handle(|image, texture| {
+                        image.write_to_texture(&self.wgpu_context.queue, texture);
+                    });
                 }
             }
         }

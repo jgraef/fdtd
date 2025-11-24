@@ -256,7 +256,7 @@ impl LoadingState for LoadMeshState {
         match self {
             LoadMeshState::Shape(shape) => {
                 tracing::debug!(shape = ?shape.0, "loading mesh from shape");
-                let mesh = Mesh::from_shape(&*shape.0, context.render.device());
+                let mesh = Mesh::from_shape(&*shape.0, context.render_resource_creator.device());
                 Ok(LoadingProgress::Ready((mesh,)))
             }
         }

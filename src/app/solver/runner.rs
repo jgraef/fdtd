@@ -15,11 +15,8 @@ use crate::{
         composer::{
             renderer::{
                 light::LoadMaterialTextures,
-                mesh::Quad,
-                texture_channel::{
-                    UndecidedTextureSender,
-                    texture_channel,
-                },
+                resource::RenderResourceCreator,
+                texture_channel::UndecidedTextureSender,
             },
             scene::{
                 Scene,
@@ -70,12 +67,17 @@ use crate::{
 #[derive(Debug)]
 pub struct SolverRunner {
     fdtd_wgpu: FdtdWgpuBackend,
+    render_resource_creator: RenderResourceCreator,
 }
 
 impl SolverRunner {
-    pub fn from_wgpu_context(wgpu_context: &WgpuContext) -> Self {
+    pub fn new(
+        wgpu_context: &WgpuContext,
+        render_resource_creator: &RenderResourceCreator,
+    ) -> Self {
         Self {
             fdtd_wgpu: FdtdWgpuBackend::new(&wgpu_context.device, &wgpu_context.queue),
+            render_resource_creator: render_resource_creator.clone(),
         }
     }
 
@@ -105,6 +107,7 @@ impl SolverRunner {
                 common_config,
                 fdtd_config,
                 &FdtdCpuBackend::single_threaded(),
+                &self.render_resource_creator,
             )
         };
 
@@ -136,11 +139,18 @@ impl SolverRunner {
                         common_config,
                         fdtd_config,
                         &FdtdCpuBackend::multi_threaded(*num_threads)?,
+                        &self.render_resource_creator,
                     )
                 }
             }
             Some(Parallelization::Wgpu) => {
-                run_fdtd_with_backend(scene, common_config, fdtd_config, &self.fdtd_wgpu)
+                run_fdtd_with_backend(
+                    scene,
+                    common_config,
+                    fdtd_config,
+                    &self.fdtd_wgpu,
+                    &self.render_resource_creator,
+                )
             }
         }
 
@@ -153,6 +163,7 @@ fn run_fdtd_with_backend<Backend>(
     common_config: &SolverConfigCommon,
     fdtd_config: &SolverConfigFdtd,
     backend: &Backend,
+    render_resource_creator: &RenderResourceCreator,
 ) where
     Backend: SolverBackend<FdtdSolverConfig, Point3<usize>>,
     Backend::Instance:
@@ -254,7 +265,13 @@ fn run_fdtd_with_backend<Backend>(
     );
 
     // create observers
-    let observers = Observers::from_scene(&instance, &mut state, scene, &lattice_size);
+    let observers = Observers::from_scene(
+        &instance,
+        &mut state,
+        scene,
+        &lattice_size,
+        render_resource_creator,
+    );
 
     tracing::debug!("time to create simulation: {:?}", time_start.elapsed());
 
@@ -353,6 +370,7 @@ impl<P> Observers<P> {
         state: &mut I::State,
         scene: &mut Scene,
         lattice_size: &Vector3<usize>,
+        render_resource_creator: &RenderResourceCreator,
     ) -> Self
     where
         I: CreateProjection<UndecidedTextureSender, Projection = P>,
@@ -361,21 +379,21 @@ impl<P> Observers<P> {
         let mut projections = vec![];
 
         // todo:
-        // - derive projection from observer quad/transform
+        // - derive projection from observer and transform
         // - transform projection into simulation coordinate space
 
-        for (entity, (observer, _quad)) in scene.entities.query_mut::<(&Observer, &Quad)>() {
-            // todo: use observer extents
+        for (entity, observer) in scene.entities.query_mut::<&Observer>() {
+            tracing::debug!(?observer, "creating observer");
 
             if observer.display_as_texture {
                 let parameters = ProjectionParameters {
                     projection: Matrix4::identity(),
                     field: observer.field,
                     color_map: observer.color_map,
-                    size: lattice_size.xy().cast(),
                 };
 
-                let (sender, receiver) = texture_channel();
+                let (sender, receiver) = render_resource_creator
+                    .create_texture_channel(&lattice_size.xy().cast(), "observer");
 
                 let projection = instance.create_projection(state, sender, &parameters);
 

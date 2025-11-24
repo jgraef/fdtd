@@ -414,12 +414,16 @@ impl LoadingState for LoadMaterialTexturesState {
 
         let mut load_texture =
             |source: &TextureSource| -> Result<LoadingProgress<Arc<TextureAndView>>, Error> {
+                tracing::debug!(?source, "loading texture");
+
                 match source {
                     TextureSource::File { path } => {
                         let texture_and_view = context.load_texture_from_file(path)?;
                         Ok(LoadingProgress::Ready(texture_and_view))
                     }
-                    TextureSource::Channel { receiver: _ } => todo!(),
+                    TextureSource::Channel { receiver } => {
+                        Ok(LoadingProgress::Ready(receiver.inner.clone()))
+                    }
                 }
             };
 

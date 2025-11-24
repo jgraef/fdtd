@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use nalgebra::{
     Matrix4,
     UnitVector3,
+    Vector2,
 };
 
 use crate::app::solver::FieldComponent;
@@ -13,6 +14,7 @@ pub struct Observer {
     pub display_as_texture: bool,
     pub field: FieldComponent,
     pub color_map: Matrix4<f32>,
+    pub half_extents: Vector2<f32>,
 }
 
 pub fn test_color_map(scale: f32, axis: UnitVector3<f32>) -> Matrix4<f32> {

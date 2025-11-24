@@ -322,41 +322,33 @@ impl CreateProjection<wgpu::TextureView> for FdtdWgpuSolverInstance {
     }
 }
 
-#[derive(Debug)]
-pub struct TextureSenderProjection {
-    inner: Option<TextureProjectionInner>,
-    texture_sender: TextureSender,
-    parameters: ProjectionParameters,
-}
-
 impl CreateProjection<UndecidedTextureSender> for FdtdWgpuSolverInstance {
-    type Projection = TextureSenderProjection;
+    type Projection = TextureProjection;
 
     fn create_projection(
         &self,
         state: &FdtdWgpuSolverState,
         target: UndecidedTextureSender,
         parameters: &ProjectionParameters,
-    ) -> TextureSenderProjection {
-        let texture_sender = target.send_texture(&parameters.size, "fdtd-wgpu/projection");
+    ) -> TextureProjection {
+        let texture_sender = target.send_texture();
         self.create_projection(state, texture_sender, parameters)
     }
 }
 
 impl CreateProjection<TextureSender> for FdtdWgpuSolverInstance {
-    type Projection = TextureSenderProjection;
+    type Projection = TextureProjection;
 
     fn create_projection(
         &self,
         state: &FdtdWgpuSolverState,
         target: TextureSender,
         parameters: &ProjectionParameters,
-    ) -> TextureSenderProjection {
-        let _ = state;
-        TextureSenderProjection {
-            inner: None,
-            texture_sender: target,
-            parameters: *parameters,
+    ) -> TextureProjection {
+        let inner = TextureProjectionInner::new(self, state, parameters, target.format);
+        TextureProjection {
+            inner,
+            texture_view: target.texture_and_view.view.clone(),
         }
     }
 }
@@ -594,28 +586,6 @@ impl<'a> ProjectionPassAdd<'a, TextureProjection> for FdtdWgpuProjectionPass<'a>
             self.swap_buffer_index,
             &projection.texture_view,
         );
-    }
-}
-
-impl<'a> ProjectionPassAdd<'a, TextureSenderProjection> for FdtdWgpuProjectionPass<'a> {
-    fn add_projection(&mut self, projection: &mut TextureSenderProjection) {
-        if let Some(texture_and_view) = projection.texture_sender.get() {
-            let inner = projection.inner.get_or_insert_with(|| {
-                let texture_format = texture_and_view.texture.format();
-                TextureProjectionInner::new(
-                    self.instance,
-                    self.state,
-                    &projection.parameters,
-                    texture_format,
-                )
-            });
-
-            inner.project(
-                &mut self.command_encoder,
-                self.swap_buffer_index,
-                &texture_and_view.view,
-            );
-        }
     }
 }
 

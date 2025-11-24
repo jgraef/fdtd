@@ -139,9 +139,9 @@ impl Composer {
         let renderer = Renderer::from_app_context(context);
         let render_resource_creator = renderer.resource_creator();
 
-        let asset_loader = AssetLoader::new(render_resource_creator.clone());
+        let asset_loader = AssetLoader::new(&render_resource_creator);
 
-        let solver_runner = SolverRunner::from_wgpu_context(&context.wgpu_context);
+        let solver_runner = SolverRunner::new(&context.wgpu_context, &render_resource_creator);
 
         Self {
             state: None,
@@ -772,6 +772,7 @@ impl PopulateScene for ExampleScene {
                 display_as_texture: true,
                 field: FieldComponent::E,
                 color_map: test_color_map(0.5, Vector3::z_axis()),
+                half_extents: Vector2::new(1.0, 1.0),
             },
             LoadMaterialTextures::default().with_ambient_and_diffuse("tmp/test_pattern.png"),
             Transform::identity(),

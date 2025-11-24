@@ -104,7 +104,7 @@ where
     ) -> TextureSenderProjection {
         let _ = state;
 
-        let image_sender = target.send_images(&parameters.size, "fdtd-cpu/projection");
+        let image_sender = target.send_images();
 
         TextureSenderProjection {
             image_sender,

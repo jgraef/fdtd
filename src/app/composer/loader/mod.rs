@@ -28,7 +28,7 @@ use crate::{
 
 #[derive(Debug)]
 pub struct AssetLoader {
-    render: RenderResourceCreator,
+    render_resource_creator: RenderResourceCreator,
 
     /// Texture cache
     ///
@@ -37,9 +37,9 @@ pub struct AssetLoader {
 }
 
 impl AssetLoader {
-    pub fn new(render: RenderResourceCreator) -> Self {
+    pub fn new(render_resource_creator: &RenderResourceCreator) -> Self {
         Self {
-            render,
+            render_resource_creator: render_resource_creator.clone(),
             texture_cache: Default::default(),
         }
     }
@@ -48,7 +48,7 @@ impl AssetLoader {
         let mut run_loaders = RunLoaders {
             scene,
             context: LoaderContext {
-                render: &mut self.render,
+                render_resource_creator: &mut self.render_resource_creator,
                 texture_cache: &mut self.texture_cache,
             },
         };
@@ -90,7 +90,7 @@ impl<T> From<Option<T>> for LoadingProgress<T> {
 
 #[derive(Debug)]
 pub struct LoaderContext<'a> {
-    pub render: &'a mut RenderResourceCreator,
+    pub render_resource_creator: &'a mut RenderResourceCreator,
     texture_cache: &'a mut TextureCache,
 }
 
@@ -101,9 +101,13 @@ impl<'a> LoaderContext<'a> {
     {
         let path = path.as_ref();
         self.texture_cache.get_or_insert(path, || {
+            tracing::debug!(path = %path.display(), "loaing texture from file");
+
             let label = path.display().to_string();
             let image = image::RgbaImage::from_path(path)?;
-            let texture = self.render.create_texture_from_image(&image, &label);
+            let texture = self
+                .render_resource_creator
+                .create_texture_from_image(&image, &label);
             Ok(TextureAndView::from_texture(texture, &label))
         })
     }
