@@ -314,7 +314,10 @@ fn spawn_solver<Instance>(
 {
     let _join_handle = std::thread::spawn(move || {
         let time_start = Instant::now();
-        let step_duration = Duration::from_millis(10);
+        //let step_duration = Some(Duration::from_millis(10));
+        let step_duration: Option<Duration> = None;
+        let observation_duration = Some(Duration::from_millis(1000 / 25));
+        let mut time_last_observation: Option<Instant> = None;
 
         loop {
             let time_elapsed = time_start.elapsed();
@@ -333,13 +336,22 @@ fn spawn_solver<Instance>(
             sources.apply(time, &mut update_pass);
             update_pass.finish();
 
-            observers.run(&instance, &state);
+            if observation_duration.is_some_and(|observation_duration| {
+                time_last_observation.is_none_or(|time_last_observation| {
+                    time_last_observation.elapsed() > observation_duration
+                })
+            }) {
+                observers.run(&instance, &state);
+                time_last_observation = Some(Instant::now());
+            }
 
             let time_pass = time_pass_start.elapsed();
-            let sleep = step_duration.saturating_sub(time_pass);
 
-            if !sleep.is_zero() {
-                std::thread::sleep(sleep);
+            if let Some(step_duration) = step_duration {
+                let sleep = step_duration.saturating_sub(time_pass);
+                if !sleep.is_zero() {
+                    std::thread::sleep(sleep);
+                }
             }
         }
     });
@@ -393,45 +405,51 @@ impl<P> Observers<P> {
         I: CreateProjection<UndecidedTextureSender, Projection = P>,
         for<'a> <I as BeginProjectionPass>::ProjectionPass<'a>: ProjectionPassAdd<'a, P>,
     {
-        let mut projections = vec![];
-
         // todo:
         // - derive projection from observer and transform
         // - transform projection into simulation coordinate space
 
-        for (entity, observer) in scene.entities.query_mut::<&Observer>() {
-            tracing::debug!(?observer, "creating observer");
+        // clippy, i want to chain other options into it later.
+        #[allow(clippy::let_and_return)]
+        let projections = scene
+            .entities
+            .query_mut::<&Observer>()
+            .into_iter()
+            .flat_map(|(entity, observer)| {
+                tracing::debug!(?observer, "creating observer");
 
-            if observer.display_as_texture {
-                let parameters = ProjectionParameters {
-                    projection: Matrix4::identity(),
-                    field: observer.field,
-                    color_map: observer.color_map,
-                };
+                let display_as_texture = observer.display_as_texture.then(|| {
+                    let parameters = ProjectionParameters {
+                        projection: Matrix4::identity(),
+                        field: observer.field,
+                        color_map: observer.color_map,
+                    };
 
-                // create a texture channel. the sender is still undecided whether it will share
-                // a image buffer in host memory with the renderer, or request a gpu texture
-                // directly.
-                //
-                // todo: can we make so that the RENDER_ATTACHMENT usage is only applied if a
-                // texture for rendering is requested by the backend? and likewise for COPY_DST
-                let (sender, receiver) = render_resource_creator.create_texture_channel(
-                    &lattice_size.xy().cast(),
-                    wgpu::TextureUsages::RENDER_ATTACHMENT
-                        | wgpu::TextureUsages::TEXTURE_BINDING
-                        | wgpu::TextureUsages::COPY_DST,
-                    "observer",
-                );
+                    // create a texture channel. the sender is still undecided whether it will share
+                    // a image buffer in host memory with the renderer, or request a gpu texture
+                    // directly.
+                    //
+                    // todo: can we make so that the RENDER_ATTACHMENT usage is only applied if a
+                    // texture for rendering is requested by the backend? and likewise for COPY_DST
+                    let (sender, receiver) = render_resource_creator.create_texture_channel(
+                        &lattice_size.xy().cast(),
+                        wgpu::TextureUsages::RENDER_ATTACHMENT
+                            | wgpu::TextureUsages::TEXTURE_BINDING
+                            | wgpu::TextureUsages::COPY_DST,
+                        "observer",
+                    );
 
-                let projection = instance.create_projection(state, sender, &parameters);
+                    scene.command_buffer.insert_one(
+                        entity,
+                        LoadMaterialTextures::default().with_ambient_and_diffuse(receiver),
+                    );
 
-                projections.push(projection);
-                scene.command_buffer.insert_one(
-                    entity,
-                    LoadMaterialTextures::default().with_ambient_and_diffuse(receiver),
-                );
-            }
-        }
+                    instance.create_projection(state, sender, &parameters)
+                });
+
+                display_as_texture
+            })
+            .collect();
 
         // apply deferred commands
         scene.apply_deferred();

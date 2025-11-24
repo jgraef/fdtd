@@ -9,7 +9,8 @@ This app is work-in-progress. It's intended to model electromagnetic behavior. I
   - check if the `wgpu::util` staging belt is suitable (probably not).
   - add support to `TypedArrayBuffer` to pass in staging buffer/belt.
   - check where else we copy data to/from GPU that doesn't involve `TypedArraBuffer`. E.g. the fdtd-cpu projection implementation seems to slow everything down quite a bit.
- - limit how often a running solver projects into textures
+ - limit how often a running solver projects into textures. done, but needs to be in config somewhere
+ - make observers selectable in scene and tree view. the tree view should have a separate category for it. put something into the tree view (and context menus) to show/hide entities. speaking of context menus. i think they're not implemented for the tree view.
  - PRs for `egui_ltreeview`
  - fdtd: compress material buffer:
   - most points in the lattice contain the same material values
