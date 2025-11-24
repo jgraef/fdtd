@@ -357,13 +357,17 @@ impl<'a> FdtdWgpuUpdatePass<'a> {
 
 impl<'a> UpdatePassForcing<Point3<usize>> for FdtdWgpuUpdatePass<'a> {
     fn set_forcing(&mut self, point: &Point3<usize>, value: &SourceValues) {
-        if let Some(cell_index) = self.instance.strider.index(point) {
-            // note: unlike in the cpu implementation, here we can't check if that point was
-            // already inserted
-            self.state
-                .source_buffer
-                .push(SourceData::new(cell_index, value.j, value.m));
-        }
+        let cell_index = self
+            .instance
+            .strider
+            .index(point)
+            .unwrap_or_else(|| panic!("set_forcing called with invalid point: {point:?}"));
+
+        // note: unlike in the cpu implementation, here we can't check if that point was
+        // already inserted
+        self.state
+            .source_buffer
+            .push(SourceData::new(cell_index, value.j, value.m));
     }
 }
 

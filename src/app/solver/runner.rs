@@ -59,11 +59,7 @@ use crate::{
                 ProjectionPass,
                 ProjectionPassAdd,
             },
-            source::{
-                GaussianPulse,
-                ScalarSourceFunctionExt,
-                Source,
-            },
+            source::Source,
         },
         start::WgpuContext,
     },
@@ -253,6 +249,7 @@ where
     // coordinate transformations
     let coordinate_transformations = CoordinateTransformations::for_fdtd(
         &config.resolution,
+        &lattice_size,
         &common_config.volume.rotation(),
         &aabb,
     );
@@ -269,8 +266,8 @@ where
     // todo: from scene. this is blocked by the fact that this specific source needs
     // config parameters.
 
-    // let sources = Sources::from_scene(scene);
-    let mut sources = Sources::default();
+    let sources = Sources::from_scene(scene, &coordinate_transformations);
+    //let mut sources = Sources::default();
     /*let source = fdtd::source::ContinousWave {
         electric_current_density_amplitude: Vector3::z() / config.resolution.temporal,
         magnetic_current_density_amplitude: Vector3::zeros(),
@@ -278,14 +275,14 @@ where
         magnetic_current_density_phase: 0.0,
         frequency: 2.0,
     };*/
-    sources.push(
+    /*sources.push(
         Point3::from(lattice_size / 2),
         GaussianPulse::new(
             config.resolution.temporal * 50.0,
             config.resolution.temporal * 10.0,
         )
         .with_amplitudes(Vector3::z() / config.resolution.temporal, Vector3::zeros()),
-    );
+    );*/
 
     // create observers
     let observers = Observers::from_scene(
@@ -399,16 +396,9 @@ impl<'a, 'b> SceneDomainDescription<'a, 'b> {
 
 impl<'a, 'b> DomainDescription<Point3<usize>> for SceneDomainDescription<'a, 'b> {
     fn material(&self, point: &Point3<usize>) -> Material {
-        let point = Point3::from_homogeneous(
-            self.coordinate_transformations
-                .transform_from_solver_to_world
-                * point.cast::<f64>().to_homogeneous(),
-        )
-        .unwrap()
-        .coords
-        .try_cast::<f32>()
-        .unwrap()
-        .into();
+        let point = self
+            .coordinate_transformations
+            .transform_point_from_solver_to_world(point);
 
         let mut point_materials = self
             .scene
@@ -512,18 +502,21 @@ struct Sources {
 }
 
 impl Sources {
-    pub fn from_scene(scene: &mut Scene) -> Self {
+    pub fn from_scene(
+        scene: &mut Scene,
+        coordinate_transformations: &CoordinateTransformations,
+    ) -> Self {
         let sources = scene
             .entities
             .query_mut::<(&Transform, &Source)>()
             .into_iter()
-            .map(|(_entity, (transform, source))| {
-                let _world_point = transform.position();
+            .flat_map(|(_entity, (transform, source))| {
+                let world_point = transform.position();
+                let sim_point = coordinate_transformations
+                    .transform_point_from_world_to_solver(&world_point)?;
+                tracing::debug!(?world_point, ?sim_point, ?source, "creating source");
 
-                // todo: transform to simulation coordinate space
-
-                let sim_point = Point3::origin();
-                (sim_point, source.clone())
+                Some((sim_point, source.clone()))
             })
             .collect();
 
@@ -552,10 +545,16 @@ impl Sources {
 pub struct CoordinateTransformations {
     pub transform_from_solver_to_world: Matrix4<f64>,
     pub transform_from_world_to_solver: Matrix4<f64>,
+    pub lattice_size: Vector3<usize>,
 }
 
 impl CoordinateTransformations {
-    pub fn for_fdtd(resolution: &Resolution, rotation: &UnitQuaternion<f32>, aabb: &Aabb) -> Self {
+    pub fn for_fdtd(
+        resolution: &Resolution,
+        lattice_size: &Vector3<usize>,
+        rotation: &UnitQuaternion<f32>,
+        aabb: &Aabb,
+    ) -> Self {
         let scaling_from_solver_to_world = Matrix4::new_nonuniform_scaling(&resolution.spatial);
         let scaling_from_world_to_solver =
             Matrix4::new_nonuniform_scaling(&resolution.spatial.map(|x| 1.0 / x));
@@ -575,6 +574,30 @@ impl CoordinateTransformations {
         Self {
             transform_from_solver_to_world,
             transform_from_world_to_solver,
+            lattice_size: *lattice_size,
         }
+    }
+
+    pub fn transform_point_from_solver_to_world(&self, point: &Point3<usize>) -> Point3<f32> {
+        Point3::from_homogeneous(
+            self.transform_from_solver_to_world * point.cast::<f64>().to_homogeneous(),
+        )
+        .unwrap()
+        .coords
+        .try_cast::<f32>()
+        .unwrap()
+        .into()
+    }
+
+    pub fn transform_point_from_world_to_solver(
+        &self,
+        point: &Point3<f32>,
+    ) -> Option<Point3<usize>> {
+        let point = Point3::from_homogeneous(
+            self.transform_from_world_to_solver * point.cast::<f64>().to_homogeneous(),
+        )
+        .unwrap();
+        let point = Point3::from(point.coords.map(|c| c.round()).try_cast::<usize>()?);
+        (point.coords < self.lattice_size).then_some(point)
     }
 }

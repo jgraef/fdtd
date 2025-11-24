@@ -20,7 +20,6 @@ This app is work-in-progress. It's intended to model electromagnetic behavior. I
  - pass more config to properties_ui for floats for proper formatting
  - persist settings like `CameraConfig`, `CameraLightFilters` (global or per project?)
  - keybindings
- - rename one outline (selection, shape edges). maybe to "contour"?
  - 2D scene view
  - transform hierarchy: `GlobalTransform`, `Parent`, propagate.
  - Point lights: Not properly implemented right now, as we only need a point light colocated with the camera, for which we don't need any information that the shader already has.

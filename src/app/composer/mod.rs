@@ -101,6 +101,11 @@ use crate::{
                 test_color_map,
             },
             runner::SolverRunner,
+            source::{
+                GaussianPulse,
+                ScalarSourceFunctionExt,
+                Source,
+            },
             ui::SolverConfigUiWindow,
         },
         start::CreateAppContext,
@@ -787,16 +792,13 @@ impl PopulateScene for ExampleScene {
             LoadMesh::from(MeshFromShape::from(Quad::new(Vector2::new(1.0, 1.0)))),
         ));
 
-        /*scene.entities.spawn((
+        scene.entities.spawn((
             Source::from(
-                GaussianPulse::new(
-                    config.resolution.temporal * 50.0,
-                    config.resolution.temporal * 10.0,
-                )
-                .with_amplitudes(Vector3::z() / config.resolution.temporal, Vector3::zeros()),
+                GaussianPulse::new(0.05, 0.01)
+                    .with_amplitudes(Vector3::z() * 1000.0, Vector3::zeros()),
             ),
             Transform::identity(),
-        ));*/
+        ));
 
         Ok(())
     }
