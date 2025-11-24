@@ -882,11 +882,22 @@ struct Fallbacks {
 
 impl Fallbacks {
     pub fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
-        let white =
-            create_texture_from_color(device, queue, &Srgba::new(255, 255, 255, 255), "white");
+        let white = create_texture_from_color(
+            device,
+            queue,
+            &Srgba::new(255, 255, 255, 255),
+            wgpu::TextureUsages::TEXTURE_BINDING,
+            "white",
+        );
         let white = create_texture_view_from_texture(&white, "white");
 
-        let black = create_texture_from_color(device, queue, &Srgba::new(0, 0, 0, 255), "black");
+        let black = create_texture_from_color(
+            device,
+            queue,
+            &Srgba::new(0, 0, 0, 255),
+            wgpu::TextureUsages::TEXTURE_BINDING,
+            "black",
+        );
         let black = create_texture_view_from_texture(&black, "black");
 
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {

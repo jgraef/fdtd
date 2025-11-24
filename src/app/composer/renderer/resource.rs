@@ -38,28 +38,41 @@ impl RenderResourceCreator {
         }
     }
 
-    pub fn create_texture(&self, size: &Vector2<u32>, label: &str) -> wgpu::Texture {
-        create_texture(&self.wgpu_context.device, size, label)
+    pub fn create_texture(
+        &self,
+        size: &Vector2<u32>,
+        usage: wgpu::TextureUsages,
+        label: &str,
+    ) -> wgpu::Texture {
+        create_texture(&self.wgpu_context.device, size, usage, label)
     }
 
     pub fn create_texture_from_image(
         &self,
         image: &image::RgbaImage,
+        usage: wgpu::TextureUsages,
         label: &str,
     ) -> wgpu::Texture {
         create_texture_from_image(
             &self.wgpu_context.device,
             &self.wgpu_context.queue,
             image,
+            usage,
             label,
         )
     }
 
-    pub fn create_texture_from_color(&self, color: &Srgba, label: &str) -> wgpu::Texture {
+    pub fn create_texture_from_color(
+        &self,
+        color: &Srgba,
+        usage: wgpu::TextureUsages,
+        label: &str,
+    ) -> wgpu::Texture {
         create_texture_from_color(
             &self.wgpu_context.device,
             &self.wgpu_context.queue,
             &color.into_format(),
+            usage,
             label,
         )
     }
@@ -67,9 +80,10 @@ impl RenderResourceCreator {
     pub fn create_texture_channel(
         &self,
         size: &Vector2<u32>,
+        usage: wgpu::TextureUsages,
         label: &str,
     ) -> (UndecidedTextureSender, TextureReceiver) {
-        let texture = self.create_texture(size, label);
+        let texture = self.create_texture(size, usage, label);
 
         texture_channel(
             Arc::new(TextureAndView::from_texture(texture, label)),

@@ -27,7 +27,7 @@ pub fn test_color_map(scale: f32, axis: UnitVector3<f32>) -> Matrix4<f32> {
     m.set_row(0, &x);
 
     // blue (row 2) will be negative
-    m.set_row(0, &(-x));
+    m.set_row(2, &(-x));
 
     m
 }

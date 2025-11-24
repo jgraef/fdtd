@@ -4,7 +4,12 @@ This app is work-in-progress. It's intended to model electromagnetic behavior. I
 
 # TODO
 
- - I think we can get rid of the `CreateProjectionPass` trait. The size of the image buffer/texture can be specified with the target (which it is afaik for the image buffers, so we would specify the texture size when creating the texture channel). Then when in the projection pass the setup (pipeline creation) could be done lazily. Either way we really only need to know the size of the image/texture when setting up the simulation, so it should be passed to `texture_channel()` (this avoids that the renderer has to wait for the size before it can create the texture and the backend can project as soon as it gets a texture from the renderer).
+ - staging belt! we're writing many buffers to gpu every frame.
+  - check if the wgpu `Queue::write` functions (which we e.g. don't use for `TypedArrayBuffer`s anymore) use a staging belt.
+  - check if the `wgpu::util` staging belt is suitable (probably not).
+  - add support to `TypedArrayBuffer` to pass in staging buffer/belt.
+  - check where else we copy data to/from GPU that doesn't involve `TypedArraBuffer`. E.g. the fdtd-cpu projection implementation seems to slow everything down quite a bit.
+ - limit how often a running solver projects into textures
  - PRs for `egui_ltreeview`
  - fdtd: compress material buffer:
   - most points in the lattice contain the same material values

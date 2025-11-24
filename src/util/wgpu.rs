@@ -904,8 +904,13 @@ where
     }
 }
 
-pub fn create_texture(device: &wgpu::Device, size: &Vector2<u32>, label: &str) -> wgpu::Texture {
-    device.create_texture(&texture_descriptor(size, label))
+pub fn create_texture(
+    device: &wgpu::Device,
+    size: &Vector2<u32>,
+    usage: wgpu::TextureUsages,
+    label: &str,
+) -> wgpu::Texture {
+    device.create_texture(&texture_descriptor(size, usage, label))
 }
 
 pub fn create_texture_view_from_texture(texture: &wgpu::Texture, label: &str) -> wgpu::TextureView {
@@ -919,12 +924,17 @@ pub fn create_texture_from_color(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     color: &Srgba<u8>,
+    usage: wgpu::TextureUsages,
     label: &str,
 ) -> wgpu::Texture {
     let color: [u8; 4] = (*color).into();
     device.create_texture_with_data(
         queue,
-        &texture_descriptor(&Vector2::repeat(1), label),
+        &texture_descriptor(
+            &Vector2::repeat(1),
+            usage | wgpu::TextureUsages::COPY_DST,
+            label,
+        ),
         Default::default(),
         &color,
     )
@@ -934,6 +944,7 @@ pub fn create_texture_from_image<Container>(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     image: &image::ImageBuffer<image::Rgba<u8>, Container>,
+    usage: wgpu::TextureUsages,
     label: &str,
 ) -> wgpu::Texture
 where
@@ -942,13 +953,17 @@ where
     let size = image.size();
     device.create_texture_with_data(
         queue,
-        &texture_descriptor(&size, label),
+        &texture_descriptor(&size, usage | wgpu::TextureUsages::COPY_DST, label),
         Default::default(),
         image.as_raw(),
     )
 }
 
-pub fn texture_descriptor<'a>(size: &Vector2<u32>, label: &'a str) -> wgpu::TextureDescriptor<'a> {
+pub fn texture_descriptor<'a>(
+    size: &Vector2<u32>,
+    usage: wgpu::TextureUsages,
+    label: &'a str,
+) -> wgpu::TextureDescriptor<'a> {
     wgpu::TextureDescriptor {
         label: Some(label),
         size: wgpu::Extent3d {
@@ -963,7 +978,7 @@ pub fn texture_descriptor<'a>(size: &Vector2<u32>, label: &'a str) -> wgpu::Text
         // wouldn't the conversion being taken care of?
         // format: wgpu::TextureFormat::Rgba8UnormSrgb,
         format: wgpu::TextureFormat::Rgba8Unorm,
-        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        usage,
         view_formats: &[],
     }
 }

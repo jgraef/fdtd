@@ -23,17 +23,14 @@ pub(super) fn texture_channel(
     size: Vector2<u32>,
     command_sender: CommandSender,
 ) -> (UndecidedTextureSender, TextureReceiver) {
-    let state = Arc::new(RwLock::new(State {
+    let shared = Arc::new(Shared {
         texture_and_view: texture_and_view.clone(),
         size,
-        image_buffer: None,
-        image_dirty: false,
+        image_buffer: RwLock::new(None),
         command_sender,
-    }));
+    });
 
-    let sender = UndecidedTextureSender {
-        state: state.clone(),
-    };
+    let sender = UndecidedTextureSender { shared };
     let receiver = TextureReceiver {
         inner: texture_and_view,
     };
@@ -47,55 +44,51 @@ pub struct TextureReceiver {
 
 #[derive(Debug)]
 pub(super) struct CopyImageToTextureCommand {
-    state: Arc<RwLock<State>>,
+    shared: Arc<Shared>,
 }
 
 impl CopyImageToTextureCommand {
     pub fn handle(&self, copy_image_to_texture: impl FnOnce(&image::RgbaImage, &wgpu::Texture)) {
-        let mut state = self.state.write();
-        if state.image_dirty {
-            state.image_dirty = false;
+        let mut image_buffer = self.shared.image_buffer.write();
+        let image_buffer = image_buffer
+            .as_mut()
+            .expect("copy-image-to-texture command without image buffer");
 
-            // this is necessary to not borrow twice through the Deref impl of the
-            // RwLockWriteGuard
-            let state = &mut *state;
+        if image_buffer.dirty {
+            image_buffer.dirty = false;
 
-            let image = state
-                .image_buffer
-                .as_mut()
-                .expect("received copy-image-to-texture command but no image set");
-
-            copy_image_to_texture(image, &state.texture_and_view.texture);
+            copy_image_to_texture(&image_buffer.buffer, &self.shared.texture_and_view.texture);
         }
     }
 }
 
 #[derive(Debug)]
 pub struct UndecidedTextureSender {
-    state: Arc<RwLock<State>>,
+    shared: Arc<Shared>,
 }
 
 impl UndecidedTextureSender {
     pub fn send_images(self) -> ImageSender {
         {
-            let mut state = self.state.write();
-            let size = state.size;
-            state.image_buffer = Some(RgbaImage::new(size.x, size.y));
+            let mut image_buffer = self.shared.image_buffer.write();
+            assert!(image_buffer.is_none(), "image buffer already present");
+            *image_buffer = Some(ImageBuffer {
+                buffer: RgbaImage::new(self.shared.size.x, self.shared.size.y),
+                dirty: false,
+            });
         }
 
-        ImageSender { state: self.state }
+        ImageSender {
+            shared: self.shared,
+        }
     }
 
     pub fn send_texture(self) -> TextureSender {
-        let state = self.state.read();
-
-        let texture_and_view = state.texture_and_view.clone();
-        let size = state.size;
+        let texture_and_view = self.shared.texture_and_view.clone();
         let format = texture_and_view.texture.format();
-
         TextureSender {
             texture_and_view,
-            size,
+            size: self.shared.size,
             format,
         }
     }
@@ -110,37 +103,46 @@ pub struct TextureSender {
 
 #[derive(Debug)]
 pub struct ImageSender {
-    state: Arc<RwLock<State>>,
+    shared: Arc<Shared>,
 }
 
 impl ImageSender {
     pub fn update_image(&mut self) -> ImageGuard<'_> {
-        let state = self.state.write();
-        let dirty_before = state.image_dirty;
+        let mut image_buffer = self.shared.image_buffer.write();
+        let dirty_before = image_buffer
+            .as_mut()
+            .expect("no image buffer in image sender")
+            .dirty;
 
         ImageGuard {
-            state_shared: &self.state,
-            state_guard: state,
+            shared: &self.shared,
+            image_buffer,
             dirty_before,
         }
+    }
+
+    pub fn size(&self) -> Vector2<u32> {
+        self.shared.size
     }
 }
 
 #[derive(Debug)]
 pub struct ImageGuard<'a> {
-    state_shared: &'a Arc<RwLock<State>>,
-    state_guard: RwLockWriteGuard<'a, State>,
+    shared: &'a Arc<Shared>,
+    image_buffer: RwLockWriteGuard<'a, Option<ImageBuffer>>,
     dirty_before: bool,
 }
 
 impl<'a> Drop for ImageGuard<'a> {
     fn drop(&mut self) {
-        if !self.dirty_before && self.state_guard.image_dirty {
-            self.state_guard
-                .command_sender
-                .send(CopyImageToTextureCommand {
-                    state: self.state_shared.clone(),
-                });
+        let image_buffer = self
+            .image_buffer
+            .as_mut()
+            .expect("no image buffer in image sender");
+        if !self.dirty_before && image_buffer.dirty {
+            self.shared.command_sender.send(CopyImageToTextureCommand {
+                shared: self.shared.clone(),
+            });
         }
     }
 }
@@ -149,28 +151,35 @@ impl<'a> Deref for ImageGuard<'a> {
     type Target = image::RgbaImage;
 
     fn deref(&self) -> &Self::Target {
-        self.state_guard
+        let image_buffer = self
             .image_buffer
             .as_ref()
-            .expect("image sender, but image not set")
+            .expect("no image buffer in image sender");
+        &image_buffer.buffer
     }
 }
 
 impl<'a> DerefMut for ImageGuard<'a> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        self.state_guard.image_dirty = true;
-        self.state_guard
+        let image_buffer = self
             .image_buffer
             .as_mut()
-            .expect("image sender, but image not set")
+            .expect("no image buffer in image sender");
+        image_buffer.dirty = true;
+        &mut image_buffer.buffer
     }
 }
 
 #[derive(Debug)]
-struct State {
+struct Shared {
     texture_and_view: Arc<TextureAndView>,
     size: Vector2<u32>,
-    image_buffer: Option<image::RgbaImage>,
-    image_dirty: bool,
     command_sender: CommandSender,
+    image_buffer: RwLock<Option<ImageBuffer>>,
+}
+
+#[derive(Debug)]
+struct ImageBuffer {
+    buffer: image::RgbaImage,
+    dirty: bool,
 }

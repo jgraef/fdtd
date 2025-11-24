@@ -8,6 +8,7 @@ use nalgebra::{
     Point3,
     Vector3,
 };
+use parry3d::bounding_volume::Aabb;
 
 use crate::{
     Error,
@@ -50,6 +51,7 @@ use crate::{
                 BeginProjectionPass,
                 CreateProjection,
                 ProjectionParameters,
+                ProjectionPass,
                 ProjectionPassAdd,
             },
             source::{
@@ -133,6 +135,7 @@ impl SolverRunner {
                         run_single_threaded();
                     }
 
+                    tracing::debug!(?num_threads, "using multi-threaded cpu backend");
                     #[cfg(feature = "rayon")]
                     run_fdtd_with_backend(
                         scene,
@@ -144,6 +147,7 @@ impl SolverRunner {
                 }
             }
             Some(Parallelization::Wgpu) => {
+                tracing::debug!("using wgpu backend");
                 run_fdtd_with_backend(
                     scene,
                     common_config,
@@ -178,11 +182,16 @@ fn run_fdtd_with_backend<Backend>(
 {
     let time_start = Instant::now();
 
-    let aabb = common_config.volume.aabb(scene);
+    //let aabb = common_config.volume.aabb(scene);
+    let aabb = Aabb::from_half_extents(Point3::origin(), Vector3::repeat(0.5));
     let _rotation = common_config.volume.rotation(); // ignored for now
 
     let _origin = aabb.mins;
     let mut size = aabb.extents();
+    assert!(
+        size.iter().all(|c| c.is_finite() && *c > 0.0),
+        "invalid aabb: {aabb:?}"
+    );
 
     // only a 2d plane for now
     size.z = 0.0;
@@ -305,6 +314,7 @@ fn spawn_solver<Instance>(
 {
     let _join_handle = std::thread::spawn(move || {
         let time_start = Instant::now();
+        let step_duration = Duration::from_millis(10);
 
         loop {
             let time_elapsed = time_start.elapsed();
@@ -316,6 +326,8 @@ fn spawn_solver<Instance>(
 
             //tracing::debug!(tick = simulation.tick(), elapsed = ?time_elapsed);
 
+            let time_pass_start = Instant::now();
+
             let time = state.time();
             let mut update_pass = instance.begin_update(&mut state);
             sources.apply(time, &mut update_pass);
@@ -323,7 +335,12 @@ fn spawn_solver<Instance>(
 
             observers.run(&instance, &state);
 
-            std::thread::sleep(Duration::from_millis(10));
+            let time_pass = time_pass_start.elapsed();
+            let sleep = step_duration.saturating_sub(time_pass);
+
+            if !sleep.is_zero() {
+                std::thread::sleep(sleep);
+            }
         }
     });
 }
@@ -392,8 +409,19 @@ impl<P> Observers<P> {
                     color_map: observer.color_map,
                 };
 
-                let (sender, receiver) = render_resource_creator
-                    .create_texture_channel(&lattice_size.xy().cast(), "observer");
+                // create a texture channel. the sender is still undecided whether it will share
+                // a image buffer in host memory with the renderer, or request a gpu texture
+                // directly.
+                //
+                // todo: can we make so that the RENDER_ATTACHMENT usage is only applied if a
+                // texture for rendering is requested by the backend? and likewise for COPY_DST
+                let (sender, receiver) = render_resource_creator.create_texture_channel(
+                    &lattice_size.xy().cast(),
+                    wgpu::TextureUsages::RENDER_ATTACHMENT
+                        | wgpu::TextureUsages::TEXTURE_BINDING
+                        | wgpu::TextureUsages::COPY_DST,
+                    "observer",
+                );
 
                 let projection = instance.create_projection(state, sender, &parameters);
 
@@ -421,6 +449,8 @@ impl<P> Observers<P> {
         for projection in &mut self.projections {
             pass.add_projection(projection);
         }
+
+        pass.finish();
     }
 }
 
@@ -449,7 +479,9 @@ impl Sources {
     }
 
     pub fn push(&mut self, point: Point3<usize>, source: impl Into<Source>) {
-        self.sources.push((point, source.into()));
+        let source = source.into();
+        tracing::debug!(?point, ?source, "creating source");
+        self.sources.push((point, source));
     }
 
     pub fn apply<UpdatePass>(&self, time: f64, update_pass: &mut UpdatePass)

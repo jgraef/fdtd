@@ -19,7 +19,7 @@ struct Cell {
 var<uniform> projection: Projection;
 
 @group(0) @binding(2)
-var<storage, read_write> field: array<Cell>;
+var<storage, read> field: array<Cell>;
 
 
 struct Projection {
@@ -34,7 +34,7 @@ struct VertexInput {
 
 struct VertexOutput {
     @builtin(position) fragment_position: vec4f,
-    @location(0) field_position: vec4f,
+    @location(0) field_position: vec3f,
 }
 
 struct FragmentOutput {
@@ -49,14 +49,15 @@ fn vs_main(input: VertexInput) -> VertexOutput {
     let vertex = quad_vertices[input.vertex_index];
 
     output.fragment_position = vec4f(vertex * vec2f(2.0) - vec2f(1.0), 0.0, 1.0);
-    output.field_position = projection.transform * vec4f(vertex, 0.0, 1.0);
+    let projected = projection.transform * vec4f(vertex, 0.0, 1.0);
+    output.field_position = projected.xyz * vec3f(config.size.xyz - vec3u(1));
 
     return output;
 }
 
 @fragment
 fn fs_main(input: VertexOutput) -> FragmentOutput {
-    let point = vec3u(round(input.field_position.xyz * vec3f(config.size.xyz - vec3u(1))));
+    let point = vec3u(round(input.field_position));
     let index = point_to_index(point);
 
     let value = field[index].value;

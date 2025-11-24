@@ -105,6 +105,7 @@ where
         let _ = state;
 
         let image_sender = target.send_images();
+        tracing::debug!(size = ?image_sender.size(), "creating projection with image sender");
 
         TextureSenderProjection {
             image_sender,
@@ -164,31 +165,39 @@ impl<'a, Threading> FdtdCpuProjectionPass<'a, Threading> {
     ) where
         Container: Deref<Target = [u8]> + DerefMut,
     {
-        let image_size = (image.size() - Vector2::repeat(1)).cast::<f32>();
+        let image_size_scaling = (image.size() + Vector2::repeat(1)).cast::<f32>();
 
         // todo: par_iter depending on `Threading`
         image.enumerate_pixels_mut().for_each(|(x, y, pixel)| {
-            let uv = Vector2::new(x, y).cast::<f32>().component_div(&image_size);
-            let point = Vector4::new(uv.x, uv.y, 0.0, 1.0);
-            let projected_point =
-                (parameters.projection * point).map(|c| c.round().max(0.0) as usize);
+            let uv = Vector2::new(x, y)
+                .cast::<f32>()
+                .component_div(&image_size_scaling);
+
+            let projected_point = parameters.projection * Vector4::new(uv.x, uv.y, 0.0, 1.0);
+
+            let lattice_point = Point3::from(
+                projected_point
+                    .xyz()
+                    .zip_map(self.instance.strider.size(), |c, s| {
+                        ((c * (s as f32 - 1.0)).round().max(0.0) as usize).min(s - 1)
+                    }),
+            );
 
             let field = &self.state.field(parameters.field)[self.swap_buffer_index];
-            if let Some(value) =
-                field.get_point(&self.instance.strider, &projected_point.xyz().into())
-            {
+            if let Some(value) = field.get_point(&self.instance.strider, &lattice_point) {
                 let color =
                     parameters.color_map * Point3::from(value.cast::<f32>()).to_homogeneous();
 
                 // convert to srgba
                 let color: Srgba = LinSrgba::from(color.data.0[0]).clamp().into_encoding();
+
                 // convert to u8
                 let color: Srgba<u8> = color.into_format();
 
                 pixel.0 = color.into();
             }
             else {
-                *pixel = image::Rgba(Default::default());
+                pixel.0 = [255, 0, 255, 255];
             }
         });
     }

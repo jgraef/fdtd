@@ -730,7 +730,7 @@ impl PopulateScene for ExampleScene {
     type Error = Infallible;
 
     fn populate_scene(&self, scene: &mut Scene) -> Result<(), Self::Error> {
-        let shape = |size| parry3d::shape::Cuboid::new(Vector3::repeat(size));
+        /*let shape = |size| parry3d::shape::Cuboid::new(Vector3::repeat(size));
 
         let em_material = crate::physics::material::Material {
             relative_permittivity: 3.9,
@@ -766,7 +766,7 @@ impl PopulateScene for ExampleScene {
         scene
             .add_object(Point3::new(0.02, 0.02, -0.2), shape(0.05))
             .material(palette::named::CYAN)
-            .add(em_material);
+            .add(em_material);*/
 
         scene.entities.spawn((
             Observer {

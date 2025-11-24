@@ -95,7 +95,11 @@ pub struct LoaderContext<'a> {
 }
 
 impl<'a> LoaderContext<'a> {
-    pub fn load_texture_from_file<P>(&mut self, path: P) -> Result<Arc<TextureAndView>, Error>
+    pub fn load_texture_from_file<P>(
+        &mut self,
+        path: P,
+        usage: wgpu::TextureUsages,
+    ) -> Result<Arc<TextureAndView>, Error>
     where
         P: AsRef<Path>,
     {
@@ -107,7 +111,7 @@ impl<'a> LoaderContext<'a> {
             let image = image::RgbaImage::from_path(path)?;
             let texture = self
                 .render_resource_creator
-                .create_texture_from_image(&image, &label);
+                .create_texture_from_image(&image, usage, &label);
             Ok(TextureAndView::from_texture(texture, &label))
         })
     }

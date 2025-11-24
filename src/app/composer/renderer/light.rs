@@ -419,7 +419,10 @@ impl LoadingState for LoadMaterialTexturesState {
 
                 match source {
                     TextureSource::File { path } => {
-                        let texture_and_view = context.load_texture_from_file(path)?;
+                        // todo: this should not be implied here
+                        let usage = wgpu::TextureUsages::TEXTURE_BINDING;
+
+                        let texture_and_view = context.load_texture_from_file(path, usage)?;
                         Ok(LoadingProgress::Ready(texture_and_view))
                     }
                     TextureSource::Channel { receiver } => {
