@@ -25,7 +25,7 @@ struct Material {
     wireframe: vec4f,
     edges: vec4f,
     albedo: vec4f,
-    metallic: f32,
+    metalness: f32,
     roughness: f32,
     ambient_occlusion: f32,
     flags: u32,
@@ -153,7 +153,7 @@ fn fs_main_solid(input: VertexOutputSolid, @builtin(front_facing) front_face: bo
         // uniform material
         var albedo = instance.material.albedo.rgb;
         var alpha = instance.material.albedo.a;
-        var metallic = instance.material.metallic;
+        var metalness = instance.material.metalness;
         var roughness = instance.material.roughness;
         var ambient_occlusion = instance.material.ambient_occlusion;
 
@@ -164,7 +164,7 @@ fn fs_main_solid(input: VertexOutputSolid, @builtin(front_facing) front_face: bo
             alpha *= albedo_and_alpha.a;
             let material = textureSample(texture_material, texture_sampler, input.texture_position);
             if (instance.material.flags & FLAG_MATERIAL_METALLIC) != 0 {
-                metallic *= material.r;
+                metalness *= material.r;
             }
             if (instance.material.flags & FLAG_MATERIAL_ROUGHNESS) != 0 {
                 roughness *= material.g;
@@ -185,13 +185,21 @@ fn fs_main_solid(input: VertexOutputSolid, @builtin(front_facing) front_face: bo
         //let view_direction = normalize(input.world_position.xyz - camera.world_position.xyz);
 
         // mix between base reflectivity approximation and surface color (F_0)
-        let surface_reflection = mix(vec3(0.04), albedo, metallic);
+        let surface_reflection = mix(vec3(0.04), albedo, metalness);
+
+        // this is needed in `light_radiance` but can be computed once upfront
+        let n_dot_v = max(dot(world_normal, view_direction), 0.0);
+
+        // surfaces with roughness=0 won't show anything with point lights
+        // https://computergraphics.stackexchange.com/a/9126
+        const min_roughness: f32 = 0.001;
+        roughness = max(roughness, min_roughness);
 
         // debug
         //alpha = 1.0;
         //ambient_occlusion = 1.0;
         //roughness = 0.8;
-        //metallic = 0.5;
+        //metalness = 0.5;
 
         var color: vec3f;
 
@@ -209,8 +217,9 @@ fn fs_main_solid(input: VertexOutputSolid, @builtin(front_facing) front_face: bo
                 view_direction,
                 albedo,
                 roughness,
-                metallic,
+                metalness,
                 surface_reflection,
+                n_dot_v,
             );
         }
 
@@ -239,15 +248,15 @@ fn light_radiance(
     view_direction: vec3f,
     albedo: vec3f,
     roughness: f32,
-    metallic: f32,
+    metalness: f32,
     surface_reflection: vec3f,
+    n_dot_v: f32,
 ) -> vec3f {
     let light_direction = normalize(light_position - world_position);
     let half = normalize(view_direction + light_direction);
 
     // all the dot products we'll need.
     let h_dot_v = max(dot(half, view_direction), 0.0);
-    let n_dot_v = max(dot(world_normal, view_direction), 0.0); // todo: this only needs to be computed once
     let n_dot_l = max(dot(world_normal, light_direction), 0.0);
     let n_dot_h = max(dot(world_normal, half), 0.0);
 
@@ -262,11 +271,14 @@ fn light_radiance(
     let g = geometry_smith(n_dot_v, n_dot_l, roughness);
     let f = fresnel_schlick(h_dot_v, surface_reflection);
 
-    let k_d = (1.0 - metallic) * (vec3f(1.0) - f);
+    let k_d = (1.0 - metalness) * (vec3f(1.0) - f);
     let eps = 0.0001;
     let specular = ndf * g * f / (4.0 * n_dot_v * n_dot_l + eps);
 
-    return (k_d * albedo / pi + specular) * radiance * n_dot_l;
+    // hack for slightly better looks, but we want to better solution for this.
+    let specular_clamped = clamp(specular, vec3f(0.01), vec3f(1.0));
+
+    return (k_d * albedo / pi + specular_clamped) * radiance * n_dot_l;
 }
 
 fn throwbridge_reitz_ggx(n_dot_h: f32, a: f32) -> f32 {

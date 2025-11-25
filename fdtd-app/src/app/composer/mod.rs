@@ -51,10 +51,7 @@ use crate::{
                     AmbientLight,
                     PointLight,
                 },
-                material::{
-                    self,
-                    LoadAlbedoTexture,
-                },
+                material,
                 mesh::{
                     LoadMesh,
                     MeshFromShape,
@@ -806,7 +803,8 @@ impl PopulateScene for ExampleScene {
                 color_map: test_color_map(0.5, Vector3::z_axis()),
                 half_extents: Vector2::new(1.0, 1.0),
             },
-            LoadAlbedoTexture::new("tmp/test_pattern.png"),
+            material::LoadAlbedoTexture::new("tmp/test_pattern.png"),
+            material::named::OFFICE_PAPER.into_material(),
             Transform::identity(),
             LoadMesh::from(MeshFromShape::from(Quad::new(Vector2::new(1.0, 1.0)))),
         ));

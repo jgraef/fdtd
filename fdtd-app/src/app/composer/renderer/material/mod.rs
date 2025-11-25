@@ -38,6 +38,8 @@ use crate::{
             PropertiesUi,
             TrackChanges,
             label_and_value,
+            label_and_value_with_config,
+            std::NumericPropertyUiConfig,
         },
         renderer::texture_channel::TextureReceiver,
     },
@@ -57,23 +59,32 @@ pub mod named {
         WithAlpha,
     };
 
-    use crate::util::palette::ColorExt as _;
+    use crate::{
+        app::composer::renderer::material::Material,
+        util::palette::ColorExt as _,
+    };
 
     #[derive(Clone, Copy, Debug)]
     pub struct MaterialPreset {
         pub name: &'static str,
         pub albedo: LinSrgb,
-        pub metallic: f32,
+        pub metalness: f32,
         pub roughness: f32,
     }
 
-    impl From<MaterialPreset> for super::Material {
+    impl From<MaterialPreset> for Material {
         fn from(value: MaterialPreset) -> Self {
-            Self {
+            value.into_material()
+        }
+    }
+
+    impl MaterialPreset {
+        pub fn into_material(self) -> Material {
+            Material {
                 wireframe: Srgba::BLACK,
-                albedo: Srgb::from_linear(value.albedo).with_alpha(1.0),
-                metallic: value.metallic,
-                roughness: value.roughness,
+                albedo: Srgb::from_linear(self.albedo).with_alpha(1.0),
+                metalness: self.metalness,
+                roughness: self.roughness,
                 ambient_occlusion: 1.0,
             }
         }
@@ -107,7 +118,7 @@ pub struct Material {
     #[serde(with = "crate::util::serde::palette")]
     pub albedo: Srgba,
 
-    pub metallic: f32,
+    pub metalness: f32,
     pub roughness: f32,
     pub ambient_occlusion: f32,
 }
@@ -120,7 +131,7 @@ impl Material {
         Self {
             wireframe: Srgba::BLACK,
             albedo: color.into(),
-            metallic: 0.0,
+            metalness: 0.0,
             roughness: 0.0,
             ambient_occlusion: 1.0,
         }
@@ -131,8 +142,8 @@ impl Material {
         self
     }
 
-    pub fn with_metallic(mut self, metallic: f32) -> Self {
-        self.metallic = metallic;
+    pub fn with_metalness(mut self, metalness: f32) -> Self {
+        self.metalness = metalness;
         self
     }
 
@@ -212,8 +223,20 @@ impl PropertiesUi for Material {
 
                 label_and_value(ui, "Wireframe", &mut changes, &mut self.wireframe);
                 label_and_value(ui, "Albedo", &mut changes, &mut self.albedo);
-                label_and_value(ui, "Metallic", &mut changes, &mut self.metallic);
-                label_and_value(ui, "Roughness", &mut changes, &mut self.roughness);
+                label_and_value_with_config(
+                    ui,
+                    "Metallic",
+                    &mut changes,
+                    &mut self.metalness,
+                    &NumericPropertyUiConfig::Slider { range: 0.0..=1.0 },
+                );
+                label_and_value_with_config(
+                    ui,
+                    "Roughness",
+                    &mut changes,
+                    &mut self.roughness,
+                    &NumericPropertyUiConfig::Slider { range: 0.0..=1.0 },
+                );
 
                 if changes.changed {
                     // invalidate preset?
@@ -235,7 +258,7 @@ pub struct AlbedoTexture {
     pub texture: Arc<TextureAndView>,
 }
 
-/// Combined ambient occlusion, roughness, metallic map
+/// Combined ambient occlusion, roughness, metalness map
 #[derive(Clone, Debug)]
 pub struct MaterialTexture {
     pub texture: Arc<TextureAndView>,
@@ -258,7 +281,7 @@ pub(super) struct MaterialData {
     wireframe: LinSrgba,
     edges: LinSrgba,
     albedo: LinSrgba,
-    metallic: f32,
+    metalness: f32,
     roughness: f32,
     ambient_occlusion: f32,
     flags: MaterialTextureFlags,
@@ -296,23 +319,30 @@ impl MaterialData {
         };
 
         macro_rules! material {
-            ($name:ident, $flag:ident) => {
+            ($name:ident, $flag:ident, $default:expr) => {
                 data.$name = material.as_ref().map_or_else(
                     || {
                         let texture_present =
                             material_texture.as_ref().map_or(false, |material_texture| {
                                 material_texture.flags.contains(MaterialTextureFlags::$flag)
                             });
-                        if texture_present { 1.0 } else { 0.0 }
+                        if texture_present {
+                            // if this value is present in the material texture we want it unchanged
+                            1.0
+                        }
+                        else {
+                            // if the texture also doesn't have this, we set a default
+                            $default
+                        }
                     },
                     |material| material.$name,
                 );
             };
         }
 
-        material!(metallic, METALLIC);
-        material!(roughness, ROUGHNESS);
-        material!(ambient_occlusion, AMBIENT_OCCLUSION);
+        material!(metalness, METALLIC, 0.0);
+        material!(roughness, ROUGHNESS, 0.0);
+        material!(ambient_occlusion, AMBIENT_OCCLUSION, 1.0);
 
         data
     }

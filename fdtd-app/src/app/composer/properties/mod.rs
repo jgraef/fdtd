@@ -187,9 +187,22 @@ pub fn label_and_value<P>(
 where
     P: PropertiesUi,
 {
+    label_and_value_with_config(ui, label, changes, field, &Default::default())
+}
+
+pub fn label_and_value_with_config<P>(
+    ui: &mut egui::Ui,
+    label: &str,
+    changes: &mut TrackChanges,
+    field: &mut P,
+    config: &P::Config,
+) -> egui::Response
+where
+    P: PropertiesUi,
+{
     ui.horizontal(|ui| {
         ui.label(label);
-        changes.track(field.properties_ui(ui, &Default::default()))
+        changes.track(field.properties_ui(ui, config))
     })
     .inner
 }

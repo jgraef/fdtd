@@ -479,7 +479,7 @@ impl<P> Observers<P> {
                         (
                             material::LoadAlbedoTexture::new(receiver),
                             material::Material::from_albedo(Srgba::WHITE)
-                                .with_metallic(0.0)
+                                .with_metalness(0.0)
                                 .with_roughness(0.0),
                         ),
                     );

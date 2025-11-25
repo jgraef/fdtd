@@ -15,9 +15,15 @@ use eyre::{
     Error,
 };
 use heck::ToShoutySnakeCase;
-use palette::LinSrgb;
+use palette::{
+    LinSrgb,
+    Srgb,
+};
 use serde::Deserialize;
 
+/// Input file from [physically-based-api][1]
+///
+/// [1]: https://github.com/AntonPalmqvist/physically-based-api
 pub fn create_constants_module(
     materials_json: impl AsRef<Path>,
     materials_rs: impl AsRef<Path>,
@@ -57,19 +63,26 @@ pub fn create_constants_module(
             continue;
         };
         let albedo = LinSrgb::from(color.color);
+        let albedo_srgb: Srgb = Srgb::from_linear(albedo);
+        let albedo_css = albedo_srgb.into_format::<u8>();
 
         let constant_name = entry.name.to_shouty_snake_case();
 
         writeln!(
             &mut writer,
             r#"
-/// # {name}
+/// # {name} <div style="display: inline-block; width: 3em; height: 1em; border: 1px solid black; background: rgb({}, {}, {});"></div>
 ///
 /// - Color (linear SRGB): `[{}, {}, {}]`
 /// - Metalness: {metalness}
 /// - Roughness: {roughness}
 ///"#,
-            albedo.red, albedo.green, albedo.blue,
+            albedo_css.red,
+            albedo_css.green,
+            albedo_css.blue,
+            albedo.red,
+            albedo.green,
+            albedo.blue,
         )?;
 
         if !references.is_empty() {
@@ -90,7 +103,7 @@ pub fn create_constants_module(
 pub const {constant_name}: MaterialPreset = MaterialPreset {{
     name: {name:?},
     albedo: LinSrgb::new({:?}, {:?}, {:?}),
-    metallic: {metalness:?},
+    metalness: {metalness:?},
     roughness: {roughness:?},
 }};
 "#,
