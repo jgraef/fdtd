@@ -45,6 +45,15 @@ use crate::{
     },
 };
 
+pub mod named {
+    use palette::Srgba;
+
+    use super::Material;
+    use crate::util::palette::ColorExt as _;
+
+    include!(concat!(env!("OUT_DIR"), "/materials.rs"));
+}
+
 /// Material properties that define how an object looks in the scene.
 ///
 /// This defines how the light from point sources and ambient light it modulated

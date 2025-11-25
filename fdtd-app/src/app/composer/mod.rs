@@ -764,6 +764,7 @@ impl PopulateScene for ExampleScene {
         scene
             .add_object(Point3::new(-0.2, 0.0, 0.0), cube(0.1))
             .material(palette::named::RED.into_format::<f32>().with_alpha(1.0))
+            //.material(Material::from_db("aluminium"))
             .add(em_material);
 
         scene
