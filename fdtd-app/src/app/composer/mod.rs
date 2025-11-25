@@ -28,7 +28,6 @@ use nalgebra::{
     Vector2,
     Vector3,
 };
-use palette::WithAlpha;
 use serde::{
     Deserialize,
     Serialize,
@@ -52,7 +51,10 @@ use crate::{
                     AmbientLight,
                     PointLight,
                 },
-                material::LoadAlbedoTexture,
+                material::{
+                    self,
+                    LoadAlbedoTexture,
+                },
                 mesh::{
                     LoadMesh,
                     MeshFromShape,
@@ -763,13 +765,12 @@ impl PopulateScene for ExampleScene {
 
         scene
             .add_object(Point3::new(-0.2, 0.0, 0.0), cube(0.1))
-            .material(palette::named::RED.into_format::<f32>().with_alpha(1.0))
-            //.material(Material::from_db("aluminium"))
+            .material(material::named::BRASS)
             .add(em_material);
 
         scene
             .add_object(Point3::new(0.2, 0.0, 0.0), ball(0.1))
-            .material(palette::named::BLUE.into_format::<f32>().with_alpha(1.0))
+            .material(material::named::BLACKBOARD)
             .add(em_material);
 
         /*scene

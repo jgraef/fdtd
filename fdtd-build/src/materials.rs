@@ -15,10 +15,7 @@ use eyre::{
     Error,
 };
 use heck::ToShoutySnakeCase;
-use palette::{
-    LinSrgb,
-    Srgb,
-};
+use palette::LinSrgb;
 use serde::Deserialize;
 
 pub fn create_constants_module(
@@ -42,7 +39,7 @@ pub fn create_constants_module(
             .wrap_err_with(|| format!("Could not write file: {}", materials_rs.display()))?,
     );
 
-    for entry in entries {
+    for entry in &entries {
         let Entry {
             name,
             color,
@@ -50,7 +47,7 @@ pub fn create_constants_module(
             roughness,
             references,
             ..
-        } = &entry;
+        } = entry;
 
         let Some(color) = color
             .iter()
@@ -59,8 +56,7 @@ pub fn create_constants_module(
             tracing::warn!("materials.json entry '{}' has no linear color", entry.name);
             continue;
         };
-        let albedo_linear = LinSrgb::from(color.color);
-        let albedo: Srgb = Srgb::from_linear(albedo_linear);
+        let albedo = LinSrgb::from(color.color);
 
         let constant_name = entry.name.to_shouty_snake_case();
 
@@ -69,16 +65,11 @@ pub fn create_constants_module(
             r#"
 /// # {name}
 ///
-/// - Color: `[{}, {}, {}]` (linear: `[{}, {}, {}]`)
+/// - Color (linear SRGB): `[{}, {}, {}]`
 /// - Metalness: {metalness}
 /// - Roughness: {roughness}
 ///"#,
-            albedo.red,
-            albedo.green,
-            albedo.blue,
-            albedo_linear.red,
-            albedo_linear.green,
-            albedo_linear.blue,
+            albedo.red, albedo.green, albedo.blue,
         )?;
 
         if !references.is_empty() {
@@ -96,17 +87,23 @@ pub fn create_constants_module(
         writeln!(
             &mut writer,
             r#"
-pub const {constant_name}: Material = Material {{
-    wireframe: Srgba::BLACK,
-    albedo: Srgba::new({:?}, {:?}, {:?}, 1.0),
+pub const {constant_name}: MaterialPreset = MaterialPreset {{
+    name: {name:?},
+    albedo: LinSrgb::new({:?}, {:?}, {:?}),
     metallic: {metalness:?},
     roughness: {roughness:?},
-    ambient_occlusion: 1.0,
 }};
 "#,
             albedo.red, albedo.green, albedo.blue,
         )?;
     }
+
+    writeln!(&mut writer, "pub const ALL: &[&MaterialPreset] = &[")?;
+    for entry in &entries {
+        let constant_name = entry.name.to_shouty_snake_case();
+        writeln!(&mut writer, "    &{constant_name},")?;
+    }
+    writeln!(&mut writer, "];")?;
 
     Ok(())
 }

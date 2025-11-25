@@ -11,6 +11,7 @@ use bytemuck::{
     Pod,
     Zeroable,
 };
+use egui::Id;
 use palette::{
     LinSrgba,
     Srgb,
@@ -33,6 +34,7 @@ use crate::{
             LoadingState,
         },
         properties::{
+            HasChangeValue,
             PropertiesUi,
             TrackChanges,
             label_and_value,
@@ -46,11 +48,38 @@ use crate::{
 };
 
 pub mod named {
-    use palette::Srgba;
+    #![allow(clippy::all)]
 
-    use super::Material;
+    use palette::{
+        LinSrgb,
+        Srgb,
+        Srgba,
+        WithAlpha,
+    };
+
     use crate::util::palette::ColorExt as _;
 
+    #[derive(Clone, Copy, Debug)]
+    pub struct MaterialPreset {
+        pub name: &'static str,
+        pub albedo: LinSrgb,
+        pub metallic: f32,
+        pub roughness: f32,
+    }
+
+    impl From<MaterialPreset> for super::Material {
+        fn from(value: MaterialPreset) -> Self {
+            Self {
+                wireframe: Srgba::BLACK,
+                albedo: Srgb::from_linear(value.albedo).with_alpha(1.0),
+                metallic: value.metallic,
+                roughness: value.roughness,
+                ambient_occlusion: 1.0,
+            }
+        }
+    }
+
+    // this is build by a build-script from materials.json
     include!(concat!(env!("OUT_DIR"), "/materials.rs"));
 }
 
@@ -145,10 +174,55 @@ impl PropertiesUi for Material {
 
         let response = egui::Frame::new()
             .show(ui, |ui| {
+                #[derive(Clone, Copy, Default, PartialEq, Eq)]
+                struct SelectedPreset(Option<usize>);
+                let mut selected_preset = ui.data(|data| {
+                    data.get_temp::<SelectedPreset>(Id::NULL)
+                        .unwrap_or_default()
+                });
+                let selected_before = selected_preset;
+
+                ui.horizontal(|ui| {
+                    ui.label("Presets");
+
+                    egui::ComboBox::from_id_salt("material_preset")
+                        .selected_text(
+                            selected_preset
+                                .0
+                                .map(|i| named::ALL[i].name)
+                                .unwrap_or_default(),
+                        )
+                        .show_ui(ui, |ui| {
+                            for (i, preset) in named::ALL.iter().enumerate() {
+                                ui.selectable_value(
+                                    &mut selected_preset,
+                                    SelectedPreset(Some(i)),
+                                    preset.name,
+                                );
+                            }
+                        });
+                });
+
+                if selected_before != selected_preset {
+                    ui.data_mut(|ui| ui.insert_temp(Id::NULL, selected_preset));
+                    if let Some(i) = selected_preset.0 {
+                        *self = (*named::ALL[i]).into();
+                    }
+                }
+
                 label_and_value(ui, "Wireframe", &mut changes, &mut self.wireframe);
                 label_and_value(ui, "Albedo", &mut changes, &mut self.albedo);
                 label_and_value(ui, "Metallic", &mut changes, &mut self.metallic);
                 label_and_value(ui, "Roughness", &mut changes, &mut self.roughness);
+
+                if changes.changed {
+                    // invalidate preset?
+                }
+
+                // also track preset change
+                if selected_before != selected_preset {
+                    changes.mark_changed();
+                }
             })
             .response;
 

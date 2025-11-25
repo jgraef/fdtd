@@ -253,6 +253,7 @@ impl SolverConfigUiWindow {
                     let id = id.with("selection");
 
                     // fixme: doesn't show label for selection
+                    // todo: use .selected_text(selected_text)
                     self.selection
                         .map_or_else(
                             || egui::ComboBox::from_id_salt(id),
