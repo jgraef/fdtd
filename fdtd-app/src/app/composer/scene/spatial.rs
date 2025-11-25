@@ -15,11 +15,7 @@ use parry3d::{
         BoundingVolume,
     },
     partitioning as bvh,
-    query::{
-        Contact,
-        Ray,
-    },
-    shape::Shape,
+    query::Ray,
 };
 use serde::{
     Deserialize,
@@ -170,6 +166,7 @@ impl SpatialQueries {
         })
     }
 
+    /* todo: need a trait for things that can maybe do this
     pub fn contact_query<'a>(
         &'a self,
         shape: &dyn Shape,
@@ -194,7 +191,7 @@ impl SpatialQueries {
             .flatten()
             .map(|contact| (entity, contact))
         })
-    }
+    } */
 
     pub fn root_aabb(&self) -> Aabb {
         self.bvh.root_aabb()
@@ -243,18 +240,74 @@ impl Deref for Collider {
     }
 }
 
-impl Serialize for Collider {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        self.0.as_typed_shape().serialize(serializer)
+pub trait ColliderTraits:
+    ComputeAabb + RayCast + PointQuery + Debug + Send + Sync + 'static
+{
+}
+
+impl<T> ColliderTraits for T where
+    T: ComputeAabb + RayCast + PointQuery + Debug + Send + Sync + 'static
+{
+}
+
+pub trait ComputeAabb {
+    fn compute_aabb(&self, transform: &Isometry3<f32>) -> Aabb;
+}
+
+impl<T> ComputeAabb for T
+where
+    T: parry3d::shape::Shape,
+{
+    fn compute_aabb(&self, transform: &Isometry3<f32>) -> Aabb {
+        parry3d::shape::Shape::compute_aabb(self, transform)
     }
 }
 
-pub trait ColliderTraits: Shape + Debug + Send + Sync + 'static {}
+pub trait RayCast {
+    fn supported(&self) -> bool {
+        true
+    }
 
-impl<T> ColliderTraits for T where T: Shape + Debug + Send + Sync + 'static {}
+    fn cast_ray(
+        &self,
+        transform: &Isometry3<f32>,
+        ray: &Ray,
+        max_time_of_impact: f32,
+        solid: bool,
+    ) -> Option<f32>;
+}
+
+impl<T> RayCast for T
+where
+    T: parry3d::query::RayCast,
+{
+    fn cast_ray(
+        &self,
+        transform: &Isometry3<f32>,
+        ray: &Ray,
+        max_time_of_impact: f32,
+        solid: bool,
+    ) -> Option<f32> {
+        parry3d::query::RayCast::cast_ray(self, transform, ray, max_time_of_impact, solid)
+    }
+}
+
+pub trait PointQuery {
+    fn supported(&self) -> bool {
+        true
+    }
+
+    fn contains_point(&self, transform: &Isometry3<f32>, point: &Point3<f32>) -> bool;
+}
+
+impl<T> PointQuery for T
+where
+    T: parry3d::query::PointQuery,
+{
+    fn contains_point(&self, transform: &Isometry3<f32>, point: &Point3<f32>) -> bool {
+        parry3d::query::PointQuery::contains_point(self, transform, point)
+    }
+}
 
 #[cfg(test)]
 mod tests {

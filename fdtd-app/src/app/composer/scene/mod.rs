@@ -20,17 +20,12 @@ use std::{
 };
 
 use nalgebra::{
-    Isometry3,
     Point3,
     Vector2,
 };
 use parry3d::{
     bounding_volume::Aabb,
-    query::{
-        Contact,
-        Ray,
-    },
-    shape::Shape,
+    query::Ray,
 };
 use serde::{
     Deserialize,
@@ -91,11 +86,11 @@ pub struct Scene {
 impl Scene {
     pub fn add_object<S>(&mut self, transform: impl Into<Transform>, shape: S) -> EntityBuilder<'_>
     where
-        S: ColliderTraits + MeshFromShapeTraits,
+        S: ColliderTraits + MeshFromShapeTraits + ShapeName,
     {
         let mut builder = hecs::EntityBuilder::new();
 
-        let label = Label::from(format!("object.{:?}", shape.shape_type()));
+        let label = Label::from(format!("object.{}", shape.shape_name()));
         let shape = Arc::new(shape);
         let mesh_loader = LoadMesh::from(MeshFromShape(shape.clone()));
         let collider = Collider(shape);
@@ -142,14 +137,14 @@ impl Scene {
         self.spatial_queries.point_query(*point, &self.entities)
     }
 
-    pub fn contact_query(
+    /*pub fn contact_query(
         &self,
         shape: &dyn Shape,
         transform: &Isometry3<f32>,
     ) -> impl Iterator<Item = (hecs::Entity, Contact)> {
         self.spatial_queries
             .contact_query(shape, transform, &self.entities)
-    }
+    }*/
 
     /// This needs to be called every frame to update internal state.
     ///
@@ -393,5 +388,35 @@ impl<'a> Drop for EntityBuilder<'a> {
     fn drop(&mut self) {
         let bundle = self.builder.build();
         self.world.spawn(bundle);
+    }
+}
+
+// todo: implement a proper way of naming things and remove this
+pub trait ShapeName {
+    fn shape_name(&self) -> &str;
+}
+
+mod shape_names {
+    use parry3d::shape::*;
+
+    use crate::app::composer::renderer::mesh::Quad;
+
+    macro_rules! shape_name {
+        {$($ty:ty,)*} => {
+            $(
+                impl super::ShapeName for $ty {
+                    fn shape_name(&self) -> &str {
+                        stringify!($ty)
+                    }
+                }
+            )*
+        };
+    }
+
+    shape_name! {
+        Ball,
+        Cuboid,
+        Cylinder,
+        Quad,
     }
 }

@@ -9,16 +9,24 @@ use std::{
 
 use bytemuck::Pod;
 use nalgebra::{
+    Isometry3,
     Point2,
     Point3,
     Vector2,
     Vector3,
 };
-use parry3d::shape::{
-    Ball,
-    Cuboid,
-    Cylinder,
-    TriMesh,
+use parry3d::{
+    bounding_volume::Aabb,
+    query::{
+        Ray,
+        RayCast as _,
+    },
+    shape::{
+        Ball,
+        Cuboid,
+        Cylinder,
+        TriMesh,
+    },
 };
 use wgpu::util::DeviceExt;
 
@@ -42,6 +50,11 @@ use crate::{
             Changed,
             Label,
             Scene,
+            spatial::{
+                ComputeAabb,
+                PointQuery,
+                RayCast,
+            },
         },
     },
 };
@@ -365,6 +378,7 @@ impl ToSurfaceMesh for TriMesh {
     }
 }
 
+// todo: move this
 #[derive(Clone, Copy, Debug)]
 pub struct Quad {
     pub half_extents: Vector2<f32>,
@@ -402,6 +416,40 @@ impl ToSurfaceMesh for Quad {
                 .collect(),
             winding_order: WindingOrder::CounterClockwise,
         }
+    }
+}
+
+impl ComputeAabb for Quad {
+    fn compute_aabb(&self, transform: &nalgebra::Isometry3<f32>) -> Aabb {
+        Aabb::from_half_extents(
+            Point3::origin(),
+            Vector3::new(self.half_extents.x, self.half_extents.y, 0.0),
+        )
+        .transform_by(transform)
+    }
+}
+
+impl RayCast for Quad {
+    fn cast_ray(
+        &self,
+        transform: &Isometry3<f32>,
+        ray: &Ray,
+        max_time_of_impact: f32,
+        solid: bool,
+    ) -> Option<f32> {
+        self.compute_aabb(transform)
+            .cast_local_ray(ray, max_time_of_impact, solid)
+    }
+}
+
+impl PointQuery for Quad {
+    fn supported(&self) -> bool {
+        false
+    }
+
+    fn contains_point(&self, transform: &Isometry3<f32>, point: &Point3<f32>) -> bool {
+        let _ = (transform, point);
+        false
     }
 }
 

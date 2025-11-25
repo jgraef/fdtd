@@ -63,6 +63,7 @@ use crate::{
                 PopulateScene,
                 Scene,
                 serialize::DeserializeEntity,
+                spatial::Collider,
                 transform::Transform,
                 ui::{
                     self as scene_ui,
@@ -788,6 +789,7 @@ impl PopulateScene for ExampleScene {
             .material(palette::named::CYAN)
             .add(em_material);*/
 
+        let quad = Quad::new(Vector2::new(1.0, 1.0));
         scene.entities.spawn((
             Observer {
                 write_to_gif: None,
@@ -799,7 +801,9 @@ impl PopulateScene for ExampleScene {
             material::LoadAlbedoTexture::new("tmp/test_pattern.png"),
             material::named::OFFICE_PAPER.into_material(),
             Transform::identity(),
-            LoadMesh::from(MeshFromShape::from(Quad::new(Vector2::new(1.0, 1.0)))),
+            Collider::from(quad),
+            Selectable,
+            LoadMesh::from(MeshFromShape::from(quad)),
         ));
 
         scene.entities.spawn((
