@@ -33,7 +33,10 @@ use crate::{
         },
         renderer::{
             Fallbacks,
-            light::MaterialTextures,
+            light::{
+                AlbedoTexture,
+                MaterialTexture,
+            },
         },
         scene::{
             Changed,
@@ -140,23 +143,10 @@ impl MeshBindGroup {
         device: &wgpu::Device,
         mesh_bind_group_layout: &wgpu::BindGroupLayout,
         mesh: &Mesh,
-        material_textures: Option<&MaterialTextures>,
+        albedo_texture: Option<&AlbedoTexture>,
+        material_texture: Option<&MaterialTexture>,
         fallbacks: &Fallbacks,
     ) -> Self {
-        macro_rules! texture {
-            ($binding:expr, $name:ident, $default:ident) => {
-                wgpu::BindGroupEntry {
-                    binding: $binding,
-                    resource: wgpu::BindingResource::TextureView(
-                        material_textures
-                            .and_then(|material_textures| material_textures.$name.as_ref())
-                            .map(|texture_and_view| &texture_and_view.view)
-                            .unwrap_or(&fallbacks.$default),
-                    ),
-                }
-            };
-        }
-
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("mesh bind group"),
             layout: mesh_bind_group_layout,
@@ -181,10 +171,18 @@ impl MeshBindGroup {
                     binding: 3,
                     resource: wgpu::BindingResource::Sampler(&fallbacks.sampler),
                 },
-                texture!(4, ambient, white),
-                texture!(5, diffuse, white),
-                texture!(6, specular, white),
-                texture!(7, emissive, white),
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::TextureView(
+                        albedo_texture.map_or(&fallbacks.white, |texture| &texture.texture.view),
+                    ),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: wgpu::BindingResource::TextureView(
+                        material_texture.map_or(&fallbacks.white, |texture| &texture.texture.view),
+                    ),
+                },
             ],
         });
 
@@ -415,9 +413,10 @@ pub(super) fn update_mesh_bind_groups(
 ) {
     let mut update_mesh_bind_group = |entity: hecs::Entity,
                                       mesh: &Mesh,
-                                      material_textures: Option<&MaterialTextures>,
+                                      albedo_texture: Option<&AlbedoTexture>,
+                                      material_texture: Option<&MaterialTexture>,
                                       label: Option<&Label>| {
-        if mesh.uv_buffer.is_none() && material_textures.is_some() {
+        if mesh.uv_buffer.is_none() && (albedo_texture.is_some() || material_texture.is_some()) {
             tracing::warn!(?label, "Mesh with textures, but no UV buffer");
         }
 
@@ -425,34 +424,43 @@ pub(super) fn update_mesh_bind_groups(
             device,
             mesh_bind_group_layout,
             mesh,
-            material_textures,
+            albedo_texture,
+            material_texture,
             texture_defaults,
         );
 
         scene.command_buffer.remove_one::<Changed<Mesh>>(entity);
         scene
             .command_buffer
-            .remove_one::<Changed<MaterialTextures>>(entity);
+            .remove_one::<Changed<AlbedoTexture>>(entity);
+        scene
+            .command_buffer
+            .remove_one::<Changed<MaterialTexture>>(entity);
         scene.command_buffer.insert_one(entity, mesh_bind_group);
     };
 
-    for (entity, (mesh, material_textures, label)) in scene
+    for (entity, (mesh, albedo_texture, material_texture, label)) in scene
         .entities
-        .query_mut::<(&Mesh, Option<&MaterialTextures>, Option<&Label>)>()
+        .query_mut::<(
+            &Mesh,
+            Option<&AlbedoTexture>,
+            Option<&MaterialTexture>,
+            Option<&Label>,
+        )>()
         .without::<&MeshBindGroup>()
     {
         tracing::debug!(?label, "creating mesh bind group");
-        update_mesh_bind_group(entity, mesh, material_textures, label);
+        update_mesh_bind_group(entity, mesh, albedo_texture, material_texture, label);
     }
 
-    for (entity, (mesh, material_textures, label)) in scene
+    for (entity, (mesh, albedo_texture, material_texture, label)) in scene
         .entities
-        .query_mut::<(&Mesh, Option<&MaterialTextures>, Option<&Label>)>()
+        .query_mut::<(&Mesh, Option<&AlbedoTexture>, Option<&MaterialTexture>, Option<&Label>)>()
         .with::<&MeshBindGroup>()
-        .with::<hecs::Or<&Changed<Mesh>, &Changed<MaterialTextures>>>()
+        .with::<hecs::Or<&Changed<Mesh>, hecs::Or<&Changed<AlbedoTexture>, &Changed<MaterialTexture>>>>()
     {
         tracing::debug!(?label, "updating mesh bind group");
-        update_mesh_bind_group(entity, mesh, material_textures, label);
+        update_mesh_bind_group(entity, mesh, albedo_texture, material_texture, label);
     }
 
     scene.apply_deferred();

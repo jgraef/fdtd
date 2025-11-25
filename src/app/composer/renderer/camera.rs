@@ -30,7 +30,7 @@ use crate::app::composer::{
     renderer::{
         ClearColor,
         draw_commands::DrawCommandEnablePipelineFlags,
-        light::CameraLightFilter,
+        light::AmbientLight,
     },
     scene::{
         Changed,
@@ -228,7 +228,7 @@ pub(super) struct CameraData {
     pub projection: Matrix4<f32>,
     pub world_position: Vector4<f32>,
     pub clear_color: LinSrgba,
-    pub light_filter: CameraLightFilter,
+    pub ambient_light_color: LinSrgba,
 }
 
 impl CameraData {
@@ -236,7 +236,7 @@ impl CameraData {
         camera_projection: &CameraProjection,
         camera_transform: &Transform,
         clear_color: Option<&ClearColor>,
-        light_filter: Option<&CameraLightFilter>,
+        ambient_light: Option<&AmbientLight>,
     ) -> Self {
         let transform = camera_transform.transform.inverse().to_homogeneous();
 
@@ -257,7 +257,9 @@ impl CameraData {
             clear_color: clear_color
                 .map(|clear_color| clear_color.clear_color.into_linear().with_alpha(1.0))
                 .unwrap_or_default(),
-            light_filter: light_filter.copied().unwrap_or_default(),
+            ambient_light_color: ambient_light.map_or_else(Default::default, |ambient_light| {
+                ambient_light.color.into_linear().with_alpha(1.0)
+            }),
         }
     }
 }
@@ -313,13 +315,13 @@ pub(super) fn update_cameras(
     }
 
     // create uniforms for cameras that don't have them yet
-    for (entity, (camera_projection, camera_transform, clear_color, camera_light_filter)) in scene
+    for (entity, (camera_projection, camera_transform, clear_color, ambient_light)) in scene
         .entities
         .query_mut::<(
             &CameraProjection,
             &Transform,
             Option<&ClearColor>,
-            Option<&CameraLightFilter>,
+            Option<&AmbientLight>,
         )>()
         .without::<&CameraResources>()
     {
@@ -334,7 +336,7 @@ pub(super) fn update_cameras(
             camera_projection,
             camera_transform,
             clear_color,
-            camera_light_filter,
+            ambient_light,
         );
         let camera_resources = CameraResources::new(
             camera_bind_group_layout,
@@ -365,21 +367,20 @@ pub(super) fn update_cameras(
     // update camera buffers
     let updated_instance_buffer =
         instance_buffer_reallocated.then_some((camera_bind_group_layout, instance_buffer));
-    for (
-        _,
-        (camera_resources, camera_projection, camera_transform, clear_color, camera_light_filter),
-    ) in scene.entities.query_mut::<(
-        &mut CameraResources,
-        &CameraProjection,
-        &Transform,
-        Option<&ClearColor>,
-        Option<&CameraLightFilter>,
-    )>() {
+    for (_, (camera_resources, camera_projection, camera_transform, clear_color, ambient_light)) in
+        scene.entities.query_mut::<(
+            &mut CameraResources,
+            &CameraProjection,
+            &Transform,
+            Option<&ClearColor>,
+            Option<&AmbientLight>,
+        )>()
+    {
         let camera_data = CameraData::new(
             camera_projection,
             camera_transform,
             clear_color,
-            camera_light_filter,
+            ambient_light,
         );
         camera_resources.update(device, queue, &camera_data, updated_instance_buffer);
     }

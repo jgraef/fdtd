@@ -1,17 +1,12 @@
+const pi: f32 = 3.141592653589793;
+
 struct Camera {
     transform: mat4x4f,
     projection: mat4x4f,
     world_position: vec4f,
     clear_color: vec4f,
-    light_filter: LightFilter,
+    ambient_light_color: vec4f,
 };
-
-struct LightFilter {
-    ambient: vec4f,
-    diffuse: vec4f,
-    specular: vec4f,
-    emissive: vec4f,
-}
 
 struct Instance {
     transform: mat4x4f,
@@ -26,26 +21,29 @@ struct Instance {
 struct Material {
     wireframe: vec4f,
     edges: vec4f,
-    ambient: vec4f,
-    diffuse: vec4f,
-    specular: vec4f,
-    emissive: vec4f,
-    shininess: f32,
-    // padding 12 bytes
+    albedo: vec4f,
+    metallic: f32,
+    roughness: f32,
+    ambient_occlusion: f32,
+    flags: u32,
 }
 
 struct PointLight {
     world_position: vec4f,
-    diffuse: vec4f,
-    specular: vec4f,
+    color: vec4f,
 }
 
-const FLAG_REVERSE_WINDING: u32 = 1;
-const FLAG_SHOW_SOLID: u32 = 2;
-const FLAG_SHOW_WIREFRAME: u32 = 4;
-const FLAG_SHOW_OUTLINE: u32 = 8;
-const FLAG_ENABLE_TEXTURES: u32 = 16;
-const FLAG_UV_BUFFER_VALID: u32 = 32;
+const FLAG_REVERSE_WINDING: u32 = 0x01;
+//const FLAG_SHOW_SOLID: u32 = 0x02;
+//const FLAG_SHOW_WIREFRAME: u32 = 0x04;
+//const FLAG_SHOW_OUTLINE: u32 = 0x08;
+const FLAG_ENABLE_TEXTURES: u32 = 0x10;
+const FLAG_UV_BUFFER_VALID: u32 = 0x20;
+const FLAG_ENABLE_TRANSPARENCY: u32 = 0x40;
+
+const FLAG_METALLIC_TEXTURE: u32 = 0x01;
+const FLAG_ROUGHNESS_TEXTURE: u32 = 0x02;
+const FLAG_AMBIENT_OCCLUSION_TEXTURE: u32 = 0x04;
 
 struct VertexInput {
     @builtin(vertex_index) vertex_index: u32,
@@ -102,16 +100,10 @@ var<storage, read> uv_buffer: array<vec2f>;
 var texture_sampler: sampler;
 
 @group(1) @binding(4)
-var texture_ambient: texture_2d<f32>;
+var texture_albedo: texture_2d<f32>;
 
 @group(1) @binding(5)
-var texture_diffuse: texture_2d<f32>;
-
-@group(1) @binding(6)
-var texture_specular: texture_2d<f32>;
-
-@group(1) @binding(7)
-var texture_emissive: texture_2d<f32>;
+var texture_material: texture_2d<f32>;
 
 
 @vertex
@@ -143,6 +135,9 @@ fn vs_main_solid(input: VertexInput) -> VertexOutputSolid {
 
 @fragment
 fn fs_main_solid(input: VertexOutputSolid, @builtin(front_facing) front_face: bool) -> FragmentOutput {
+    // https://learnopengl.com/PBR/Theory
+    // https://learnopengl.com/PBR/Lighting
+
     var output: FragmentOutput;
 
     if front_face {
@@ -151,47 +146,73 @@ fn fs_main_solid(input: VertexOutputSolid, @builtin(front_facing) front_face: bo
         // light definition
         // todo: move into buffer
         let point_light = PointLight(
-            //vec4f(-10.0, 10.0, -10.0, 1.0),
             camera.world_position,
-            vec4f(1.0),
             vec4f(1.0),
         );
 
-        // sample textures
-        var texture_color_ambient = vec4f(1.0);
-        var texture_color_diffuse = vec4f(1.0);
-        var texture_color_specular = vec4f(1.0);
-        var texture_color_emissive = vec4f(1.0);
+        // uniform material
+        var albedo = instance.material.albedo.rgb;
+        var alpha = instance.material.albedo.a;
+        var metallic = instance.material.metallic;
+        var roughness = instance.material.roughness;
+        var ambient_occlusion = instance.material.ambient_occlusion;
 
+        // sample material textures
         if (instance.flags & FLAG_ENABLE_TEXTURES) != 0 {
-            texture_color_ambient = textureSample(texture_ambient, texture_sampler, input.texture_position);
-            texture_color_diffuse = textureSample(texture_diffuse, texture_sampler, input.texture_position);
-            texture_color_specular = textureSample(texture_specular, texture_sampler, input.texture_position);
-            texture_color_emissive = textureSample(texture_emissive, texture_sampler, input.texture_position);
+            let albedo_and_alpha = textureSample(texture_albedo, texture_sampler, input.texture_position);
+            albedo *= albedo_and_alpha.rgb;
+            alpha *= albedo_and_alpha.a;
+            let material = textureSample(texture_material, texture_sampler, input.texture_position);
+            if (instance.material.flags & FLAG_METALLIC_TEXTURE) != 0 {
+                metallic *= material.r;
+            }
+            if (instance.material.flags & FLAG_ROUGHNESS_TEXTURE) != 0 {
+                roughness *= material.g;
+            }
+            if (instance.material.flags & FLAG_AMBIENT_OCCLUSION_TEXTURE) != 0 {
+                ambient_occlusion *= material.b;
+            }
         }
 
-        // ambient lighting
-        let ambient_color = camera.light_filter.ambient * instance.material.ambient * texture_color_ambient;
+        // optionally disable transparency
+        if (instance.flags & FLAG_ENABLE_TRANSPARENCY) == 0 {
+            alpha = 1.0;
+        }
 
-        // diffuse lighting
+        // some light-independent geometry
         let world_normal = normalize(input.world_normal.xyz);
-        let light_direction = normalize(point_light.world_position.xyz - input.world_position.xyz);
-        let diffuse_intensity = max(dot(world_normal, light_direction), 0.0);
-        let diffuse_color = diffuse_intensity * camera.light_filter.diffuse * point_light.diffuse * instance.material.diffuse * texture_color_diffuse;
-
-        // specular lighting
         let view_direction = normalize(camera.world_position.xyz - input.world_position.xyz);
-        let reflect_direction = reflect(-light_direction, world_normal);
-        let specular_intensity = pow(max(dot(view_direction, reflect_direction), 0.0), instance.material.shininess);
-        let specular_color = specular_intensity * camera.light_filter.specular * point_light.specular * instance.material.specular * texture_color_specular;
+        //let view_direction = normalize(input.world_position.xyz - camera.world_position.xyz);
 
-        // emissive lighting
-        let emissive_color = camera.light_filter.emissive * instance.material.emissive * texture_color_emissive;
+        // mix between base reflectivity approximation and surface color (F_0)
+        let surface_reflection = mix(vec3(0.04), albedo, metallic);
 
-        let final_color = ambient_color + diffuse_color + specular_color + emissive_color;
+        // debug
+        alpha = 1.0;
+        ambient_occlusion = 0.0;
+        //roughness = 0.8;
+        //metallic = 0.5;
 
-        //output.color = vec4f(final_color.xyz, 1.0);
-        output.color = vec4f(final_color.xyz, diffuse_color.w);
+        // todo: where does 0.03 come from?
+        var color = vec3f(0.03) * albedo * ambient_occlusion;
+
+        // for each light
+        color += light_radiance(
+            point_light.world_position.xyz,
+            point_light.color.rgb,
+            input.world_position.xyz,
+            world_normal,
+            view_direction,
+            albedo,
+            roughness,
+            metallic,
+            surface_reflection,
+        );
+
+        // tonemap hdr to ldr
+        color /= color + vec3f(1.0);
+
+        output.color = vec4f(color, alpha);
     }
     else {
         // for debugging purposes we'll show back-faces as pink for now
@@ -199,6 +220,64 @@ fn fs_main_solid(input: VertexOutputSolid, @builtin(front_facing) front_face: bo
     }
 
     return output;
+}
+
+fn light_radiance(
+    light_position: vec3f,
+    light_color: vec3f,
+    world_position: vec3f,
+    world_normal: vec3f,
+    view_direction: vec3f,
+    albedo: vec3f,
+    roughness: f32,
+    metallic: f32,
+    surface_reflection: vec3f,
+) -> vec3f {
+    let light_direction = normalize(light_position - world_position);
+    let half = normalize(view_direction + light_direction);
+
+    // all the dot products we'll need.
+    let h_dot_v = max(dot(half, view_direction), 0.0);
+    let n_dot_v = max(dot(world_normal, view_direction), 0.0); // todo: this only needs to be computed once
+    let n_dot_l = max(dot(world_normal, light_direction), 0.0);
+    let n_dot_h = max(dot(world_normal, half), 0.0);
+
+    // calculate radiance
+    //let distance = length(light_position - world_position);
+    //let attenuation = 1.0 / (distance * distance);
+    let attenuation = 10.0;
+    let radiance = light_color * attenuation;
+
+    // cook-torrance brdf
+    let ndf = throwbridge_reitz_ggx(n_dot_h, roughness);
+    let g = geometry_smith(n_dot_v, n_dot_l, roughness);
+    let f = fresnel_schlick(h_dot_v, surface_reflection);
+
+    let k_d = (1.0 - metallic) * (vec3f(1.0) - f);
+    let eps = 0.0001;
+    let specular = ndf * g * f / (4.0 * n_dot_v * n_dot_l + eps);
+
+    return (k_d * albedo / pi + specular) * radiance * n_dot_l;
+}
+
+fn throwbridge_reitz_ggx(n_dot_h: f32, a: f32) -> f32 {
+    let a_2 = a * 2;
+    let denom = n_dot_h * n_dot_h * (a_2 - 1.0) + 1.0;
+    return a_2 / (pi * denom * denom);
+}
+
+fn geometry_schlick_ggx(n_dot_x: f32, k: f32) -> f32 {
+    return n_dot_x / (n_dot_x * (1.0 - k) + k);
+}
+
+fn geometry_smith(n_dot_v: f32, n_dot_l: f32, k: f32) -> f32 {
+    let ggx1 = geometry_schlick_ggx(n_dot_v, k);
+    let ggx2 = geometry_schlick_ggx(n_dot_l, k);
+    return ggx1 * ggx2;
+}
+
+fn fresnel_schlick(cos_theta: f32, f_0: vec3f) -> vec3f {
+    return f_0 + (vec3f(1.0) - f_0) * pow(1.0 - cos_theta, 5.0);
 }
 
 @vertex

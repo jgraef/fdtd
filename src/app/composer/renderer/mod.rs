@@ -52,9 +52,10 @@ use crate::{
                     DrawCommandOptions,
                 },
                 light::{
+                    AlbedoTexture,
                     Material,
                     MaterialData,
-                    MaterialTextures,
+                    MaterialTexture,
                 },
                 mesh::{
                     Mesh,
@@ -270,14 +271,10 @@ impl Renderer {
                             ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                             count: None,
                         },
-                        // material - ambient
+                        // material - albedo
                         texture(4),
-                        // material - diffuse
+                        // material - material
                         texture(5),
-                        // material - specular
-                        texture(6),
-                        // material - emissive
-                        texture(7),
                     ],
                 })
         };
@@ -318,14 +315,13 @@ impl Renderer {
                     // ignore buffer state
                     read_mask: 0x00,
                     // clear bits
-                    // I thought a value of 0x00 would do it here, but the `is_enabled` method would
-                    // return false then.
                     write_mask: 0xff,
                 }
             },
             wgpu::PrimitiveTopology::TriangleList,
             Some("vs_main_clear"),
             Some("fs_main_single_color"),
+            false,
             false,
         );
 
@@ -343,6 +339,7 @@ impl Renderer {
             wgpu::PrimitiveTopology::TriangleList,
             Some("vs_main_solid"),
             Some("fs_main_solid"),
+            true,
         );
 
         let wireframe_pipeline = Pipeline::new_mesh_render_pipeline(
@@ -357,8 +354,12 @@ impl Renderer {
             wgpu::PrimitiveTopology::LineList,
             Some("vs_main_wireframe"),
             Some("fs_main_single_color"),
+            false,
         );
 
+        // the outline pipeline will draw a scaled version of the mesh with a solid
+        // color. it will ignore depth tests, but will check if the OUTLINE bit
+        // in the stencil mask is not set
         let outline_pipeline = Pipeline::new_mesh_render_pipeline(
             &context.wgpu_context,
             &context.renderer_config,
@@ -367,10 +368,16 @@ impl Renderer {
             &render_mesh_bind_group_layouts,
             wgpu::CompareFunction::Always,
             None,
-            Some(Stencil::OUTLINE),
+            // the draw command sets the stencil reference to the outline bit, so we use NotEqual
+            // here.
+            Some(StencilTest {
+                read_mask: Stencil::OUTLINE,
+                compare: wgpu::CompareFunction::NotEqual,
+            }),
             wgpu::PrimitiveTopology::TriangleList,
             Some("vs_main_outline"),
             Some("fs_main_single_color"),
+            true,
         );
 
         let instance_buffer = StagedTypedArrayBuffer::with_capacity(
@@ -469,36 +476,28 @@ impl Renderer {
         let mut draw_command_builder = self.draw_command_buffer.builder();
 
         // draw meshes (solid, wireframe, outlines)
-        for (_, (transform, mesh, mesh_bind_group, material, material_textures, outline)) in world
+        for (
+            _,
+            (transform, mesh, mesh_bind_group, material, albedo_texture, material_texture, outline),
+        ) in world
             .query_mut::<(
                 &Transform,
                 &Mesh,
                 &MeshBindGroup,
                 Option<&Material>,
-                Option<&MaterialTextures>,
+                Option<&AlbedoTexture>,
+                Option<&MaterialTexture>,
                 Option<&Outline>,
             )>()
             .without::<&Hidden>()
         {
-            // instance flags
-            let mut flags = InstanceFlags::SHOW_SOLID | InstanceFlags::SHOW_WIREFRAME;
-            if mesh.winding_order != Self::WINDING_ORDER {
-                flags |= InstanceFlags::REVERSE_WINDING;
-            }
-            if mesh.uv_buffer.is_some() {
-                flags |= InstanceFlags::UV_BUFFER_VALID;
-            }
-            if material_textures.is_some() {
-                flags |= InstanceFlags::ENABLE_TEXTURES;
-            }
-
             // write per-instance data into a buffer
             self.instance_buffer.push(InstanceData::new_mesh(
                 transform,
+                mesh,
                 material,
-                material_textures,
-                flags,
-                mesh.base_vertex,
+                albedo_texture,
+                material_texture,
                 outline,
             ));
 
@@ -623,6 +622,7 @@ impl Pipeline {
         vertex_shader_entry_point: Option<&str>,
         fragment_shader_entry_point: Option<&str>,
         cull_back_faces: bool,
+        alpha_blending: bool,
     ) -> Self {
         let cull_mode = cull_back_faces.then_some(wgpu::Face::Back);
 
@@ -682,7 +682,7 @@ impl Pipeline {
                         compilation_options: Default::default(),
                         targets: &[Some(wgpu::ColorTargetState {
                             format: renderer_config.target_texture_format,
-                            blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                            blend: alpha_blending.then_some(wgpu::BlendState::ALPHA_BLENDING),
                             write_mask: wgpu::ColorWrites::ALL,
                         })],
                     }),
@@ -705,10 +705,11 @@ impl Pipeline {
         bind_group_layouts: &[&wgpu::BindGroupLayout],
         depth_compare: wgpu::CompareFunction,
         write_to_stencil_buffer: Option<Stencil>,
-        test_against_stencil_buffer: Option<Stencil>,
+        test_against_stencil_buffer: Option<StencilTest>,
         topology: wgpu::PrimitiveTopology,
         vertex_shader_entry_point: Option<&str>,
         fragment_shader_entry_point: Option<&str>,
+        alpha_blending: bool,
     ) -> Self {
         // enable/disable back-face culling. the mesh shader will paint back-faces
         // bright pink, so we'll know if something is flipped.
@@ -726,24 +727,28 @@ impl Pipeline {
         let mut stencil_state = wgpu::StencilState::default();
         if let Some(write_mask) = write_to_stencil_buffer {
             // write stencil reference to stencil buffer
+            // if read_mask is None, this will be always written, if the depth-test passes.
             stencil_state.front.pass_op = wgpu::StencilOperation::Replace;
-
-            // remove this and the selected object will shine through anything occluding
-            // with the outline color. give it a try :)
-            stencil_state.front.depth_fail_op = wgpu::StencilOperation::Replace;
-
-            // for now we'll replace all bits of the stencil buffer with the reference
+            // only write the bits that we want to manipulate
             stencil_state.write_mask = write_mask.into();
-        }
-        if let Some(read_mask) = test_against_stencil_buffer {
-            // check masked stencil buffer against stencil reference.
 
-            // e.g. for outline drawing, when drawing the outline, the stencil reference
-            // will be 0, so if the bit in the stencil buffer is set the test will fail and
-            // thus the outline will not draw over the object itself.
-            stencil_state.front.compare = wgpu::CompareFunction::Equal;
-            stencil_state.read_mask = read_mask.into();
+            // remove this and the selected object will shine through anything
+            // occluding with the outline color. give it a try :)
+            // but unfortunately if we render something without stencil
+            // afterwards it'll replace the value in the buffer, so
+            // the outline will also shine through the
+            // object we want outlined :(
+            //
+            // stencil_state.front.depth_fail_op =
+            // wgpu::StencilOperation::Replace;
         }
+        if let Some(stencil_test) = test_against_stencil_buffer {
+            // check masked stencil buffer against stencil reference.
+            stencil_state.front.compare = stencil_test.compare;
+            stencil_state.read_mask = stencil_test.read_mask.into();
+        }
+
+        tracing::debug!(?label, ?stencil_state, "stencil state for pipeline");
 
         Self::new(
             wgpu_context,
@@ -761,6 +766,7 @@ impl Pipeline {
             vertex_shader_entry_point,
             fragment_shader_entry_point,
             cull_back_faces,
+            alpha_blending,
         )
     }
 }
@@ -785,12 +791,28 @@ impl InstanceData {
     /// Creates instance data for mesh rendering
     pub fn new_mesh(
         transform: &Transform,
+        mesh: &Mesh,
         material: Option<&Material>,
-        material_textures: Option<&MaterialTextures>,
-        flags: InstanceFlags,
-        base_vertex: u32,
+        albedo_texture: Option<&AlbedoTexture>,
+        material_texture: Option<&MaterialTexture>,
         outline: Option<&Outline>,
     ) -> Self {
+        let mut flags = InstanceFlags::ENABLE_TRANSPARENCY;
+        if mesh.winding_order != Renderer::WINDING_ORDER {
+            flags.insert(InstanceFlags::REVERSE_WINDING);
+        }
+        if material_texture.is_some() || albedo_texture.is_some() {
+            flags.insert(InstanceFlags::ENABLE_TEXTURES);
+        }
+        if mesh.uv_buffer.is_some() {
+            flags.insert(InstanceFlags::UV_BUFFER_VALID);
+        }
+        else {
+            // could enable textures in this case, but we need to tell the
+            // vertex shader to not index into the uv buffer anyway
+            // flags.remove(InstanceFlags::ENABLE_TEXTURES);
+        }
+
         let (outline_thickness, outline_color) = outline.map_or_else(Default::default, |outline| {
             (outline.thickness, outline.color.into_linear())
         });
@@ -798,11 +820,11 @@ impl InstanceData {
         Self {
             transform: transform.transform.to_homogeneous(),
             flags,
-            base_vertex,
+            base_vertex: mesh.base_vertex,
             outline_thickness,
             _padding: [0; _],
             outline_color,
-            material: MaterialData::new(material, material_textures),
+            material: MaterialData::new(material, albedo_texture, material_texture),
         }
     }
 }
@@ -811,19 +833,20 @@ bitflags! {
     #[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]
     #[repr(C)]
     struct InstanceFlags: u32 {
-        const REVERSE_WINDING = 0b0000_0001;
+        const REVERSE_WINDING     = 0b0000_0001;
 
         // todo: these are not used currently. since we only render one
         // instance at a time currently, we could just not emit a draw call
-        // of one of these is disabled.
+        // if one of these is disabled.
         // if we were to render multiple instances at a time, we can use this
         // flag in the vertex shader to skip anything that it shouldn't render.
-        const SHOW_SOLID      = 0b0000_0010;
-        const SHOW_WIREFRAME  = 0b0000_0100;
-        const SHOW_OUTLINE    = 0b0000_1000;
+        //const SHOW_SOLID          = 0b0000_0010;
+        //const SHOW_WIREFRAME      = 0b0000_0100;
+        //const SHOW_OUTLINE        = 0b0000_1000;
 
-        const ENABLE_TEXTURES = 0b0001_0000;
-        const UV_BUFFER_VALID = 0b0010_0000;
+        const ENABLE_TEXTURES     = 0b0001_0000;
+        const UV_BUFFER_VALID     = 0b0010_0000;
+        const ENABLE_TRANSPARENCY = 0b0100_0000;
     }
 }
 
@@ -872,6 +895,7 @@ bitflags! {
     #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
     pub struct Stencil: u8 {
         const OUTLINE = 0b0000_0001;
+        const ALL     = 0b1111_1111;
     }
 }
 
@@ -879,6 +903,12 @@ impl From<Stencil> for u32 {
     fn from(value: Stencil) -> Self {
         value.bits().into()
     }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct StencilTest {
+    pub read_mask: Stencil,
+    pub compare: wgpu::CompareFunction,
 }
 
 #[derive(Clone, Debug)]

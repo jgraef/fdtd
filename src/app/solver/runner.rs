@@ -12,6 +12,7 @@ use nalgebra::{
     UnitQuaternion,
     Vector3,
 };
+use palette::Srgba;
 use parry3d::bounding_volume::Aabb;
 
 use crate::{
@@ -19,7 +20,10 @@ use crate::{
     app::{
         composer::{
             renderer::{
-                light::LoadMaterialTextures,
+                light::{
+                    self,
+                    LoadAlbedoTexture,
+                },
                 resource::RenderResourceCreator,
                 texture_channel::UndecidedTextureSender,
             },
@@ -64,7 +68,10 @@ use crate::{
         start::WgpuContext,
     },
     physics::material::Material,
-    util::format_size,
+    util::{
+        format_size,
+        palette::ColorExt,
+    },
 };
 
 #[derive(Debug)]
@@ -254,7 +261,11 @@ where
         &aabb,
     );
 
-    let materials = SceneDomainDescription::new(scene, &coordinate_transformations);
+    let materials = SceneDomainDescription::new(
+        scene,
+        &coordinate_transformations,
+        &common_config.default_material,
+    );
 
     let instance = backend
         .create_instance(&config, materials)
@@ -376,12 +387,14 @@ struct SceneDomainDescription<'a, 'b> {
     #[debug("hecs::ViewBorrow {{ ... }}")]
     materials: hecs::ViewBorrow<'a, &'b Material>,
     coordinate_transformations: &'a CoordinateTransformations,
+    default_material: &'a Material,
 }
 
 impl<'a, 'b> SceneDomainDescription<'a, 'b> {
     pub fn new(
         scene: &'a Scene,
         coordinate_transformations: &'a CoordinateTransformations,
+        default_material: &'a Material,
     ) -> Self {
         // access to the material properties
         let materials = scene.entities.view::<&Material>();
@@ -390,6 +403,7 @@ impl<'a, 'b> SceneDomainDescription<'a, 'b> {
             scene,
             materials,
             coordinate_transformations,
+            default_material,
         }
     }
 }
@@ -407,8 +421,8 @@ impl<'a, 'b> DomainDescription<Point3<usize>> for SceneDomainDescription<'a, 'b>
             .copied();
 
         // for now we'll just use the first material we find.
-        // if nothing is found, use the default (vacuum)
-        point_materials.next().unwrap_or_default()
+        // if nothing is found, use the default
+        point_materials.next().unwrap_or(*self.default_material)
     }
 }
 
@@ -463,9 +477,14 @@ impl<P> Observers<P> {
                         "observer",
                     );
 
-                    scene.command_buffer.insert_one(
+                    scene.command_buffer.insert(
                         entity,
-                        LoadMaterialTextures::default().with_ambient_and_diffuse(receiver),
+                        (
+                            LoadAlbedoTexture::new(receiver),
+                            light::Material::from_albedo(Srgba::WHITE)
+                                .with_metallic(0.0)
+                                .with_roughness(0.0),
+                        ),
                     );
 
                     instance.create_projection(state, sender, &parameters)

@@ -6,6 +6,7 @@ use std::{
     sync::Arc,
 };
 
+use bitflags::bitflags;
 use bytemuck::{
     Pod,
     Zeroable,
@@ -25,6 +26,7 @@ use crate::{
     Error,
     app::composer::{
         loader::{
+            AndChanged,
             LoadAsset,
             LoaderContext,
             LoadingProgress,
@@ -36,9 +38,11 @@ use crate::{
             label_and_value,
         },
         renderer::texture_channel::TextureReceiver,
-        scene::Changed,
     },
-    util::wgpu::create_texture_view_from_texture,
+    util::{
+        palette::ColorExt,
+        wgpu::create_texture_view_from_texture,
+    },
 };
 
 /// Material properties that define how an object looks in the scene.
@@ -60,36 +64,49 @@ use crate::{
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
 pub struct Material {
     #[serde(with = "crate::util::serde::palette")]
-    pub ambient: Srgba,
-
-    #[serde(with = "crate::util::serde::palette")]
-    pub diffuse: Srgba,
-
-    #[serde(with = "crate::util::serde::palette")]
-    pub specular: Srgba,
-
-    #[serde(with = "crate::util::serde::palette")]
-    pub emissive: Srgba,
-
-    pub shininess: f32,
-
-    #[serde(with = "crate::util::serde::palette")]
     pub wireframe: Srgba,
+
+    #[serde(with = "crate::util::serde::palette")]
+    pub albedo: Srgba,
+
+    pub metallic: f32,
+    pub roughness: f32,
+    pub ambient_occlusion: f32,
+}
+
+impl Material {
+    pub fn from_albedo<C>(color: C) -> Self
+    where
+        Srgba: From<C>,
+    {
+        Self {
+            wireframe: Srgba::BLACK,
+            albedo: color.into(),
+            metallic: 0.0,
+            roughness: 0.0,
+            ambient_occlusion: 1.0,
+        }
+    }
+
+    pub fn with_albedo(mut self, albedo: Srgba) -> Self {
+        self.albedo = albedo;
+        self
+    }
+
+    pub fn with_metallic(mut self, metallic: f32) -> Self {
+        self.metallic = metallic;
+        self
+    }
+
+    pub fn with_roughness(mut self, roughness: f32) -> Self {
+        self.roughness = roughness;
+        self
+    }
 }
 
 impl From<Srgba> for Material {
     fn from(value: Srgba) -> Self {
-        const WHITE: Srgba = Srgba::new(1.0, 1.0, 1.0, 1.0);
-        const BLACK: Srgba = Srgba::new(0.0, 0.0, 0.0, 1.0);
-
-        Self {
-            ambient: value * 0.5,
-            diffuse: value,
-            specular: WHITE,
-            emissive: BLACK,
-            shininess: 8.0,
-            wireframe: BLACK,
-        }
+        Self::from_albedo(value)
     }
 }
 
@@ -119,12 +136,10 @@ impl PropertiesUi for Material {
 
         let response = egui::Frame::new()
             .show(ui, |ui| {
-                label_and_value(ui, "Ambient", &mut changes, &mut self.ambient);
-                label_and_value(ui, "Diffuse", &mut changes, &mut self.diffuse);
-                label_and_value(ui, "Specular", &mut changes, &mut self.specular);
-                label_and_value(ui, "Emissive", &mut changes, &mut self.emissive);
-                label_and_value(ui, "Shininess", &mut changes, &mut self.shininess);
                 label_and_value(ui, "Wireframe", &mut changes, &mut self.wireframe);
+                label_and_value(ui, "Albedo", &mut changes, &mut self.albedo);
+                label_and_value(ui, "Metallic", &mut changes, &mut self.metallic);
+                label_and_value(ui, "Roughness", &mut changes, &mut self.roughness);
             })
             .response;
 
@@ -132,12 +147,26 @@ impl PropertiesUi for Material {
     }
 }
 
-#[derive(Clone, Debug, Default)]
-pub struct MaterialTextures {
-    pub ambient: Option<Arc<TextureAndView>>,
-    pub diffuse: Option<Arc<TextureAndView>>,
-    pub specular: Option<Arc<TextureAndView>>,
-    pub emissive: Option<Arc<TextureAndView>>,
+#[derive(Clone, Debug)]
+pub struct AlbedoTexture {
+    pub texture: Arc<TextureAndView>,
+}
+
+/// Combined ambient occlusion, roughness, metallic map
+#[derive(Clone, Debug)]
+pub struct MaterialTexture {
+    pub texture: Arc<TextureAndView>,
+    pub flags: MaterialTextureFlags,
+}
+
+bitflags! {
+    #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, Pod, Zeroable)]
+    #[repr(C)]
+    pub struct MaterialTextureFlags: u32 {
+        const METALLIC          = 0b0001;
+        const ROUGHNESS         = 0b0010;
+        const AMBIENT_OCCLUSION = 0b0100;
+    }
 }
 
 /// A point light source.
@@ -158,32 +187,26 @@ pub struct MaterialTextures {
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct PointLight {
     #[serde(with = "crate::util::serde::palette")]
-    pub diffuse: Srgb,
-
-    #[serde(with = "crate::util::serde::palette")]
-    pub specular: Srgb,
+    pub color: Srgb,
 }
 
 impl PointLight {
-    pub const WHITE: Self = Self::from_single_color(Srgb::new(1.0, 1.0, 1.0));
-
-    pub const fn from_single_color(color: Srgb) -> Self {
+    pub const fn white_light(intensity: f32) -> Self {
         Self {
-            diffuse: color,
-            specular: color,
+            color: Srgb::new(intensity, intensity, intensity),
         }
     }
 }
 
 impl Default for PointLight {
     fn default() -> Self {
-        Self::WHITE
+        Self::white_light(1.0)
     }
 }
 
 impl From<Srgb> for PointLight {
     fn from(value: Srgb) -> Self {
-        Self::from_single_color(value)
+        Self { color: value }
     }
 }
 
@@ -200,9 +223,8 @@ impl PropertiesUi for PointLight {
         let mut changes = TrackChanges::default();
 
         let response = egui::Frame::new()
-            .show(ui, |ui| {
-                label_and_value(ui, "Diffuse", &mut changes, &mut self.diffuse);
-                label_and_value(ui, "Specular", &mut changes, &mut self.specular);
+            .show(ui, |ui: &mut egui::Ui| {
+                label_and_value(ui, "Color", &mut changes, &mut self.color);
             })
             .response;
 
@@ -210,45 +232,21 @@ impl PropertiesUi for PointLight {
     }
 }
 
-/// Defines filters for lighting components per camera.
-///
-/// Notably this is the only place to specify ambient lighting. Ambient light is
-/// assumed to be bright white everywhere, but it can be modulated by the
-/// camera.
-///
-/// The other components are multiplied with the color generated by the light
-/// from a light source or light emitted by the material itself.
-#[derive(Clone, Copy, Debug, Pod, Zeroable, Serialize, Deserialize)]
-#[repr(C)]
-pub struct CameraLightFilter {
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
+pub struct AmbientLight {
     #[serde(with = "crate::util::serde::palette")]
-    pub ambient: LinSrgba,
-
-    #[serde(with = "crate::util::serde::palette")]
-    pub diffuse: LinSrgba,
-
-    #[serde(with = "crate::util::serde::palette")]
-    pub specular: LinSrgba,
-
-    #[serde(with = "crate::util::serde::palette")]
-    pub emissive: LinSrgba,
+    pub color: Srgb,
 }
 
-impl Default for CameraLightFilter {
-    fn default() -> Self {
-        // todo: in default operation these should all be white. the materials specify
-        // the ratios
-        let rgb1 = |x| LinSrgba::new(x, x, x, 1.0);
+impl AmbientLight {
+    pub fn white_light(intensity: f32) -> Self {
         Self {
-            ambient: rgb1(0.8),
-            diffuse: rgb1(0.8),
-            specular: rgb1(0.5),
-            emissive: rgb1(1.0),
+            color: Srgb::new(intensity, intensity, intensity),
         }
     }
 }
 
-impl PropertiesUi for CameraLightFilter {
+impl PropertiesUi for AmbientLight {
     type Config = ();
 
     fn properties_ui(&mut self, ui: &mut egui::Ui, _config: &Self::Config) -> egui::Response {
@@ -256,10 +254,7 @@ impl PropertiesUi for CameraLightFilter {
 
         let response = egui::Frame::new()
             .show(ui, |ui| {
-                label_and_value(ui, "Ambient", &mut changes, &mut self.ambient);
-                label_and_value(ui, "Diffuse", &mut changes, &mut self.diffuse);
-                label_and_value(ui, "Specular", &mut changes, &mut self.specular);
-                label_and_value(ui, "Emissive", &mut changes, &mut self.emissive);
+                label_and_value(ui, "Color", &mut changes, &mut self.color);
             })
             .response;
 
@@ -272,46 +267,62 @@ impl PropertiesUi for CameraLightFilter {
 pub struct MaterialData {
     wireframe: LinSrgba,
     edges: LinSrgba,
-    ambient: LinSrgba,
-    diffuse: LinSrgba,
-    specular: LinSrgba,
-    emissive: LinSrgba,
-    shininess: f32,
-    _padding: [u32; 3],
+    albedo: LinSrgba,
+    metallic: f32,
+    roughness: f32,
+    ambient_occlusion: f32,
+    flags: MaterialTextureFlags,
 }
 
 impl MaterialData {
-    pub fn new(material: Option<&Material>, material_textures: Option<&MaterialTextures>) -> Self {
-        const BLACK: LinSrgba = LinSrgba::new(0.0, 0.0, 0.0, 1.0);
-        const WHITE: LinSrgba = LinSrgba::new(1.0, 1.0, 1.0, 1.0);
-
+    pub fn new(
+        material: Option<&Material>,
+        albedo_texture: Option<&AlbedoTexture>,
+        material_texture: Option<&MaterialTexture>,
+    ) -> Self {
         let mut data = Self {
             wireframe: material
                 .as_ref()
-                .map_or(BLACK, |material| material.wireframe.into_linear()),
-            shininess: material
-                .as_ref()
-                .map_or(32.0, |material| material.shininess),
+                .map_or(LinSrgba::BLACK, |material| material.wireframe.into_linear()),
+            albedo: material.map_or_else(
+                || {
+                    if albedo_texture.is_some() {
+                        // if a texture is present, a non-exitent material will yield white,
+                        // such that it doesn't affect the color output
+                        LinSrgba::WHITE
+                    }
+                    else {
+                        // if a texture isn't present, it will default to a white texture, but
+                        // because a material is also not present, we don't want any color, so
+                        // we set it to black.
+                        LinSrgba::BLACK
+                    }
+                },
+                |material| material.albedo.into_linear(),
+            ),
+            flags: material_texture
+                .map_or_else(Default::default, |material_texture| material_texture.flags),
             ..Default::default()
         };
 
-        macro_rules! color {
-            ($name:ident) => {
+        macro_rules! material {
+            ($name:ident, $flag:ident) => {
                 data.$name = material.as_ref().map_or_else(
                     || {
-                        let texture_present = material_textures
-                            .map_or(false, |material_textures| material_textures.$name.is_some());
-                        if texture_present { WHITE } else { BLACK }
+                        let texture_present =
+                            material_texture.as_ref().map_or(false, |material_texture| {
+                                material_texture.flags.contains(MaterialTextureFlags::$flag)
+                            });
+                        if texture_present { 1.0 } else { 0.0 }
                     },
-                    |material| material.$name.into_linear(),
+                    |material| material.$name,
                 );
             };
         }
 
-        color!(ambient);
-        color!(diffuse);
-        color!(specular);
-        color!(emissive);
+        material!(metallic, METALLIC);
+        material!(roughness, ROUGHNESS);
+        material!(ambient_occlusion, AMBIENT_OCCLUSION);
 
         data
     }
@@ -320,131 +331,99 @@ impl MaterialData {
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 #[repr(C)]
 pub struct PointLightData {
-    pub diffuse: LinSrgba,
-    pub specular: LinSrgba,
+    pub color: LinSrgba,
 }
 
 impl PointLightData {
     pub fn new(point_light: &PointLight) -> Self {
         Self {
-            diffuse: point_light.diffuse.into_linear().with_alpha(1.0),
-            specular: point_light.specular.into_linear().with_alpha(1.0),
+            color: point_light.color.into_linear().with_alpha(1.0),
         }
     }
 }
 
-#[derive(Clone, Debug, Default)]
-pub struct LoadMaterialTextures {
-    pub ambient: Option<TextureSource>,
-    pub diffuse: Option<TextureSource>,
-    pub specular: Option<TextureSource>,
-    pub emissive: Option<TextureSource>,
+#[derive(Clone, Debug)]
+pub struct LoadAlbedoTexture {
+    pub source: TextureSource,
 }
 
-impl LoadMaterialTextures {
-    pub fn with_ambient(mut self, texture: impl Into<TextureSource>) -> Self {
-        self.ambient = Some(texture.into());
-        self
-    }
-
-    pub fn with_diffuse(mut self, texture: impl Into<TextureSource>) -> Self {
-        self.diffuse = Some(texture.into());
-        self
-    }
-
-    pub fn with_ambient_and_diffuse(self, texture: impl Into<TextureSource>) -> Self {
-        let texture = texture.into();
-        self.with_ambient(texture.clone()).with_diffuse(texture)
-    }
-
-    pub fn with_specular(mut self, texture: impl Into<TextureSource>) -> Self {
-        self.specular = Some(texture.into());
-        self
-    }
-
-    pub fn with_emissive(mut self, texture: impl Into<TextureSource>) -> Self {
-        self.emissive = Some(texture.into());
-        self
+impl LoadAlbedoTexture {
+    pub fn new(source: impl Into<TextureSource>) -> Self {
+        Self {
+            source: source.into(),
+        }
     }
 }
 
-impl LoadAsset for LoadMaterialTextures {
-    type State = LoadMaterialTexturesState;
+impl From<TextureSource> for LoadAlbedoTexture {
+    fn from(value: TextureSource) -> Self {
+        Self { source: value }
+    }
+}
 
-    fn start_loading(
-        &self,
-        context: &mut LoaderContext,
-    ) -> Result<LoadMaterialTexturesState, Error> {
+impl LoadAsset for LoadAlbedoTexture {
+    type State = Self;
+
+    fn start_loading(&self, context: &mut LoaderContext) -> Result<Self, Error> {
         let _ = context;
-        Ok(LoadMaterialTexturesState {
-            loader: self.clone(),
-            output: Default::default(),
-        })
+        Ok(self.clone())
     }
 }
 
-#[derive(Debug)]
-pub struct LoadMaterialTexturesState {
-    pub loader: LoadMaterialTextures,
-    pub output: MaterialTextures,
-}
-
-impl LoadingState for LoadMaterialTexturesState {
-    type Output = (MaterialTextures, Changed<MaterialTextures>);
+impl LoadingState for LoadAlbedoTexture {
+    type Output = AndChanged<AlbedoTexture>;
 
     fn poll(
         &mut self,
         context: &mut LoaderContext,
-    ) -> Result<LoadingProgress<(MaterialTextures, Changed<MaterialTextures>)>, Error> {
-        let mut any_still_not_loaded = false;
+    ) -> Result<LoadingProgress<AndChanged<AlbedoTexture>>, Error> {
+        Ok(LoadingProgress::Ready(
+            AlbedoTexture {
+                texture: self.source.load(context)?,
+            }
+            .into(),
+        ))
+    }
+}
 
-        let mut load_texture =
-            |source: &TextureSource| -> Result<LoadingProgress<Arc<TextureAndView>>, Error> {
-                tracing::debug!(?source, "loading texture");
+#[derive(Clone, Debug)]
+pub struct LoadMaterialTexture {
+    pub source: TextureSource,
+    pub flags: MaterialTextureFlags,
+}
 
-                match source {
-                    TextureSource::File { path } => {
-                        // todo: this should not be implied here
-                        let usage = wgpu::TextureUsages::TEXTURE_BINDING;
-
-                        let texture_and_view = context.load_texture_from_file(path, usage)?;
-                        Ok(LoadingProgress::Ready(texture_and_view))
-                    }
-                    TextureSource::Channel { receiver } => {
-                        Ok(LoadingProgress::Ready(receiver.inner.clone()))
-                    }
-                }
-            };
-
-        macro_rules! material {
-            ($name:ident) => {
-                if let Some(texture_source) = &mut self.loader.$name {
-                    assert!(self.output.$name.is_none());
-
-                    if let LoadingProgress::Ready(texture_and_view) = load_texture(texture_source)?
-                    {
-                        self.loader.$name = None;
-                        self.output.$name = Some(texture_and_view);
-                    }
-                    else {
-                        any_still_not_loaded = true;
-                    }
-                }
-            };
+impl LoadMaterialTexture {
+    pub fn new(source: impl Into<TextureSource>, flags: MaterialTextureFlags) -> Self {
+        Self {
+            source: source.into(),
+            flags,
         }
+    }
+}
 
-        material!(ambient);
-        material!(diffuse);
-        material!(specular);
-        material!(emissive);
+impl LoadAsset for LoadMaterialTexture {
+    type State = Self;
 
-        if any_still_not_loaded {
-            Ok(LoadingProgress::Pending)
-        }
-        else {
-            let output = std::mem::take(&mut self.output);
-            Ok(LoadingProgress::Ready((output, Changed::default())))
-        }
+    fn start_loading(&self, context: &mut LoaderContext) -> Result<Self, Error> {
+        let _ = context;
+        Ok(self.clone())
+    }
+}
+
+impl LoadingState for LoadMaterialTexture {
+    type Output = AndChanged<MaterialTexture>;
+
+    fn poll(
+        &mut self,
+        context: &mut LoaderContext,
+    ) -> Result<LoadingProgress<AndChanged<MaterialTexture>>, Error> {
+        Ok(LoadingProgress::Ready(
+            MaterialTexture {
+                texture: self.source.load(context)?,
+                flags: self.flags,
+            }
+            .into(),
+        ))
     }
 }
 
@@ -452,6 +431,20 @@ impl LoadingState for LoadMaterialTexturesState {
 pub enum TextureSource {
     File { path: PathBuf },
     Channel { receiver: TextureReceiver },
+}
+
+impl TextureSource {
+    fn load(&self, context: &mut LoaderContext) -> Result<Arc<TextureAndView>, Error> {
+        match self {
+            TextureSource::File { path } => {
+                // todo: this should not be implied here
+                let usage = wgpu::TextureUsages::TEXTURE_BINDING;
+
+                context.load_texture_from_file(path, usage)
+            }
+            TextureSource::Channel { receiver } => Ok(receiver.inner.clone()),
+        }
+    }
 }
 
 impl From<PathBuf> for TextureSource {

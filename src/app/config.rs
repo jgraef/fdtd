@@ -8,7 +8,7 @@ use serde::{
 
 use crate::app::composer::renderer::{
     Outline,
-    light::CameraLightFilter,
+    light::AmbientLight,
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -71,7 +71,7 @@ pub struct View3dConfig {
     pub fovy: f32,
 
     #[serde(default)]
-    pub light_filter: Option<CameraLightFilter>,
+    pub ambient_light: Option<AmbientLight>,
 }
 
 impl Default for View3dConfig {
@@ -79,7 +79,7 @@ impl Default for View3dConfig {
         Self {
             background_color: default_background_color(),
             fovy: default_fovy(),
-            light_filter: None,
+            ambient_light: None,
         }
     }
 }

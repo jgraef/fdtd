@@ -48,7 +48,7 @@ use crate::{
                     CameraConfig,
                     CameraProjection,
                 },
-                light::LoadMaterialTextures,
+                light::LoadAlbedoTexture,
                 mesh::{
                     LoadMesh,
                     MeshFromShape,
@@ -340,7 +340,7 @@ impl ComposerState {
             ClearColor::from(view_config.background_color),
             CameraProjection::new(view_config.fovy.to_radians()),
             CameraConfig::default(),
-            view_config.light_filter.unwrap_or_default(),
+            view_config.ambient_light.unwrap_or_default(),
             //PointLight::default(),
             Label::new_static("camera"),
         ));
@@ -742,7 +742,8 @@ impl PopulateScene for ExampleScene {
     type Error = Infallible;
 
     fn populate_scene(&self, scene: &mut Scene) -> Result<(), Self::Error> {
-        let shape = |size| parry3d::shape::Cuboid::new(Vector3::repeat(size));
+        let cube = |size| parry3d::shape::Cuboid::new(Vector3::repeat(size));
+        let ball = |size| parry3d::shape::Ball::new(size);
 
         let em_material = crate::physics::material::Material {
             relative_permittivity: 3.9,
@@ -750,8 +751,13 @@ impl PopulateScene for ExampleScene {
         };
 
         scene
-            .add_object(Point3::new(-0.2, 0.0, 0.0), shape(0.1))
-            .material(palette::named::RED.into_format::<f32>().with_alpha(0.5))
+            .add_object(Point3::new(-0.2, 0.0, 0.0), cube(0.1))
+            .material(palette::named::RED.into_format::<f32>().with_alpha(1.0))
+            .add(em_material);
+
+        scene
+            .add_object(Point3::new(0.2, 0.0, 0.0), ball(0.1))
+            .material(palette::named::BLUE.into_format::<f32>().with_alpha(1.0))
             .add(em_material);
 
         /*scene
@@ -787,7 +793,7 @@ impl PopulateScene for ExampleScene {
                 color_map: test_color_map(0.5, Vector3::z_axis()),
                 half_extents: Vector2::new(1.0, 1.0),
             },
-            LoadMaterialTextures::default().with_ambient_and_diffuse("tmp/test_pattern.png"),
+            LoadAlbedoTexture::new("tmp/test_pattern.png"),
             Transform::identity(),
             LoadMesh::from(MeshFromShape::from(Quad::new(Vector2::new(1.0, 1.0)))),
         ));

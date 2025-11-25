@@ -5,6 +5,7 @@ pub mod ui;
 pub mod undo;
 
 use std::{
+    any::type_name,
     borrow::Cow,
     fmt::{
         Debug,
@@ -258,6 +259,12 @@ impl<T> Clone for Changed<T> {
 }
 
 impl<T> Copy for Changed<T> {}
+
+impl<T> Debug for Changed<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Changed<{}>", type_name::<T>())
+    }
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Label {

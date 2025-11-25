@@ -186,10 +186,13 @@ pub fn default_title(entity_ref: hecs::EntityRef) -> egui::WidgetText {
 mod show_all {
     use crate::app::composer::{
         properties::PropertiesUi,
-        renderer::light::{
-            CameraLightFilter,
-            Material,
-            PointLight,
+        renderer::{
+            Outline,
+            light::{
+                AmbientLight,
+                Material,
+                PointLight,
+            },
         },
         scene::{
             transform::Transform,
@@ -253,7 +256,8 @@ mod show_all {
             untagged: {
                 Material,
                 PointLight,
-                CameraLightFilter,
+                AmbientLight,
+                Outline,
             };
             tagged: {
                 Transform,

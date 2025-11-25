@@ -107,10 +107,10 @@ impl<'a> DrawCommandBuilder<'a> {
         mesh_bind_group: &MeshBindGroup,
         outline: bool,
     ) {
-        let mut stencil_reference = Stencil::default();
+        let mut stencil_reference = Stencil::empty();
 
         if outline {
-            stencil_reference.insert(Stencil::OUTLINE);
+            stencil_reference |= Stencil::OUTLINE;
             let draw_mesh_index = self.buffer.draw_meshes.len();
             self.buffer
                 .draw_outlines
@@ -193,7 +193,6 @@ impl DrawCommand {
             render_pass.draw_meshes_with_pipeline(
                 solid_pipeline,
                 &self.buffer.draw_meshes,
-                true,
                 identity,
             );
         }
@@ -205,7 +204,6 @@ impl DrawCommand {
             render_pass.draw_meshes_with_pipeline(
                 wireframe_pipeline,
                 &self.buffer.draw_meshes,
-                false,
                 |Range { start, end }| {
                     Range {
                         start: 2 * start,
@@ -225,7 +223,6 @@ impl DrawCommand {
                     .draw_outlines
                     .iter()
                     .map(|draw_outline| &self.buffer.draw_meshes[draw_outline.draw_mesh_index]),
-                false,
                 identity,
             );
         }
@@ -271,25 +268,17 @@ impl<'a> RenderPass<'a> {
         &mut self,
         pipeline: &wgpu::RenderPipeline,
         draw_meshes: impl IntoIterator<Item = &'b DrawMesh>,
-        set_stencil_reference: bool,
         map_indices: impl Fn(Range<u32>) -> Range<u32>,
     ) {
         // set draw (solid) pipeline
         self.inner.set_pipeline(pipeline);
-
-        if !set_stencil_reference {
-            // make sure it's set to 0 in the pipeline
-            self.set_stencil_reference(Default::default());
-        }
 
         // issue draw commands
         for draw_command in draw_meshes {
             self.inner
                 .set_bind_group(1, &draw_command.mesh_bind_group, &[]);
 
-            if set_stencil_reference {
-                self.set_stencil_reference(draw_command.stencil_reference);
-            }
+            self.set_stencil_reference(draw_command.stencil_reference);
 
             let indices = map_indices(draw_command.indices.clone());
 

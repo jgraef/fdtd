@@ -270,7 +270,7 @@ mod register_global {
             },
             grid::GridPlane,
             light::{
-                CameraLightFilter,
+                AmbientLight,
                 Material,
                 PointLight,
             },
@@ -304,7 +304,7 @@ mod register_global {
             Selected,
             CameraProjection,
             CameraConfig,
-            CameraLightFilter,
+            AmbientLight,
             ClearColor,
             PointLight,
             GridPlane,

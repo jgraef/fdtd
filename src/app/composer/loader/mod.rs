@@ -15,13 +15,17 @@ use crate::{
     app::composer::{
         renderer::{
             light::{
-                LoadMaterialTextures,
+                LoadAlbedoTexture,
+                LoadMaterialTexture,
                 TextureAndView,
             },
             mesh::LoadMesh,
             resource::RenderResourceCreator,
         },
-        scene::Scene,
+        scene::{
+            Changed,
+            Scene,
+        },
     },
     util::ImageLoadExt,
 };
@@ -51,15 +55,18 @@ impl AssetLoader {
                 render_resource_creator: &mut self.render_resource_creator,
                 texture_cache: &mut self.texture_cache,
             },
+            result: Ok(()),
         };
 
-        let mut load_result = run_loaders.run::<LoadMaterialTextures>();
-        load_result = load_result.and_then(|()| run_loaders.run::<LoadMesh>());
-        if let Err(error) = &load_result {
+        run_loaders.run::<LoadAlbedoTexture>();
+        run_loaders.run::<LoadMaterialTexture>();
+        run_loaders.run::<LoadMesh>();
+
+        if let Err(error) = &run_loaders.result {
             tracing::warn!(?error);
         }
 
-        load_result
+        run_loaders.result
     }
 }
 
@@ -120,6 +127,7 @@ impl<'a> LoaderContext<'a> {
 struct RunLoaders<'a> {
     scene: &'a mut Scene,
     context: LoaderContext<'a>,
+    result: Result<(), Error>,
 }
 
 impl<'a> RunLoaders<'a> {
@@ -134,7 +142,9 @@ impl<'a> RunLoaders<'a> {
             // try to load it immediately
             match loading_state.poll(&mut self.context)? {
                 LoadingProgress::Pending => {
-                    self.scene.command_buffer.insert_one(entity, loading_state);
+                    self.scene
+                        .command_buffer
+                        .insert_one(entity, LoadingStateContainer(loading_state));
                 }
                 LoadingProgress::Ready(loaded) => {
                     self.scene.command_buffer.insert(entity, loaded);
@@ -145,8 +155,12 @@ impl<'a> RunLoaders<'a> {
     }
 
     fn poll_loaders<L: LoadingState>(&mut self) -> Result<(), Error> {
-        for (entity, loading_state) in self.scene.entities.query_mut::<&mut L>() {
-            match loading_state.poll(&mut self.context) {
+        for (entity, loading_state) in self
+            .scene
+            .entities
+            .query_mut::<&mut LoadingStateContainer<L>>()
+        {
+            match loading_state.0.poll(&mut self.context) {
                 Ok(LoadingProgress::Pending) => {}
                 Ok(LoadingProgress::Ready(loaded)) => {
                     self.scene.command_buffer.remove_one::<L>(entity);
@@ -162,16 +176,16 @@ impl<'a> RunLoaders<'a> {
         Ok(())
     }
 
-    pub fn run<L: LoadAsset>(&mut self) -> Result<(), Error> {
-        let mut result = self.start_loading::<L>();
-        if result.is_ok() {
-            result = self.poll_loaders::<L::State>();
+    pub fn run<L: LoadAsset>(&mut self) {
+        if self.result.is_ok() {
+            self.result = self.start_loading::<L>();
+            if self.result.is_ok() {
+                self.result = self.poll_loaders::<L::State>();
+            }
+
+            // apply commands even if an error occurred.
+            self.scene.apply_deferred();
         }
-
-        // apply commands even if an error occurred.
-        self.scene.apply_deferred();
-
-        result
     }
 }
 
@@ -204,3 +218,23 @@ impl TextureCache {
         }
     }
 }
+
+#[derive(Clone, Copy, Debug, hecs::Bundle)]
+pub struct AndChanged<T> {
+    pub component: T,
+    pub changed: Changed<T>,
+}
+
+impl<T> From<T> for AndChanged<T> {
+    fn from(value: T) -> Self {
+        Self {
+            component: value,
+            changed: Default::default(),
+        }
+    }
+}
+
+/// A simple container we wrap around loading states, so that implementors for
+/// LoadAsset can use Self as the state without confusing the loading systems.
+#[derive(Debug)]
+struct LoadingStateContainer<T>(T);
