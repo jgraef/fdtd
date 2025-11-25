@@ -321,8 +321,8 @@ struct ComposerState {
     solver_configs: Vec<SolverConfig>,
     solver_config_window: SolverConfigUiWindow,
 
-    /// For which entity the properties window is open
-    properties_window_entity: Option<hecs::Entity>,
+    /// For which entities a properties window is open
+    entity_windows: EntityWindows,
 }
 
 impl ComposerState {
@@ -403,7 +403,7 @@ impl ComposerState {
             undo_buffer,
             solver_configs,
             solver_config_window: SolverConfigUiWindow::default(),
-            properties_window_entity: None,
+            entity_windows: Default::default(),
         }
     }
 }
@@ -549,12 +549,7 @@ impl ComposerState {
                 self.context_menu(&view_response);
             }
 
-            EntityPropertiesWindow::new(
-                egui::Id::new("entity_properties"),
-                &mut self.scene,
-                &mut self.properties_window_entity,
-            )
-            .show(ctx, scene_ui::default_title, scene_ui::debug(true));
+            self.entity_windows.show(ctx, &mut self.scene);
 
             self.solver_config_window
                 .show(ctx, &mut self.solver_configs);
@@ -605,7 +600,7 @@ impl ComposerState {
             ui.separator();
 
             if ui.button("Properties").clicked() {
-                self.properties_window_entity = Some(entity);
+                self.entity_windows.open(entity);
             }
         });
 
@@ -652,8 +647,7 @@ impl ComposerState {
     }
 
     pub fn open_camera_window(&mut self) {
-        // todo: we probably want to show this in a separate window
-        self.properties_window_entity = Some(self.camera_entity);
+        self.entity_windows.open(self.camera_entity);
     }
 
     pub fn open_solver_config_window(&mut self) {
@@ -1085,5 +1079,38 @@ impl<'a> CameraMut<'a> {
             .entities
             .query_one_mut::<Q>(self.camera_entity)
             .ok()
+    }
+}
+
+#[derive(Debug, Default)]
+struct EntityWindows {
+    // note: a hashset would generally be faster for checking if a window is already open, but for
+    // the small amount we expect, `Vec` should be unbeatable.
+    //
+    // note: this stores `Option`s, so that we can directly hand them out to the
+    // `EntityProperrtiesWindow` and then we just retain anything not `None`.
+    entities: Vec<Option<hecs::Entity>>,
+}
+
+impl EntityWindows {
+    pub fn open(&mut self, entity: hecs::Entity) {
+        if self.entities.iter().all(|open| {
+            open.expect("All entity references for windows should be valid at this point") != entity
+        }) {
+            self.entities.push(Some(entity));
+        }
+    }
+
+    pub fn show(&mut self, ctx: &egui::Context, scene: &mut Scene) {
+        for entity in &mut self.entities {
+            EntityPropertiesWindow::new(
+                egui::Id::new("entity_properties").with(*entity),
+                scene,
+                entity,
+            )
+            .deletable()
+            .show(ctx, scene_ui::default_title, scene_ui::debug(true));
+        }
+        self.entities.retain(Option::is_some);
     }
 }

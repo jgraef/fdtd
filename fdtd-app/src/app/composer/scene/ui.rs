@@ -17,11 +17,22 @@ pub struct EntityPropertiesWindow<'a> {
     scene: &'a mut Scene,
     entity: &'a mut Option<hecs::Entity>,
     id: egui::Id,
+    deletable: bool,
 }
 
 impl<'a> EntityPropertiesWindow<'a> {
     pub fn new(id: egui::Id, scene: &'a mut Scene, entity: &'a mut Option<hecs::Entity>) -> Self {
-        Self { scene, entity, id }
+        Self {
+            scene,
+            entity,
+            id,
+            deletable: false,
+        }
+    }
+
+    pub fn deletable(mut self) -> Self {
+        self.deletable = true;
+        self
     }
 
     pub fn show<R>(
@@ -40,6 +51,7 @@ impl<'a> EntityPropertiesWindow<'a> {
         };
 
         let mut is_open = true;
+        let mut delete_requested = false;
 
         let response = egui::Window::new(title(entity_ref))
             .id(self.id)
@@ -47,8 +59,19 @@ impl<'a> EntityPropertiesWindow<'a> {
             .collapsible(true)
             .open(&mut is_open)
             .show(ctx, |ui| {
+                if self.deletable {
+                    // note: would be nice if this was in the window title bar
+                    if ui.small_button("Despawn Entity").clicked() {
+                        delete_requested = true;
+                    }
+                }
+
                 add_contents(ui, entity_ref, &mut self.scene.command_buffer)
             });
+
+        if delete_requested {
+            self.scene.command_buffer.despawn(entity);
+        }
 
         self.scene.apply_deferred();
 
