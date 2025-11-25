@@ -8,7 +8,10 @@ use serde::{
 
 use crate::app::composer::renderer::{
     Outline,
-    light::AmbientLight,
+    light::{
+        AmbientLight,
+        PointLight,
+    },
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -72,6 +75,12 @@ pub struct View3dConfig {
 
     #[serde(default)]
     pub ambient_light: Option<AmbientLight>,
+
+    #[serde(default)]
+    pub point_light: Option<PointLight>,
+
+    #[serde(default = "default_to_true")]
+    pub tone_map: bool,
 }
 
 impl Default for View3dConfig {
@@ -80,6 +89,8 @@ impl Default for View3dConfig {
             background_color: default_background_color(),
             fovy: default_fovy(),
             ambient_light: None,
+            point_light: None,
+            tone_map: true,
         }
     }
 }
@@ -125,4 +136,8 @@ fn default_wgpu_backends() -> wgpu::Backends {
 
 fn default_multisample_count() -> NonZero<u32> {
     NonZero::new(4).unwrap()
+}
+
+fn default_to_true() -> bool {
+    true
 }

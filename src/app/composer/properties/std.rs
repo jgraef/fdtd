@@ -4,7 +4,10 @@ use egui::emath;
 
 use crate::{
     app::composer::properties::PropertiesUi,
-    util::Moo,
+    util::{
+        Moo,
+        egui::EguiUtilExt,
+    },
 };
 
 #[derive(Clone, Debug)]
@@ -128,5 +131,23 @@ impl PropertiesUi for Option<String> {
         }
 
         response
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub enum BoolPropertiesUiConfig {
+    Checkbox,
+    #[default]
+    ToggleButton,
+}
+
+impl PropertiesUi for bool {
+    type Config = BoolPropertiesUiConfig;
+
+    fn properties_ui(&mut self, ui: &mut egui::Ui, config: &Self::Config) -> egui::Response {
+        match config {
+            BoolPropertiesUiConfig::Checkbox => ui.checkbox(self, ()),
+            BoolPropertiesUiConfig::ToggleButton => ui.toggle_button(self),
+        }
     }
 }

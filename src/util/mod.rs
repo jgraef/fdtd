@@ -1,4 +1,5 @@
 pub mod arena;
+pub mod egui;
 pub mod palette;
 pub mod serde;
 pub mod wgpu;
@@ -115,15 +116,6 @@ where
         }
 
         write!(f, "{}", path.to_string_lossy())
-    }
-}
-
-impl<P> From<FormatPath<P>> for egui::WidgetText
-where
-    P: AsRef<Path>,
-{
-    fn from(value: FormatPath<P>) -> Self {
-        value.to_string().into()
     }
 }
 

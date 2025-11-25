@@ -188,6 +188,7 @@ mod show_all {
         properties::PropertiesUi,
         renderer::{
             Outline,
+            camera::CameraConfig,
             light::{
                 AmbientLight,
                 PointLight,
@@ -258,6 +259,7 @@ mod show_all {
                 PointLight,
                 AmbientLight,
                 Outline,
+                CameraConfig,
             };
             tagged: {
                 Transform,

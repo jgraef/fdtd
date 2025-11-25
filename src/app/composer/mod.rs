@@ -48,6 +48,10 @@ use crate::{
                     CameraConfig,
                     CameraProjection,
                 },
+                light::{
+                    AmbientLight,
+                    PointLight,
+                },
                 material::LoadAlbedoTexture,
                 mesh::{
                     LoadMesh,
@@ -339,9 +343,16 @@ impl ComposerState {
             ),
             ClearColor::from(view_config.background_color),
             CameraProjection::new(view_config.fovy.to_radians()),
-            CameraConfig::default(),
-            view_config.ambient_light.unwrap_or_default(),
-            //PointLight::default(),
+            CameraConfig {
+                tone_map: view_config.tone_map,
+                ..Default::default()
+            },
+            view_config
+                .ambient_light
+                .unwrap_or_else(|| AmbientLight::white_light(0.03)),
+            view_config
+                .point_light
+                .unwrap_or_else(|| PointLight::white_light(1.0)),
             Label::new_static("camera"),
         ));
 

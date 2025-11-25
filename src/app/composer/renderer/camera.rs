@@ -1,5 +1,6 @@
 use std::f32::consts::FRAC_PI_4;
 
+use bitflags::bitflags;
 use bytemuck::{
     Pod,
     Zeroable,
@@ -27,10 +28,18 @@ use serde::{
 use wgpu::util::DeviceExt;
 
 use crate::app::composer::{
+    properties::{
+        PropertiesUi,
+        TrackChanges,
+        label_and_value,
+    },
     renderer::{
         ClearColor,
         draw_commands::DrawCommandEnablePipelineFlags,
-        light::AmbientLight,
+        light::{
+            AmbientLight,
+            PointLight,
+        },
     },
     scene::{
         Changed,
@@ -224,11 +233,14 @@ fn create_camera_bind_group(
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 #[repr(C)]
 pub(super) struct CameraData {
-    pub transform: Matrix4<f32>,
-    pub projection: Matrix4<f32>,
-    pub world_position: Vector4<f32>,
-    pub clear_color: LinSrgba,
-    pub ambient_light_color: LinSrgba,
+    transform: Matrix4<f32>,
+    projection: Matrix4<f32>,
+    world_position: Vector4<f32>,
+    clear_color: LinSrgba,
+    ambient_light_color: LinSrgba,
+    point_light_color: LinSrgba,
+    flags: CameraFlags,
+    _padding: [u32; 3],
 }
 
 impl CameraData {
@@ -237,6 +249,8 @@ impl CameraData {
         camera_transform: &Transform,
         clear_color: Option<&ClearColor>,
         ambient_light: Option<&AmbientLight>,
+        point_light: Option<&PointLight>,
+        camera_config: Option<&CameraConfig>,
     ) -> Self {
         let transform = camera_transform.transform.inverse().to_homogeneous();
 
@@ -249,6 +263,21 @@ impl CameraData {
         let world_position =
             Point3::from(camera_transform.transform.translation.vector).to_homogeneous();
 
+        let mut flags = CameraFlags::empty();
+        if ambient_light.is_some() {
+            flags.insert(CameraFlags::AMBIENT_LIGHT);
+        }
+        if point_light.is_some() {
+            flags.insert(CameraFlags::POINT_LIGHT);
+        }
+        // clippy, i will probably nest other ifs using the camera config
+        #[allow(clippy::collapsible_if)]
+        if let Some(camera_config) = camera_config {
+            if camera_config.tone_map {
+                flags.insert(CameraFlags::TONE_MAP)
+            }
+        }
+
         Self {
             transform,
             projection,
@@ -260,7 +289,22 @@ impl CameraData {
             ambient_light_color: ambient_light.map_or_else(Default::default, |ambient_light| {
                 ambient_light.color.into_linear().with_alpha(1.0)
             }),
+            point_light_color: point_light.map_or_else(Default::default, |point_light| {
+                point_light.color.into_linear().with_alpha(1.0)
+            }),
+            flags,
+            _padding: [0; _],
         }
+    }
+}
+
+bitflags! {
+    #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, Pod, Zeroable)]
+    #[repr(C)]
+    struct CameraFlags: u32 {
+        const AMBIENT_LIGHT = 0b0000_0001;
+        const POINT_LIGHT   = 0b0000_0010;
+        const TONE_MAP      = 0b0000_0100;
     }
 }
 
@@ -270,6 +314,7 @@ pub struct CameraConfig {
     pub show_solid: bool,
     pub show_wireframe: bool,
     pub show_outline: bool,
+    pub tone_map: bool,
 }
 
 impl CameraConfig {
@@ -292,7 +337,27 @@ impl Default for CameraConfig {
             show_solid: true,
             show_wireframe: false,
             show_outline: true,
+            tone_map: true,
         }
+    }
+}
+
+impl PropertiesUi for CameraConfig {
+    type Config = ();
+
+    fn properties_ui(&mut self, ui: &mut egui::Ui, _config: &Self::Config) -> egui::Response {
+        let mut changes = TrackChanges::default();
+
+        let response = egui::Frame::new()
+            .show(ui, |ui: &mut egui::Ui| {
+                label_and_value(ui, "Show Solid", &mut changes, &mut self.show_solid);
+                label_and_value(ui, "Show Wireframe", &mut changes, &mut self.show_wireframe);
+                label_and_value(ui, "Show Outline", &mut changes, &mut self.show_outline);
+                label_and_value(ui, "Tone Map", &mut changes, &mut self.tone_map);
+            })
+            .response;
+
+        changes.propagated(response)
     }
 }
 
@@ -315,13 +380,25 @@ pub(super) fn update_cameras(
     }
 
     // create uniforms for cameras that don't have them yet
-    for (entity, (camera_projection, camera_transform, clear_color, ambient_light)) in scene
+    for (
+        entity,
+        (
+            camera_projection,
+            camera_transform,
+            clear_color,
+            ambient_light,
+            point_light,
+            camera_config,
+        ),
+    ) in scene
         .entities
         .query_mut::<(
             &CameraProjection,
             &Transform,
             Option<&ClearColor>,
             Option<&AmbientLight>,
+            Option<&PointLight>,
+            Option<&CameraConfig>,
         )>()
         .without::<&CameraResources>()
     {
@@ -330,6 +407,8 @@ pub(super) fn update_cameras(
             ?camera_projection,
             ?camera_transform,
             ?clear_color,
+            ?ambient_light,
+            ?point_light,
             "creating camera"
         );
         let camera_data = CameraData::new(
@@ -337,6 +416,8 @@ pub(super) fn update_cameras(
             camera_transform,
             clear_color,
             ambient_light,
+            point_light,
+            camera_config,
         );
         let camera_resources = CameraResources::new(
             camera_bind_group_layout,
@@ -367,20 +448,33 @@ pub(super) fn update_cameras(
     // update camera buffers
     let updated_instance_buffer =
         instance_buffer_reallocated.then_some((camera_bind_group_layout, instance_buffer));
-    for (_, (camera_resources, camera_projection, camera_transform, clear_color, ambient_light)) in
-        scene.entities.query_mut::<(
-            &mut CameraResources,
-            &CameraProjection,
-            &Transform,
-            Option<&ClearColor>,
-            Option<&AmbientLight>,
-        )>()
-    {
+    for (
+        _,
+        (
+            camera_resources,
+            camera_projection,
+            camera_transform,
+            clear_color,
+            ambient_light,
+            point_light,
+            camera_config,
+        ),
+    ) in scene.entities.query_mut::<(
+        &mut CameraResources,
+        &CameraProjection,
+        &Transform,
+        Option<&ClearColor>,
+        Option<&AmbientLight>,
+        Option<&PointLight>,
+        Option<&CameraConfig>,
+    )>() {
         let camera_data = CameraData::new(
             camera_projection,
             camera_transform,
             clear_color,
             ambient_light,
+            point_light,
+            camera_config,
         );
         camera_resources.update(device, queue, &camera_data, updated_instance_buffer);
     }

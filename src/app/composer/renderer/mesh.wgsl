@@ -6,6 +6,9 @@ struct Camera {
     world_position: vec4f,
     clear_color: vec4f,
     ambient_light_color: vec4f,
+    point_light_color: vec4f,
+    flags: u32,
+    // 12 bytes padding
 };
 
 struct Instance {
@@ -33,17 +36,21 @@ struct PointLight {
     color: vec4f,
 }
 
-const FLAG_REVERSE_WINDING: u32 = 0x01;
-//const FLAG_SHOW_SOLID: u32 = 0x02;
-//const FLAG_SHOW_WIREFRAME: u32 = 0x04;
-//const FLAG_SHOW_OUTLINE: u32 = 0x08;
-const FLAG_ENABLE_TEXTURES: u32 = 0x10;
-const FLAG_UV_BUFFER_VALID: u32 = 0x20;
-const FLAG_ENABLE_TRANSPARENCY: u32 = 0x40;
+const FLAG_INSTANCE_REVERSE_WINDING: u32 = 0x01;
+//const FLAG_INSTANCE_SHOW_SOLID: u32 = 0x02;
+//const FLAG_INSTANCE_SHOW_WIREFRAME: u32 = 0x04;
+//const FLAG_INSTANCE_SHOW_OUTLINE: u32 = 0x08;
+const FLAG_INSTANCE_ENABLE_TEXTURES: u32 = 0x10;
+const FLAG_INSTANCE_UV_BUFFER_VALID: u32 = 0x20;
+const FLAG_INSTANCE_ENABLE_TRANSPARENCY: u32 = 0x40;
 
-const FLAG_METALLIC_TEXTURE: u32 = 0x01;
-const FLAG_ROUGHNESS_TEXTURE: u32 = 0x02;
-const FLAG_AMBIENT_OCCLUSION_TEXTURE: u32 = 0x04;
+const FLAG_MATERIAL_METALLIC: u32 = 0x01;
+const FLAG_MATERIAL_ROUGHNESS: u32 = 0x02;
+const FLAG_MATERIAL_AMBIENT_OCCLUSION: u32 = 0x04;
+
+const FLAG_CAMERA_AMBIENT_LIGHT: u32 = 0x01;
+const FLAG_CAMERA_POINT_LIGHT: u32 = 0x02;
+const FLAG_CAMERA_TONE_MAP: u32 = 0x04;
 
 struct VertexInput {
     @builtin(vertex_index) vertex_index: u32,
@@ -126,7 +133,7 @@ fn vs_main_solid(input: VertexInput) -> VertexOutputSolid {
     output.world_position = instance.transform * vec4f(vertex, 1.0);
     output.world_normal = instance.transform * vec4f(normal, 0.0);
     output.fragment_position = camera.projection * camera.transform * output.world_position;
-    if (instance.flags & FLAG_UV_BUFFER_VALID) != 0 {
+    if (instance.flags & FLAG_INSTANCE_UV_BUFFER_VALID) != 0 {
         output.texture_position = uv_buffer[index_buffer[input.vertex_index]];
     }
 
@@ -143,13 +150,6 @@ fn fs_main_solid(input: VertexOutputSolid, @builtin(front_facing) front_face: bo
     if front_face {
         let instance = instance_buffer[input.instance_index];
 
-        // light definition
-        // todo: move into buffer
-        let point_light = PointLight(
-            camera.world_position,
-            vec4f(1.0),
-        );
-
         // uniform material
         var albedo = instance.material.albedo.rgb;
         var alpha = instance.material.albedo.a;
@@ -158,24 +158,24 @@ fn fs_main_solid(input: VertexOutputSolid, @builtin(front_facing) front_face: bo
         var ambient_occlusion = instance.material.ambient_occlusion;
 
         // sample material textures
-        if (instance.flags & FLAG_ENABLE_TEXTURES) != 0 {
+        if (instance.flags & FLAG_INSTANCE_ENABLE_TEXTURES) != 0 {
             let albedo_and_alpha = textureSample(texture_albedo, texture_sampler, input.texture_position);
             albedo *= albedo_and_alpha.rgb;
             alpha *= albedo_and_alpha.a;
             let material = textureSample(texture_material, texture_sampler, input.texture_position);
-            if (instance.material.flags & FLAG_METALLIC_TEXTURE) != 0 {
+            if (instance.material.flags & FLAG_MATERIAL_METALLIC) != 0 {
                 metallic *= material.r;
             }
-            if (instance.material.flags & FLAG_ROUGHNESS_TEXTURE) != 0 {
+            if (instance.material.flags & FLAG_MATERIAL_ROUGHNESS) != 0 {
                 roughness *= material.g;
             }
-            if (instance.material.flags & FLAG_AMBIENT_OCCLUSION_TEXTURE) != 0 {
+            if (instance.material.flags & FLAG_MATERIAL_AMBIENT_OCCLUSION) != 0 {
                 ambient_occlusion *= material.b;
             }
         }
 
         // optionally disable transparency
-        if (instance.flags & FLAG_ENABLE_TRANSPARENCY) == 0 {
+        if (instance.flags & FLAG_INSTANCE_ENABLE_TRANSPARENCY) == 0 {
             alpha = 1.0;
         }
 
@@ -188,29 +188,38 @@ fn fs_main_solid(input: VertexOutputSolid, @builtin(front_facing) front_face: bo
         let surface_reflection = mix(vec3(0.04), albedo, metallic);
 
         // debug
-        alpha = 1.0;
-        ambient_occlusion = 0.0;
+        //alpha = 1.0;
+        //ambient_occlusion = 1.0;
         //roughness = 0.8;
         //metallic = 0.5;
 
-        // todo: where does 0.03 come from?
-        var color = vec3f(0.03) * albedo * ambient_occlusion;
+        var color: vec3f;
 
-        // for each light
-        color += light_radiance(
-            point_light.world_position.xyz,
-            point_light.color.rgb,
-            input.world_position.xyz,
-            world_normal,
-            view_direction,
-            albedo,
-            roughness,
-            metallic,
-            surface_reflection,
-        );
+        if (camera.flags & FLAG_CAMERA_AMBIENT_LIGHT) != 0 {
+            color += camera.ambient_light_color.rgb * albedo * ambient_occlusion;
+        }
+
+        // point light attached to camera
+        if (camera.flags & FLAG_CAMERA_POINT_LIGHT) != 0 {
+            color += light_radiance(
+                camera.world_position.xyz,
+                camera.point_light_color.rgb,
+                input.world_position.xyz,
+                world_normal,
+                view_direction,
+                albedo,
+                roughness,
+                metallic,
+                surface_reflection,
+            );
+        }
+
+        // todo: add other point lights
 
         // tonemap hdr to ldr
-        color /= color + vec3f(1.0);
+        if (camera.flags & FLAG_CAMERA_TONE_MAP) != 0 {
+            color /= color + vec3f(1.0);
+        }
 
         output.color = vec4f(color, alpha);
     }
@@ -245,7 +254,7 @@ fn light_radiance(
     // calculate radiance
     //let distance = length(light_position - world_position);
     //let attenuation = 1.0 / (distance * distance);
-    let attenuation = 10.0;
+    let attenuation = 20.0;
     let radiance = light_color * attenuation;
 
     // cook-torrance brdf
@@ -369,7 +378,7 @@ fn calculate_normal(v1: vec3f, v2: vec3f, v3: vec3f,) -> vec3f {
 fn fix_vertex_index(index: u32, flags: u32, base_vertex: u32) -> u32 {
     var output = index;
 
-    if (flags & FLAG_REVERSE_WINDING) != 0 {
+    if (flags & FLAG_INSTANCE_REVERSE_WINDING) != 0 {
         // fix vertex order if mesh is wound in opposite order
         output = index -2 * (index % 3 - 1);
     }
