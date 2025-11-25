@@ -14,7 +14,7 @@ use crate::{
     Error,
     app::composer::{
         renderer::{
-            light::{
+            material::{
                 LoadAlbedoTexture,
                 LoadMaterialTexture,
                 TextureAndView,

@@ -271,9 +271,9 @@ mod register_global {
             grid::GridPlane,
             light::{
                 AmbientLight,
-                Material,
                 PointLight,
             },
+            material::Material,
         },
         scene::{
             Label,

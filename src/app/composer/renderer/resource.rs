@@ -8,7 +8,7 @@ use crate::{
         composer::renderer::{
             Renderer,
             command::CommandSender,
-            light::TextureAndView,
+            material::TextureAndView,
             texture_channel::{
                 TextureReceiver,
                 UndecidedTextureSender,

@@ -190,9 +190,9 @@ mod show_all {
             Outline,
             light::{
                 AmbientLight,
-                Material,
                 PointLight,
             },
+            material::Material,
         },
         scene::{
             transform::Transform,

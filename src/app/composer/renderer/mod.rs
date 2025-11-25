@@ -3,6 +3,7 @@ mod command;
 mod draw_commands;
 pub mod grid;
 pub mod light;
+pub mod material;
 pub mod mesh;
 pub mod resource;
 pub mod texture_channel;
@@ -51,7 +52,7 @@ use crate::{
                     DrawCommandEnablePipelineFlags,
                     DrawCommandOptions,
                 },
-                light::{
+                material::{
                     AlbedoTexture,
                     Material,
                     MaterialData,
@@ -194,7 +195,7 @@ impl Renderer {
     pub const WINDING_ORDER: WindingOrder = WindingOrder::CounterClockwise;
 
     pub const MESH_SHADER_MODULE: wgpu::ShaderModuleDescriptor<'static> =
-        wgpu::include_wgsl!("shaders/mesh.wgsl");
+        wgpu::include_wgsl!("mesh.wgsl");
 
     pub fn from_app_context(context: &CreateAppContext) -> Self {
         let camera_bind_group_layout = context.wgpu_context.device.create_bind_group_layout(

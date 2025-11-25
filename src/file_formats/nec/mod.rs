@@ -23,7 +23,7 @@ use parry3d::shape::Cylinder;
 pub use crate::file_formats::nec::interpreter::NecFile;
 use crate::{
     app::composer::{
-        renderer::light::Material,
+        renderer::material::Material,
         scene::{
             PopulateScene,
             Scene,

@@ -15,7 +15,7 @@ use parking_lot::{
 
 use crate::app::composer::renderer::{
     command::CommandSender,
-    light::TextureAndView,
+    material::TextureAndView,
 };
 
 pub(super) fn texture_channel(

@@ -33,7 +33,7 @@ use crate::{
         },
         renderer::{
             Fallbacks,
-            light::{
+            material::{
                 AlbedoTexture,
                 MaterialTexture,
             },

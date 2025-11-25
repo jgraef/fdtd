@@ -41,7 +41,7 @@ use crate::app::composer::{
     Selectable,
     renderer::{
         grid::GridPlane,
-        light::Material,
+        material::Material,
         mesh::{
             LoadMesh,
             MeshFromShape,

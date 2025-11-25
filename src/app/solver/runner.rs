@@ -20,10 +20,7 @@ use crate::{
     app::{
         composer::{
             renderer::{
-                light::{
-                    self,
-                    LoadAlbedoTexture,
-                },
+                material,
                 resource::RenderResourceCreator,
                 texture_channel::UndecidedTextureSender,
             },
@@ -480,8 +477,8 @@ impl<P> Observers<P> {
                     scene.command_buffer.insert(
                         entity,
                         (
-                            LoadAlbedoTexture::new(receiver),
-                            light::Material::from_albedo(Srgba::WHITE)
+                            material::LoadAlbedoTexture::new(receiver),
+                            material::Material::from_albedo(Srgba::WHITE)
                                 .with_metallic(0.0)
                                 .with_roughness(0.0),
                         ),

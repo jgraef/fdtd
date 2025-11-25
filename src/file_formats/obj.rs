@@ -8,7 +8,7 @@ use parry3d::shape::TriMesh;
 use tobj::LoadOptions;
 
 use crate::app::composer::{
-    renderer::light::Material,
+    renderer::material::Material,
     scene::{
         Label,
         PopulateScene,

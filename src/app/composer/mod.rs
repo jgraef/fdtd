@@ -48,7 +48,7 @@ use crate::{
                     CameraConfig,
                     CameraProjection,
                 },
-                light::LoadAlbedoTexture,
+                material::LoadAlbedoTexture,
                 mesh::{
                     LoadMesh,
                     MeshFromShape,
