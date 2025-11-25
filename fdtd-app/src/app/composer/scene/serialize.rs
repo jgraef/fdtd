@@ -277,8 +277,8 @@ mod register_global {
         },
         scene::{
             Label,
-            collisions::BoundingBox,
             serialize::EntitySerializer,
+            spatial::BoundingBox,
             transform::Transform,
         },
         tree::ShowInTree,

@@ -11,9 +11,12 @@ use serde::{
     Serialize,
 };
 
-use crate::app::composer::properties::{
-    PropertiesUi,
-    nalgebra::Isometry3UiConfig,
+use crate::app::composer::{
+    properties::{
+        PropertiesUi,
+        nalgebra::Isometry3UiConfig,
+    },
+    scene::ui::ComponentUiHeading,
 };
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
@@ -121,6 +124,12 @@ impl From<Point3<f32>> for Transform {
 impl From<UnitQuaternion<f32>> for Transform {
     fn from(value: UnitQuaternion<f32>) -> Self {
         Self::from(Isometry3::from_parts(Default::default(), value))
+    }
+}
+
+impl ComponentUiHeading for Transform {
+    fn heading(&self) -> impl Into<egui::RichText> {
+        "Transform"
     }
 }
 

@@ -12,10 +12,13 @@ use serde::{
     Serialize,
 };
 
-use crate::app::composer::properties::{
-    PropertiesUi,
-    TrackChanges,
-    label_and_value,
+use crate::app::composer::{
+    properties::{
+        PropertiesUi,
+        TrackChanges,
+        label_and_value,
+    },
+    scene::ui::ComponentUiHeading,
 };
 
 /// A point light source.
@@ -65,6 +68,12 @@ impl From<Srgb<u8>> for PointLight {
     }
 }
 
+impl ComponentUiHeading for PointLight {
+    fn heading(&self) -> impl Into<egui::RichText> {
+        "Point Light"
+    }
+}
+
 impl PropertiesUi for PointLight {
     type Config = ();
 
@@ -92,6 +101,12 @@ impl AmbientLight {
         Self {
             color: Srgb::new(intensity, intensity, intensity),
         }
+    }
+}
+
+impl ComponentUiHeading for AmbientLight {
+    fn heading(&self) -> impl Into<egui::RichText> {
+        "Ambient Light"
     }
 }
 

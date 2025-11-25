@@ -32,7 +32,7 @@ use crate::app::composer::scene::{
 };
 
 #[derive(derive_more::Debug, Default)]
-pub struct OctTree {
+pub struct SpatialQueries {
     bvh: bvh::Bvh,
     stored_entities: HashMap<u32, hecs::Entity>,
     next_leaf_index: u32,
@@ -41,7 +41,7 @@ pub struct OctTree {
     bvh_workspace: bvh::BvhWorkspace,
 }
 
-impl OctTree {
+impl SpatialQueries {
     pub(super) fn remove(&mut self, entity: hecs::Entity, world: &mut hecs::World) {
         if let Ok(leaf_index) = world.remove_one::<LeafIndex>(entity) {
             tracing::debug!(?entity, index = leaf_index.index, "removing from octtree");
@@ -262,9 +262,9 @@ mod tests {
 
     use crate::app::composer::scene::{
         Transform,
-        collisions::{
+        spatial::{
             Collider,
-            OctTree,
+            SpatialQueries,
         },
     };
 
@@ -276,7 +276,7 @@ mod tests {
     fn it_adds_entities() {
         let mut world = hecs::World::new();
         let mut command_buffer = hecs::CommandBuffer::new();
-        let mut octtree = OctTree::default();
+        let mut octtree = SpatialQueries::default();
 
         let entity = world.spawn(test_bundle());
         octtree.update(&mut world, &mut command_buffer);
@@ -294,7 +294,7 @@ mod tests {
     fn it_removes_entities() {
         let mut world = hecs::World::new();
         let mut command_buffer = hecs::CommandBuffer::new();
-        let mut octtree = OctTree::default();
+        let mut octtree = SpatialQueries::default();
 
         let entity = world.spawn(test_bundle());
         octtree.update(&mut world, &mut command_buffer);

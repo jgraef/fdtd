@@ -68,6 +68,7 @@ use crate::{
             scene::{
                 Scene,
                 transform::Transform,
+                ui::ComponentUiHeading,
             },
         },
         start::{
@@ -865,6 +866,12 @@ impl Default for Outline {
             color: Srgba::new(1.0, 1.0, 1.0, 0.75),
             thickness: 0.1,
         }
+    }
+}
+
+impl ComponentUiHeading for Outline {
+    fn heading(&self) -> impl Into<egui::RichText> {
+        "Outline"
     }
 }
 

@@ -42,6 +42,7 @@ use crate::{
             std::NumericPropertyUiConfig,
         },
         renderer::texture_channel::TextureReceiver,
+        scene::ui::ComponentUiHeading,
     },
     util::{
         palette::ColorExt,
@@ -174,6 +175,12 @@ impl From<Srgb> for Material {
 impl From<Srgb<u8>> for Material {
     fn from(value: Srgb<u8>) -> Self {
         Self::from(value.with_alpha(255))
+    }
+}
+
+impl ComponentUiHeading for Material {
+    fn heading(&self) -> impl Into<egui::RichText> {
+        "Material"
     }
 }
 

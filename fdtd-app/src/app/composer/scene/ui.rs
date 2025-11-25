@@ -137,7 +137,7 @@ where
 
 impl<'a, T> egui::Widget for ComponentUi<'a, T>
 where
-    T: hecs::Component + PropertiesUi,
+    T: hecs::Component + PropertiesUi + ComponentUiHeading,
 {
     fn ui(self, ui: &mut egui::Ui) -> egui::Response {
         let entity = self.entity_ref.entity();
@@ -146,14 +146,19 @@ where
             let mut deletion_requested = false;
 
             ui.horizontal(|ui| {
-                ui.heading(type_name::<T>());
-                if self.deletable && ui.small_button("Delete").clicked() {
-                    deletion_requested = true;
+                ui.heading(value.heading());
+                if self.deletable {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
+                        if ui.small_button("Delete").clicked() {
+                            deletion_requested = true;
+                        }
+                    });
                 }
             });
 
-            let response = value.properties_ui(ui, self.config);
-            ui.separator();
+            let response = ui
+                .indent(egui::Id::NULL, |ui| value.properties_ui(ui, self.config))
+                .inner;
 
             if deletion_requested {
                 tracing::debug!(?entity, component = type_name::<T>(), "removing");
@@ -183,6 +188,10 @@ pub fn default_title(entity_ref: hecs::EntityRef) -> egui::WidgetText {
     .into()
 }
 
+pub trait ComponentUiHeading {
+    fn heading(&self) -> impl Into<egui::RichText>;
+}
+
 mod show_all {
     use crate::app::composer::{
         properties::PropertiesUi,
@@ -197,7 +206,10 @@ mod show_all {
         },
         scene::{
             transform::Transform,
-            ui::ComponentUi,
+            ui::{
+                ComponentUi,
+                ComponentUiHeading,
+            },
         },
     };
 
@@ -214,23 +226,31 @@ mod show_all {
         entity_ref: hecs::EntityRef,
         command_buffer: &mut hecs::CommandBuffer,
         deletable_components: bool,
-        track_changes: bool,
+        is_first: &mut bool,
+        mark_changed: bool,
     ) where
-        T: PropertiesUi + hecs::Component,
+        T: PropertiesUi + hecs::Component + ComponentUiHeading,
     {
-        let config = T::Config::default();
-        let mut component_ui = ComponentUi::<T>::new(entity_ref, command_buffer, &config);
+        if entity_ref.has::<T>() {
+            if !*is_first {
+                ui.separator();
+            }
+            *is_first = false;
 
-        if deletable_components {
-            component_ui = component_ui.deletable();
+            let config = T::Config::default();
+            let mut component_ui = ComponentUi::<T>::new(entity_ref, command_buffer, &config);
+
+            if deletable_components {
+                component_ui = component_ui.deletable();
+            }
+            if mark_changed {
+                component_ui = component_ui.mark_changed();
+            }
+
+            //ui.label(label);
+
+            ui.add(component_ui);
         }
-        if track_changes {
-            component_ui = component_ui.mark_changed();
-        }
-
-        //ui.label(label);
-
-        ui.add(component_ui);
     }
 
     pub fn show_all_with_config(
@@ -239,31 +259,25 @@ mod show_all {
         command_buffer: &mut hecs::CommandBuffer,
         deletable_components: bool,
     ) {
-        macro_rules! show_all {
-            {
-                untagged: {$($ty1:ty,)*};
-                tagged: {$($ty2:ty,)*};
-            } => {
-                $(
-                    show_component::<$ty1>(ui, entity_ref, command_buffer, deletable_components, false);
-                )*
-                $(
-                    show_component::<$ty2>(ui, entity_ref, command_buffer, deletable_components, true);
-                )*
+        let mut is_first = true;
+
+        macro_rules! show_component {
+            (@emit $ty:ty, $mark_changed:expr) => {{
+                show_component::<$ty>(ui, entity_ref, command_buffer, deletable_components, &mut is_first, $mark_changed);
+            }};
+            ($ty:ty, Changed) => {
+                show_component!(@emit $ty, true)
+            };
+            ($ty:ty) => {
+                show_component!(@emit $ty, false)
             };
         }
 
-        show_all! {
-            untagged: {
-                Material,
-                PointLight,
-                AmbientLight,
-                Outline,
-                CameraConfig,
-            };
-            tagged: {
-                Transform,
-            };
-        };
+        show_component!(Transform, Changed);
+        show_component!(Material, Changed);
+        show_component!(PointLight);
+        show_component!(AmbientLight);
+        show_component!(Outline);
+        show_component!(CameraConfig);
     }
 }

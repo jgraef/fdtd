@@ -14,7 +14,6 @@ use std::{
         Path,
         PathBuf,
     },
-    time::Duration,
 };
 
 use base64::engine::Engine;
@@ -423,7 +422,7 @@ impl ComposerState {
         renderer.prepare_world(&mut self.scene);
 
         // todo: give a RepaintTrigger to the solver runner
-        ctx.request_repaint_after(Duration::from_millis(1000 / 60));
+        //ctx.request_repaint_after(Duration::from_millis(1000 / 60));
 
         {
             let mut copy = false;

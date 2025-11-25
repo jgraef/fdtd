@@ -45,6 +45,7 @@ use crate::app::composer::{
         Changed,
         Scene,
         transform::Transform,
+        ui::ComponentUiHeading,
     },
 };
 
@@ -339,6 +340,12 @@ impl Default for CameraConfig {
             show_outline: true,
             tone_map: true,
         }
+    }
+}
+
+impl ComponentUiHeading for CameraConfig {
+    fn heading(&self) -> impl Into<egui::RichText> {
+        "Camera Config"
     }
 }
 

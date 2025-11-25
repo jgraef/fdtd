@@ -1,5 +1,5 @@
-pub mod collisions;
 pub mod serialize;
+pub mod spatial;
 pub mod transform;
 pub mod ui;
 pub mod undo;
@@ -49,15 +49,15 @@ use crate::app::composer::{
         },
     },
     scene::{
-        collisions::{
+        serialize::SerializeEntity,
+        spatial::{
             BoundingBox,
             Collider,
             ColliderTraits,
-            OctTree,
             RayHit,
+            SpatialQueries,
             merge_aabbs,
         },
-        serialize::SerializeEntity,
         transform::Transform,
     },
     tree::ShowInTree,
@@ -75,7 +75,7 @@ pub struct Scene {
 
     // we might need this pub anyway, because it might be required to e.g. borrow the world and
     // operate on the octtree at the same time.
-    octtree: OctTree,
+    spatial_queries: SpatialQueries,
 
     /// General-purpose command buffer.
     ///
@@ -134,12 +134,12 @@ impl Scene {
         max_time_of_impact: impl Into<Option<f32>>,
         filter: impl Fn(hecs::Entity) -> bool,
     ) -> Option<RayHit> {
-        self.octtree
+        self.spatial_queries
             .cast_ray(ray, max_time_of_impact, &self.entities, filter)
     }
 
     pub fn point_query(&self, point: &Point3<f32>) -> impl Iterator<Item = hecs::Entity> {
-        self.octtree.point_query(*point, &self.entities)
+        self.spatial_queries.point_query(*point, &self.entities)
     }
 
     pub fn contact_query(
@@ -147,7 +147,8 @@ impl Scene {
         shape: &dyn Shape,
         transform: &Isometry3<f32>,
     ) -> impl Iterator<Item = (hecs::Entity, Contact)> {
-        self.octtree.contact_query(shape, transform, &self.entities)
+        self.spatial_queries
+            .contact_query(shape, transform, &self.entities)
     }
 
     /// This needs to be called every frame to update internal state.
@@ -155,7 +156,7 @@ impl Scene {
     /// E.g. this updates the internal octtree used for spatial queries
     pub fn prepare(&mut self) {
         self.apply_deferred();
-        self.octtree
+        self.spatial_queries
             .update(&mut self.entities, &mut self.command_buffer);
 
         // todo: who is responsible for this?
@@ -173,7 +174,7 @@ impl Scene {
     }
 
     pub fn aabb(&self) -> Aabb {
-        self.octtree.root_aabb()
+        self.spatial_queries.root_aabb()
     }
 
     /// Computes the scene's AABB relative to an observer.
@@ -227,7 +228,7 @@ impl Scene {
     }
 
     pub fn delete(&mut self, entity: hecs::Entity) -> Option<hecs::TakenEntity<'_>> {
-        self.octtree.remove(entity, &mut self.entities);
+        self.spatial_queries.remove(entity, &mut self.entities);
         self.entities.take(entity).ok()
     }
 
