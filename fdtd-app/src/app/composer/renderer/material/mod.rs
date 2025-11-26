@@ -282,9 +282,16 @@ bitflags! {
     #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, Pod, Zeroable)]
     #[repr(C)]
     pub struct MaterialTextureFlags: u32 {
-        const METALLIC          = 0b0001;
-        const ROUGHNESS         = 0b0010;
-        const AMBIENT_OCCLUSION = 0b0100;
+        const METALLIC          = 0x0000_0002;
+        const ROUGHNESS         = 0x0000_0004;
+        const AMBIENT_OCCLUSION = 0x0000_0008;
+    }
+}
+
+bitflags! {
+    pub struct MaterialFlags: u32 {
+        const ALBEDO_TEXTURE      = 0x0000_0001;
+        const TRANSPARENT         = 0x0000_0010;
     }
 }
 
@@ -297,7 +304,10 @@ pub(super) struct MaterialData {
     metalness: f32,
     roughness: f32,
     ambient_occlusion: f32,
-    flags: MaterialTextureFlags,
+    // combined from MaterialFlags and MaterialTextureFlags
+    flags: u32,
+    alpha_threshold: f32,
+    _padding: [u32; 3],
 }
 
 impl MaterialData {
@@ -307,29 +317,38 @@ impl MaterialData {
         material_texture: Option<&MaterialTexture>,
     ) -> Self {
         let mut data = Self {
-            wireframe: material
-                .as_ref()
-                .map_or(LinSrgba::BLACK, |material| material.wireframe.into_linear()),
-            albedo: material.map_or_else(
-                || {
-                    if albedo_texture.is_some() {
-                        // if a texture is present, a non-exitent material will yield white,
-                        // such that it doesn't affect the color output
-                        LinSrgba::WHITE
-                    }
-                    else {
-                        // if a texture isn't present, it will default to a white texture, but
-                        // because a material is also not present, we don't want any color, so
-                        // we set it to black.
-                        LinSrgba::BLACK
-                    }
-                },
-                |material| material.albedo.into_linear(),
-            ),
-            flags: material_texture
-                .map_or_else(Default::default, |material_texture| material_texture.flags),
+            wireframe: LinSrgba::BLACK,
             ..Default::default()
         };
+
+        if let Some(albedo_texture) = albedo_texture {
+            // if a texture is present, a non-exitent material will yield white,
+            // such that it doesn't affect the color output
+            data.albedo = LinSrgba::WHITE;
+            data.flags |= MaterialFlags::ALBEDO_TEXTURE.bits();
+            if albedo_texture.transparent {
+                data.flags |= MaterialFlags::TRANSPARENT.bits();
+            }
+        }
+        else {
+            // if a texture isn't present, it will default to a white texture, but
+            // because a material is also not present, we don't want any color, so
+            // we set it to black.
+            data.albedo = LinSrgba::BLACK;
+        }
+
+        if let Some(material) = material {
+            data.wireframe = material.wireframe.into_linear();
+            data.albedo = material.albedo.into_linear();
+            data.alpha_threshold = material.alpha_threshold;
+            if material.transparent {
+                data.flags |= MaterialFlags::TRANSPARENT.bits();
+            }
+        }
+
+        if let Some(material_texture) = material_texture {
+            data.flags |= material_texture.flags.bits();
+        }
 
         macro_rules! material {
             ($name:ident, $flag:ident, $default:expr) => {

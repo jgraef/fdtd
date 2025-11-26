@@ -62,6 +62,7 @@ use crate::{
                 mesh::{
                     Mesh,
                     MeshBindGroup,
+                    MeshFlags,
                     WindingOrder,
                 },
                 pipeline::{
@@ -281,19 +282,17 @@ impl Renderer {
                         vertex_buffer(0),
                         // vertex buffer
                         vertex_buffer(1),
-                        // uv buffer
-                        vertex_buffer(2),
                         // sampler
                         wgpu::BindGroupLayoutEntry {
-                            binding: 3,
+                            binding: 2,
                             visibility: wgpu::ShaderStages::FRAGMENT,
                             ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                             count: None,
                         },
                         // material - albedo
-                        texture(4),
+                        texture(3),
                         // material - material
-                        texture(5),
+                        texture(4),
                     ],
                 })
         };
@@ -501,19 +500,18 @@ impl Renderer {
             .without::<&Hidden>()
         {
             // write per-instance data into a buffer
-            let instance_data = InstanceData::new_mesh(
+            self.instance_buffer.push(InstanceData::new_mesh(
                 transform,
                 mesh,
                 material,
                 albedo_texture,
                 material_texture,
                 outline,
-            );
-            let transparent = instance_data
-                .flags
-                .contains(InstanceFlags::TRANSPARENT)
+            ));
+
+            let transparent = material
+                .is_some_and(|material| material.transparent)
                 .then(|| transform.position());
-            self.instance_buffer.push(instance_data);
 
             // prepare draw commands
             draw_command_builder.draw_mesh(
@@ -605,10 +603,10 @@ impl Renderer {
 #[repr(C)]
 struct InstanceData {
     transform: Matrix4<f32>,
-    flags: InstanceFlags,
+    instance_flags: InstanceFlags,
+    mesh_flags: MeshFlags,
     base_vertex: u32,
     outline_thickness: f32,
-    alpha_threshold: f32,
     outline_color: LinSrgba,
     material: MaterialData,
 }
@@ -623,28 +621,11 @@ impl InstanceData {
         material_texture: Option<&MaterialTexture>,
         outline: Option<&Outline>,
     ) -> Self {
-        let mut flags = InstanceFlags::empty();
         if mesh.winding_order != Renderer::WINDING_ORDER {
-            flags.insert(InstanceFlags::REVERSE_WINDING);
+            todo!("fix winding order");
         }
 
-        if material_texture.is_some() || albedo_texture.is_some() {
-            flags.insert(InstanceFlags::ENABLE_TEXTURES);
-        }
-        if material.is_some_and(|material| material.transparent)
-            || albedo_texture.is_some_and(|albedo_texture| albedo_texture.transparent)
-        {
-            flags.insert(InstanceFlags::TRANSPARENT);
-        }
-
-        let alpha_threshold = material
-            .map(|material| material.alpha_threshold)
-            .unwrap_or_default();
-
-        if mesh.uv_buffer.is_some() {
-            flags.insert(InstanceFlags::UV_BUFFER_VALID);
-        }
-        else {
+        if !mesh.flags.contains(MeshFlags::UVS) {
             // could enable textures in this case, but we need to tell the
             // vertex shader to not index into the uv buffer anyway
             // flags.remove(InstanceFlags::ENABLE_TEXTURES);
@@ -656,10 +637,10 @@ impl InstanceData {
 
         Self {
             transform: transform.transform.to_homogeneous(),
-            flags,
+            instance_flags: InstanceFlags::empty(),
+            mesh_flags: mesh.flags,
             base_vertex: mesh.base_vertex,
             outline_thickness,
-            alpha_threshold,
             outline_color,
             material: MaterialData::new(material, albedo_texture, material_texture),
         }
@@ -670,7 +651,9 @@ bitflags! {
     #[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]
     #[repr(C)]
     struct InstanceFlags: u32 {
-        const REVERSE_WINDING     = 0b0000_0001;
+        // unused currently, but surely will be useful in the future again.
+
+        //const REVERSE_WINDING     = 0b0000_0001;
 
         // todo: these are not used currently. since we only render one
         // instance at a time currently, we could just not emit a draw call
@@ -681,9 +664,6 @@ bitflags! {
         //const SHOW_WIREFRAME      = 0b0000_0100;
         //const SHOW_OUTLINE        = 0b0000_1000;
 
-        const ENABLE_TEXTURES     = 0b0001_0000;
-        const UV_BUFFER_VALID     = 0b0010_0000;
-        const TRANSPARENT        = 0b0100_0000;
     }
 }
 
@@ -769,7 +749,7 @@ struct Fallbacks {
     pub white: wgpu::TextureView,
     pub black: wgpu::TextureView,
     pub sampler: wgpu::Sampler,
-    pub uv_buffer: wgpu::Buffer,
+    pub vertex_buffer: wgpu::Buffer,
 }
 
 impl Fallbacks {
@@ -801,11 +781,12 @@ impl Fallbacks {
             ..Default::default()
         });
 
-        let uv_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("uv buffer dummy"),
-            // the shader will expect at least one element in the array, which is a vec2f, so it's 8
-            // bytes
-            size: 8,
+            // the shader will expect at least one element in the array:
+            // - uv: vec2f, 8 bytes
+            // - normals: vec3f, 16 bytes (they're padded)
+            size: 16,
             usage: wgpu::BufferUsages::STORAGE,
             mapped_at_creation: false,
         });
@@ -814,7 +795,7 @@ impl Fallbacks {
             white,
             black,
             sampler,
-            uv_buffer,
+            vertex_buffer,
         }
     }
 }

@@ -7,7 +7,11 @@ use std::{
     sync::Arc,
 };
 
-use bytemuck::Pod;
+use bitflags::bitflags;
+use bytemuck::{
+    Pod,
+    Zeroable,
+};
 use nalgebra::{
     Isometry3,
     Point2,
@@ -57,41 +61,23 @@ use crate::{
             },
         },
     },
+    util::format_size,
 };
 
 #[derive(Clone, Debug)]
 pub struct Mesh {
     pub index_buffer: wgpu::Buffer,
     pub vertex_buffer: wgpu::Buffer,
-    pub normal_buffer: Option<wgpu::Buffer>,
-    pub uv_buffer: Option<wgpu::Buffer>,
     pub indices: Range<u32>,
     pub base_vertex: u32,
     pub winding_order: WindingOrder,
+    pub flags: MeshFlags,
 }
 
 impl Mesh {
     pub fn from_surface_mesh(surface_mesh: &SurfaceMesh, device: &wgpu::Device) -> Self {
         // todo: we could just fix the winding order here when we write the indices into
         // the buffer, and not bother doing that in the shader.
-
-        fn buffer<T>(device: &wgpu::Device, label: &str, data: &[T]) -> wgpu::Buffer
-        where
-            T: Pod,
-        {
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some(label),
-                contents: bytemuck::cast_slice(data),
-                usage: wgpu::BufferUsages::STORAGE,
-            })
-        }
-
-        fn buffer_opt<T>(device: &wgpu::Device, label: &str, data: &[T]) -> Option<wgpu::Buffer>
-        where
-            T: Pod,
-        {
-            (!data.is_empty()).then(|| buffer(device, label, data))
-        }
 
         let num_indices = surface_mesh.indices.len();
         let num_vertices = surface_mesh.vertices.len();
@@ -120,29 +106,99 @@ impl Mesh {
             }
         }
 
-        let index_buffer = buffer(device, "mesh index buffer", &surface_mesh.indices);
-        let vertex_buffer = buffer(device, "mesh vertex buffer", &surface_mesh.vertices);
-        let normal_buffer = buffer_opt(device, "mesh normal buffer", &surface_mesh.normals);
-        let uv_buffer = buffer_opt(device, "mesh uv buffer", &surface_mesh.uvs);
+        let mut flags = MeshFlags::empty();
+        if !surface_mesh.normals.is_empty() {
+            flags.insert(MeshFlags::NORMALS);
+        }
+        if !surface_mesh.uvs.is_empty() {
+            flags.insert(MeshFlags::UVS);
+        }
+
+        let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("mesh/index"),
+            contents: bytemuck::cast_slice(&surface_mesh.indices),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+
+        // todo: fix winding order in this step
+        let vertex_data = surface_mesh
+            .vertices
+            .iter()
+            .copied()
+            .zip(
+                surface_mesh
+                    .normals
+                    .iter()
+                    .copied()
+                    .chain(std::iter::repeat(Vector3::zeros())),
+            )
+            .zip(
+                surface_mesh
+                    .uvs
+                    .iter()
+                    .copied()
+                    .chain(std::iter::repeat(Point2::origin())),
+            )
+            .map(|((position, normal), uv)| Vertex::new(position, normal, uv))
+            .collect::<Vec<_>>();
+
+        let vertex_data = bytemuck::cast_slice(&vertex_data);
+
+        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("mesh/vertex"),
+            contents: vertex_data,
+            usage: wgpu::BufferUsages::STORAGE,
+        });
 
         // the indices array in surface_mesh is **not** flat (i.e. it consists of `[u32;
         // 3]`, one index per face), thus we need to multiply by 3.
         let num_indices = (surface_mesh.indices.len() * 3) as u32;
 
+        tracing::debug!(
+            ?num_indices,
+            ?num_vertices,
+            ?num_normals,
+            ?num_uvs,
+            ?flags,
+            index_buffer_size = %format_size(num_indices * 3),
+            vertex_buffer_size = %format_size(vertex_data.len()),
+            "created mesh"
+        );
+
         Self {
             index_buffer,
             vertex_buffer,
-            normal_buffer,
-            uv_buffer,
             indices: 0..num_indices,
             base_vertex: 0,
             winding_order: surface_mesh.winding_order,
+            flags,
         }
     }
 
     pub fn from_shape<S: ToSurfaceMesh + ?Sized>(shape: &S, device: &wgpu::Device) -> Self {
         let surface_mesh = shape.to_surface_mesh();
         Self::from_surface_mesh(&surface_mesh, device)
+    }
+}
+
+bitflags! {
+    #[derive(Clone, Copy, Debug, Pod, Zeroable)]
+    #[repr(C)]
+    pub struct MeshFlags: u32 {
+        const UVS     = 0x0000_0001;
+        const NORMALS = 0x0000_0002;
+    }
+}
+
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+#[repr(C)]
+struct Vertex([f32; 8]);
+
+impl Vertex {
+    pub fn new(position: Point3<f32>, normal: Vector3<f32>, uv: Point2<f32>) -> Self {
+        Self([
+            position.x, position.y, position.z, uv.x, normal.x, normal.y, normal.z, uv.y,
+        ])
     }
 }
 
@@ -174,24 +230,16 @@ impl MeshBindGroup {
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
-                    resource: mesh
-                        .uv_buffer
-                        .as_ref()
-                        .unwrap_or(&fallbacks.uv_buffer)
-                        .as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
                     resource: wgpu::BindingResource::Sampler(&fallbacks.sampler),
                 },
                 wgpu::BindGroupEntry {
-                    binding: 4,
+                    binding: 3,
                     resource: wgpu::BindingResource::TextureView(
                         albedo_texture.map_or(&fallbacks.white, |texture| &texture.texture.view),
                     ),
                 },
                 wgpu::BindGroupEntry {
-                    binding: 5,
+                    binding: 4,
                     resource: wgpu::BindingResource::TextureView(
                         material_texture.map_or(&fallbacks.white, |texture| &texture.texture.view),
                     ),
@@ -348,7 +396,15 @@ fn parry_surface_mesh(vertices: Vec<Point3<f32>>, indices: Vec<[u32; 3]>) -> Sur
 impl ToSurfaceMesh for Ball {
     fn to_surface_mesh(&self) -> SurfaceMesh {
         let (vertices, indices) = self.to_trimesh(20, 20);
-        parry_surface_mesh(vertices, indices)
+        let mut mesh = parry_surface_mesh(vertices, indices);
+
+        mesh.normals = Vec::with_capacity(mesh.vertices.len());
+
+        for vertex in &mesh.vertices {
+            mesh.normals.push(vertex.coords.normalize());
+        }
+
+        mesh
     }
 }
 
@@ -356,21 +412,7 @@ impl ToSurfaceMesh for Cuboid {
     fn to_surface_mesh(&self) -> SurfaceMesh {
         let (vertices, indices) = self.to_trimesh();
 
-        let mut mesh = parry_surface_mesh(vertices, indices);
-
-        // fake uvs
-        mesh.uvs = vec![
-            Point2::new(0.0, 0.0),
-            Point2::new(0.0, 1.0),
-            Point2::new(1.0, 0.0),
-            Point2::new(1.0, 1.0),
-            Point2::new(0.0, 0.0),
-            Point2::new(0.0, 1.0),
-            Point2::new(1.0, 0.0),
-            Point2::new(1.0, 1.0),
-        ];
-
-        mesh
+        parry_surface_mesh(vertices, indices)
     }
 }
 
@@ -418,7 +460,7 @@ impl ToSurfaceMesh for Quad {
                     )
                 })
                 .collect(),
-            normals: std::iter::repeat_n(Vector3::z(), 4).collect(),
+            normals: std::iter::repeat_n(-Vector3::z(), 4).collect(),
             uvs: VERTICES
                 .iter()
                 .map(|(x, y)| Point2::new(*x, 1.0 - *y))
@@ -473,7 +515,9 @@ pub(super) fn update_mesh_bind_groups(
                                       albedo_texture: Option<&AlbedoTexture>,
                                       material_texture: Option<&MaterialTexture>,
                                       label: Option<&Label>| {
-        if mesh.uv_buffer.is_none() && (albedo_texture.is_some() || material_texture.is_some()) {
+        if !mesh.flags.contains(MeshFlags::UVS)
+            && (albedo_texture.is_some() || material_texture.is_some())
+        {
             tracing::warn!(?label, "Mesh with textures, but no UV buffer");
         }
 

@@ -188,7 +188,6 @@ where
                 self.command_buffer.remove_one::<T>(entity);
             }
             else if response.changed() && self.mark_changed {
-                tracing::debug!(?entity, component = type_name::<T>(), "marking as changed");
                 self.command_buffer
                     .insert_one(entity, Changed::<T>::default());
             }

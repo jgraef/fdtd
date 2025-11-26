@@ -13,10 +13,10 @@ struct Camera {
 
 struct Instance {
     transform: mat4x4f,
-    flags: u32,
+    instance_flags: u32,
+    mesh_flags: u32,
     base_vertex: u32,
     outline_thickness: f32,
-    alpha_threshold: f32,
     outline_color: vec4f,
     material: Material,
 }
@@ -29,6 +29,8 @@ struct Material {
     roughness: f32,
     ambient_occlusion: f32,
     flags: u32,
+    alpha_threshold: f32,
+    // 12 bytes padding
 }
 
 struct PointLight {
@@ -36,17 +38,19 @@ struct PointLight {
     color: vec4f,
 }
 
-const FLAG_INSTANCE_REVERSE_WINDING: u32 = 0x01;
-//const FLAG_INSTANCE_SHOW_SOLID: u32 = 0x02;
-//const FLAG_INSTANCE_SHOW_WIREFRAME: u32 = 0x04;
-//const FLAG_INSTANCE_SHOW_OUTLINE: u32 = 0x08;
-const FLAG_INSTANCE_ENABLE_TEXTURES: u32 = 0x10;
-const FLAG_INSTANCE_UV_BUFFER_VALID: u32 = 0x20;
-const FLAG_INSTANCE_TRANSPARENT: u32 = 0x40;
 
-const FLAG_MATERIAL_METALLIC: u32 = 0x01;
-const FLAG_MATERIAL_ROUGHNESS: u32 = 0x02;
-const FLAG_MATERIAL_AMBIENT_OCCLUSION: u32 = 0x04;
+const FLAG_MESH_UVS                    = 0x00000001;
+const FLAG_MESH_NORMALS                = 0x00000002;
+const FLAG_MESH_NORMALS_GENERATOR_MASK = 0xff000000;
+const FLAG_MESH_NORMALS_FROM_FACE      = 0x01000000;
+const FLAG_MESH_NORMALS_FROM_VERTEX    = 0x02000000;
+
+const FLAG_MATERIAL_ALBEDO_TEXTURE: u32            = 0x00000001;
+const FLAG_MATERIAL_METALLIC_TEXTURE: u32          = 0x00000002;
+const FLAG_MATERIAL_ROUGHNESS_TEXTURE: u32         = 0x00000004;
+const FLAG_MATERIAL_AMBIENT_OCCLUSION_TEXTURE: u32 = 0x00000008;
+const FLAG_MATERIAL_ANY_ORM: u32                   = 0x0000000e;
+const FLAG_MATERIAL_TRANSPARENT: u32               = 0x00000010;
 
 const FLAG_CAMERA_AMBIENT_LIGHT: u32 = 0x01;
 const FLAG_CAMERA_POINT_LIGHT: u32 = 0x02;
@@ -59,10 +63,11 @@ struct VertexInput {
 
 struct VertexOutputSolid {
     @builtin(position) fragment_position: vec4f,
-    @location(0) @interpolate(flat, either) instance_index: u32,
-    @location(1) world_position: vec4f,
-    @location(2) world_normal: vec4f,
-    @location(3) texture_position: vec2f,
+    @location(0) world_position: vec4f,
+    @location(1) world_normal: vec4f,
+    @location(2) texture_position: vec2f,
+    @location(3) @interpolate(flat, either) instance_index: u32,
+    //@location(4) @interpolate(flat, either) vertex_output_flags: u32,
 }
 
 struct VertexOutputSingleColor {
@@ -96,46 +101,60 @@ var<storage, read> instance_buffer: array<Instance>;
 @group(1) @binding(0)
 var<storage, read> index_buffer: array<u32>;
 
-// note: we interpret this as an array of f32's, otherwise we'll have to pad the vertices in the buffer.
 @group(1) @binding(1)
-var<storage, read> vertex_buffer: array<f32>;
+var<storage, read> vertex_buffer: array<Vertex>;
 
 @group(1) @binding(2)
-var<storage, read> uv_buffer: array<vec2f>;
-
-@group(1) @binding(3)
 var texture_sampler: sampler;
 
-@group(1) @binding(4)
+@group(1) @binding(3)
 var texture_albedo: texture_2d<f32>;
 
-@group(1) @binding(5)
+@group(1) @binding(4)
 var texture_material: texture_2d<f32>;
+
+struct Vertex {
+    position_uvx: vec4f,
+    normal_uvy: vec4f,
+}
 
 
 @vertex
 fn vs_main_solid(input: VertexInput) -> VertexOutputSolid {
     let instance = instance_buffer[input.instance_index];
 
-    let first_face_vertex = (input.vertex_index / 3) * 3;
-    let right_neighbor_vertex_index = (input.vertex_index + 1) % 3 + first_face_vertex;
-    let left_neighbor_vertex_index = (input.vertex_index + 2) % 3 + first_face_vertex;
+    let index = index_buffer[input.vertex_index];
+    let vertex_data = vertex_buffer[index];
+    let vertex_position = vertex_data.position_uvx.xyz;
+    var vertex_normal = vertex_data.normal_uvy.xyz;
+    var vertex_uv = vec2f(vertex_data.position_uvx.w, vertex_data.normal_uvy.w);
 
-    let vertex = get_vertex(input.vertex_index);
-    let normal = calculate_normal(
-        vertex,
-        get_vertex(right_neighbor_vertex_index),
-        get_vertex(left_neighbor_vertex_index),
-    );
+    if (instance.mesh_flags & FLAG_MESH_NORMALS) == 0 {
+        let generator = instance.mesh_flags & FLAG_MESH_NORMALS_GENERATOR_MASK;
+
+        if generator == FLAG_MESH_NORMALS_FROM_VERTEX {
+            vertex_normal = normalize(vertex_position);
+        }
+        else {
+            // FLAG_MESH_NORMALS_FROM_FACE (default)
+            let first_face_vertex = (input.vertex_index / 3) * 3;
+            let right_neighbor_vertex_index = (input.vertex_index + 1) % 3 + first_face_vertex;
+            let left_neighbor_vertex_index = (input.vertex_index + 2) % 3 + first_face_vertex;
+
+            vertex_normal = calculate_normal(
+                vertex_position,
+                vertex_buffer[index_buffer[right_neighbor_vertex_index]].position_uvx.xyz,
+                vertex_buffer[index_buffer[left_neighbor_vertex_index]].position_uvx.xyz,
+            );
+        }
+    }
 
     var output: VertexOutputSolid;
     output.instance_index = input.instance_index;
-    output.world_position = instance.transform * vec4f(vertex, 1.0);
-    output.world_normal = instance.transform * vec4f(normal, 0.0);
+    output.world_position = instance.transform * vec4f(vertex_position, 1.0);
+    output.world_normal = instance.transform * vec4f(vertex_normal, 0.0);
     output.fragment_position = camera.projection * camera.transform * output.world_position;
-    if (instance.flags & FLAG_INSTANCE_UV_BUFFER_VALID) != 0 {
-        output.texture_position = uv_buffer[index_buffer[input.vertex_index]];
-    }
+    output.texture_position = vertex_uv;
 
     return output;
 }
@@ -158,27 +177,31 @@ fn fs_main_solid(input: VertexOutputSolid, @builtin(front_facing) front_face: bo
         var ambient_occlusion = instance.material.ambient_occlusion;
 
         // sample material textures
-        if (instance.flags & FLAG_INSTANCE_ENABLE_TEXTURES) != 0 {
+        if (instance.material.flags & FLAG_MATERIAL_ALBEDO_TEXTURE) != 0 {
             let albedo_and_alpha = textureSample(texture_albedo, texture_sampler, input.texture_position);
             albedo *= albedo_and_alpha.rgb;
             alpha *= albedo_and_alpha.a;
+        }
+        if (instance.material.flags & FLAG_MATERIAL_ANY_ORM) != 0 {
             let material = textureSample(texture_material, texture_sampler, input.texture_position);
-            if (instance.material.flags & FLAG_MATERIAL_METALLIC) != 0 {
+            if (instance.material.flags & FLAG_MATERIAL_METALLIC_TEXTURE) != 0 {
                 metalness *= material.r;
             }
-            if (instance.material.flags & FLAG_MATERIAL_ROUGHNESS) != 0 {
+            if (instance.material.flags & FLAG_MATERIAL_ROUGHNESS_TEXTURE) != 0 {
                 roughness *= material.g;
             }
-            if (instance.material.flags & FLAG_MATERIAL_AMBIENT_OCCLUSION) != 0 {
+            if (instance.material.flags & FLAG_MATERIAL_AMBIENT_OCCLUSION_TEXTURE) != 0 {
                 ambient_occlusion *= material.b;
             }
         }
 
+        // discard fragments with alpha below threshold
+        if alpha < instance.material.alpha_threshold {
+            discard;
+        }
+
         // optionally disable transparency
-        if (instance.flags & FLAG_INSTANCE_TRANSPARENT) == 0 {
-            if alpha < instance.alpha_threshold {
-                discard;
-            }
+        if (instance.material.flags & FLAG_MATERIAL_TRANSPARENT) == 0 {
             alpha = 1.0;
         }
 
@@ -328,12 +351,13 @@ fn vs_main_wireframe(input: VertexInput) -> VertexOutputSingleColor {
         `(i / 6) * 3` gives the vertex index for the first index of a triangle.
     */
 
-    let vertex_index = ((input.vertex_index + 1) % 6) / 2 + (input.vertex_index / 6) * 3;
-    let vertex = get_vertex(vertex_index);
+    var vertex_index = ((input.vertex_index + 1) % 6) / 2 + (input.vertex_index / 6) * 3;
+    vertex_index = index_buffer[vertex_index];
+    let vertex_position = vertex_buffer[vertex_index].position_uvx.xyz;
 
     var output: VertexOutputSingleColor;
     output.color = instance.material.wireframe;
-    output.fragment_position = camera.projection * camera.transform * instance.transform * vec4f(vertex, 1.0);
+    output.fragment_position = camera.projection * camera.transform * instance.transform * vec4f(vertex_position, 1.0);
 
     return output;
 }
@@ -343,12 +367,13 @@ fn vs_main_wireframe(input: VertexInput) -> VertexOutputSingleColor {
 fn vs_main_outline(input: VertexInput) -> VertexOutputSingleColor {
     let instance = instance_buffer[input.instance_index];
 
-    let vertex = get_vertex(input.vertex_index);
+    let vertex_index = index_buffer[input.vertex_index];
+    let vertex_position = vertex_buffer[vertex_index].position_uvx.xyz;
     let scaling = 1.0 + instance.outline_thickness;
 
     var output: VertexOutputSingleColor;
     output.color = instance.outline_color;
-    output.fragment_position = camera.projection * camera.transform * instance.transform * vec4f(vertex, 1.0 / scaling);
+    output.fragment_position = camera.projection * camera.transform * instance.transform * vec4f(vertex_position, 1.0 / scaling);
 
     return output;
 }
@@ -377,26 +402,6 @@ fn vs_main_clear(input: VertexInput) -> VertexOutputSingleColor {
     return output;
 }
 
-fn get_vertex(index: u32) -> vec3f {
-    let i = index_buffer[index] * 3;
-    return vec3f(
-        vertex_buffer[i],
-        vertex_buffer[i + 1],
-        vertex_buffer[i + 2],
-    );
-}
-
 fn calculate_normal(v1: vec3f, v2: vec3f, v3: vec3f,) -> vec3f {
     return cross(v2 - v1, v3 - v1);
-}
-
-fn fix_vertex_index(index: u32, flags: u32, base_vertex: u32) -> u32 {
-    var output = index;
-
-    if (flags & FLAG_INSTANCE_REVERSE_WINDING) != 0 {
-        // fix vertex order if mesh is wound in opposite order
-        output = index -2 * (index % 3 - 1);
-    }
-
-    return output;
 }
