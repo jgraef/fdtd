@@ -5,6 +5,7 @@ pub mod grid;
 pub mod light;
 pub mod material;
 pub mod mesh;
+mod pipeline;
 pub mod resource;
 pub mod texture_channel;
 
@@ -62,6 +63,17 @@ use crate::{
                     Mesh,
                     MeshBindGroup,
                     WindingOrder,
+                },
+                pipeline::{
+                    clear::{
+                        ClearPipeline,
+                        ClearPipelineDescriptor,
+                    },
+                    mesh::{
+                        MeshPipeline,
+                        MeshPipelineDescriptor,
+                        StencilStateExt,
+                    },
                 },
                 resource::RenderResourceCreator,
             },
@@ -157,10 +169,10 @@ pub struct Renderer {
     // mesh, etc.
     mesh_shader_module: wgpu::ShaderModule,
 
-    clear_pipeline: Pipeline,
-    solid_pipeline: Pipeline,
-    wireframe_pipeline: Pipeline,
-    outline_pipeline: Pipeline,
+    clear_pipeline: ClearPipeline,
+    solid_pipeline: MeshPipeline,
+    wireframe_pipeline: MeshPipeline,
+    outline_pipeline: MeshPipeline,
 
     /// The instance buffer.
     ///
@@ -197,6 +209,10 @@ impl Renderer {
 
     pub const MESH_SHADER_MODULE: wgpu::ShaderModuleDescriptor<'static> =
         wgpu::include_wgsl!("mesh.wgsl");
+
+    // We need to flip the interpretation of the winding order here, because this
+    // actually depends on the orientation of our Z axis.
+    pub const FRONT_FACE: wgpu::FrontFace = Renderer::WINDING_ORDER.flipped().front_face();
 
     pub fn from_app_context(context: &CreateAppContext) -> Self {
         let camera_bind_group_layout = context.wgpu_context.device.create_bind_group_layout(
@@ -281,105 +297,78 @@ impl Renderer {
                 })
         };
 
-        // should we store this in the struct?
         let mesh_shader_module = context
             .wgpu_context
             .device
             .create_shader_module(Self::MESH_SHADER_MODULE);
 
-        let clear_pipeline = Pipeline::new(
-            &context.wgpu_context,
-            &context.renderer_config,
-            "render/clear",
-            &mesh_shader_module,
-            &[&camera_bind_group_layout],
-            DepthState {
-                // egui clears the depth buffer with a value of 1.0 when starting the render pass.
-                // but we could enable this to write to the depth buffer with the clear shader - if
-                // we want to clear to another value.
-                write_enable: false,
-                // render regardless of depth state
-                compare: wgpu::CompareFunction::Always,
-                bias: Default::default(),
+        let clear_pipeline = ClearPipeline::new(
+            &context.wgpu_context.device,
+            &ClearPipelineDescriptor {
+                renderer_config: &context.renderer_config,
+                camera_bind_group_layout: &camera_bind_group_layout,
+                shader_module: &mesh_shader_module,
             },
-            {
-                // this should always zero the stencil state
-                let stencil_face_state = wgpu::StencilFaceState {
-                    compare: wgpu::CompareFunction::Always,
-                    fail_op: wgpu::StencilOperation::Zero,
-                    depth_fail_op: wgpu::StencilOperation::Zero,
-                    pass_op: wgpu::StencilOperation::Zero,
-                };
-                wgpu::StencilState {
-                    // same stencil face state for both faces
-                    front: stencil_face_state,
-                    back: stencil_face_state,
-                    // ignore buffer state
-                    read_mask: 0x00,
-                    // clear bits
-                    write_mask: 0xff,
-                }
-            },
-            wgpu::PrimitiveTopology::TriangleList,
-            Some("vs_main_clear"),
-            Some("fs_main_single_color"),
-            false,
-            false,
         );
 
-        let render_mesh_bind_group_layouts = [&camera_bind_group_layout, &mesh_bind_group_layout];
-
-        let solid_pipeline = Pipeline::new_mesh_render_pipeline(
-            &context.wgpu_context,
-            &context.renderer_config,
-            "render/mesh/solid",
-            &mesh_shader_module,
-            &render_mesh_bind_group_layouts,
-            wgpu::CompareFunction::Less,
-            Some(Stencil::OUTLINE),
-            None,
-            wgpu::PrimitiveTopology::TriangleList,
-            Some("vs_main_solid"),
-            Some("fs_main_solid"),
-            true,
+        let solid_pipeline = MeshPipeline::new(
+            &context.wgpu_context.device,
+            &MeshPipelineDescriptor {
+                label: "render/mesh/solid",
+                renderer_config: &context.renderer_config,
+                camera_bind_group_layout: &camera_bind_group_layout,
+                mesh_bind_group_layout: &mesh_bind_group_layout,
+                shader_module: &mesh_shader_module,
+                depth_state: DepthState::new(true, wgpu::CompareFunction::Less),
+                stencil_state: wgpu::StencilState::new(Some(Stencil::OUTLINE), None),
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                vertex_shader_entry_point: "vs_main_solid",
+                fragment_shader_entry_point: "fs_main_solid",
+                alpha_blending: false,
+            },
         );
 
-        let wireframe_pipeline = Pipeline::new_mesh_render_pipeline(
-            &context.wgpu_context,
-            &context.renderer_config,
-            "render/mesh/wireframe",
-            &mesh_shader_module,
-            &render_mesh_bind_group_layouts,
-            wgpu::CompareFunction::LessEqual,
-            None,
-            None,
-            wgpu::PrimitiveTopology::LineList,
-            Some("vs_main_wireframe"),
-            Some("fs_main_single_color"),
-            false,
+        let wireframe_pipeline = MeshPipeline::new(
+            &context.wgpu_context.device,
+            &MeshPipelineDescriptor {
+                label: "render/mesh/wireframe",
+                renderer_config: &context.renderer_config,
+                camera_bind_group_layout: &camera_bind_group_layout,
+                mesh_bind_group_layout: &mesh_bind_group_layout,
+                shader_module: &mesh_shader_module,
+                depth_state: DepthState::new(true, wgpu::CompareFunction::LessEqual),
+                stencil_state: Default::default(),
+                topology: wgpu::PrimitiveTopology::LineList,
+                vertex_shader_entry_point: "vs_main_wireframe",
+                fragment_shader_entry_point: "fs_main_single_color",
+                alpha_blending: false,
+            },
         );
 
         // the outline pipeline will draw a scaled version of the mesh with a solid
         // color. it will ignore depth tests, but will check if the OUTLINE bit
         // in the stencil mask is not set
-        let outline_pipeline = Pipeline::new_mesh_render_pipeline(
-            &context.wgpu_context,
-            &context.renderer_config,
-            "render/mesh/outline",
-            &mesh_shader_module,
-            &render_mesh_bind_group_layouts,
-            wgpu::CompareFunction::Always,
-            None,
-            // the draw command sets the stencil reference to the outline bit, so we use NotEqual
-            // here.
-            Some(StencilTest {
-                read_mask: Stencil::OUTLINE,
-                compare: wgpu::CompareFunction::NotEqual,
-            }),
-            wgpu::PrimitiveTopology::TriangleList,
-            Some("vs_main_outline"),
-            Some("fs_main_single_color"),
-            true,
+        let outline_pipeline = MeshPipeline::new(
+            &context.wgpu_context.device,
+            &MeshPipelineDescriptor {
+                label: "render/mesh/outline",
+                renderer_config: &context.renderer_config,
+                camera_bind_group_layout: &camera_bind_group_layout,
+                mesh_bind_group_layout: &mesh_bind_group_layout,
+                shader_module: &mesh_shader_module,
+                depth_state: DepthState::new(false, wgpu::CompareFunction::Always),
+                stencil_state: wgpu::StencilState::new(
+                    None,
+                    Some(StencilTest {
+                        read_mask: Stencil::OUTLINE,
+                        compare: wgpu::CompareFunction::NotEqual,
+                    }),
+                ),
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                vertex_shader_entry_point: "vs_main_outline",
+                fragment_shader_entry_point: "fs_main_single_color",
+                alpha_blending: true,
+            },
         );
 
         let instance_buffer = StagedTypedArrayBuffer::with_capacity(
@@ -589,194 +578,6 @@ impl Renderer {
     }
 }
 
-fn create_instance_bind_group(
-    device: &wgpu::Device,
-    instance_bind_group_layout: &wgpu::BindGroupLayout,
-    buffer: &wgpu::Buffer,
-) -> wgpu::BindGroup {
-    device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("instance bind group"),
-        layout: instance_bind_group_layout,
-        entries: &[wgpu::BindGroupEntry {
-            binding: 0,
-            resource: buffer.as_entire_binding(),
-        }],
-    })
-}
-
-#[derive(Debug)]
-struct Pipeline {
-    pipeline_layout: wgpu::PipelineLayout,
-    pipeline: wgpu::RenderPipeline,
-}
-
-impl Pipeline {
-    #[allow(clippy::too_many_arguments)]
-    fn new(
-        wgpu_context: &WgpuContext,
-        renderer_config: &RendererConfig,
-        label: &str,
-        shader_module: &wgpu::ShaderModule,
-        bind_group_layouts: &[&wgpu::BindGroupLayout],
-        depth_state: DepthState,
-        stencil_state: wgpu::StencilState,
-        topology: wgpu::PrimitiveTopology,
-        vertex_shader_entry_point: Option<&str>,
-        fragment_shader_entry_point: Option<&str>,
-        cull_back_faces: bool,
-        alpha_blending: bool,
-    ) -> Self {
-        let cull_mode = cull_back_faces.then_some(wgpu::Face::Back);
-
-        // We need to flip the interpretation of the winding order here, because this
-        // actually depends on the orientation of our Z axis.
-        let front_face = Renderer::WINDING_ORDER.flipped().front_face();
-
-        let pipeline_layout =
-            wgpu_context
-                .device
-                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: Some(label),
-                    bind_group_layouts,
-                    push_constant_ranges: &[],
-                });
-
-        let pipeline =
-            wgpu_context
-                .device
-                .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                    label: Some(label),
-                    layout: Some(&pipeline_layout),
-                    vertex: wgpu::VertexState {
-                        module: shader_module,
-                        entry_point: vertex_shader_entry_point,
-                        compilation_options: Default::default(),
-                        buffers: &[],
-                    },
-                    primitive: wgpu::PrimitiveState {
-                        topology,
-                        strip_index_format: None,
-                        front_face,
-                        cull_mode,
-                        unclipped_depth: false,
-                        polygon_mode: Default::default(),
-                        conservative: false,
-                    },
-                    depth_stencil: renderer_config.depth_texture_format.map(
-                        |depth_texture_format| {
-                            wgpu::DepthStencilState {
-                                format: depth_texture_format,
-                                depth_write_enabled: depth_state.write_enable,
-                                depth_compare: depth_state.compare,
-                                stencil: stencil_state,
-                                bias: depth_state.bias,
-                            }
-                        },
-                    ),
-                    multisample: wgpu::MultisampleState {
-                        count: renderer_config.multisample_count.get(),
-                        mask: !0,
-                        alpha_to_coverage_enabled: false,
-                    },
-                    fragment: Some(wgpu::FragmentState {
-                        module: shader_module,
-                        entry_point: fragment_shader_entry_point,
-                        compilation_options: Default::default(),
-                        targets: &[Some(wgpu::ColorTargetState {
-                            format: renderer_config.target_texture_format,
-                            blend: alpha_blending.then_some(wgpu::BlendState::ALPHA_BLENDING),
-                            write_mask: wgpu::ColorWrites::ALL,
-                        })],
-                    }),
-                    multiview: None,
-                    cache: None,
-                });
-
-        Self {
-            pipeline_layout,
-            pipeline,
-        }
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn new_mesh_render_pipeline(
-        wgpu_context: &WgpuContext,
-        renderer_config: &RendererConfig,
-        label: &str,
-        shader_module: &wgpu::ShaderModule,
-        bind_group_layouts: &[&wgpu::BindGroupLayout],
-        depth_compare: wgpu::CompareFunction,
-        write_to_stencil_buffer: Option<Stencil>,
-        test_against_stencil_buffer: Option<StencilTest>,
-        topology: wgpu::PrimitiveTopology,
-        vertex_shader_entry_point: Option<&str>,
-        fragment_shader_entry_point: Option<&str>,
-        alpha_blending: bool,
-    ) -> Self {
-        // enable/disable back-face culling. the mesh shader will paint back-faces
-        // bright pink, so we'll know if something is flipped.
-        const CULL_BACK_FACES: bool = true;
-
-        let cull_back_faces = match topology {
-            wgpu::PrimitiveTopology::PointList
-            | wgpu::PrimitiveTopology::LineList
-            | wgpu::PrimitiveTopology::LineStrip => false,
-            wgpu::PrimitiveTopology::TriangleList | wgpu::PrimitiveTopology::TriangleStrip => {
-                CULL_BACK_FACES
-            }
-        };
-
-        let mut stencil_state = wgpu::StencilState::default();
-        if let Some(write_mask) = write_to_stencil_buffer {
-            // write stencil reference to stencil buffer
-            // if read_mask is None, this will be always written, if the depth-test passes.
-            stencil_state.front.pass_op = wgpu::StencilOperation::Replace;
-            // only write the bits that we want to manipulate
-            stencil_state.write_mask = write_mask.into();
-
-            // remove this and the selected object will shine through anything
-            // occluding with the outline color. give it a try :)
-            // but unfortunately if we render something without stencil
-            // afterwards it'll replace the value in the buffer, so
-            // the outline will also shine through the
-            // object we want outlined :(
-            //
-            // stencil_state.front.depth_fail_op =
-            // wgpu::StencilOperation::Replace;
-        }
-        if let Some(stencil_test) = test_against_stencil_buffer {
-            // check masked stencil buffer against stencil reference.
-            stencil_state.front.compare = stencil_test.compare;
-            stencil_state.read_mask = stencil_test.read_mask.into();
-        }
-
-        tracing::debug!(?label, ?stencil_state, "stencil state for pipeline");
-
-        Self::new(
-            wgpu_context,
-            renderer_config,
-            label,
-            shader_module,
-            bind_group_layouts,
-            DepthState {
-                write_enable: true,
-                compare: depth_compare,
-                bias: Default::default(),
-            },
-            stencil_state,
-            topology,
-            vertex_shader_entry_point,
-            fragment_shader_entry_point,
-            cull_back_faces,
-            alpha_blending,
-        )
-    }
-}
-
-/// # TODO
-///
-/// Could merge [`MaterialData`] directly into it and arrange fields such the we
-/// save some bytes.
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 #[repr(C)]
 struct InstanceData {
@@ -897,6 +698,16 @@ struct DepthState {
     pub write_enable: bool,
     pub compare: wgpu::CompareFunction,
     pub bias: wgpu::DepthBiasState,
+}
+
+impl DepthState {
+    pub fn new(write_enable: bool, compare: wgpu::CompareFunction) -> Self {
+        Self {
+            write_enable,
+            compare,
+            bias: Default::default(),
+        }
+    }
 }
 
 bitflags! {

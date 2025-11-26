@@ -84,11 +84,7 @@ pub struct Scene {
 }
 
 impl Scene {
-    pub fn add_object<'a, S>(
-        &'a mut self,
-        transform: impl Into<Transform>,
-        shape: S,
-    ) -> EntityBuilder
+    pub fn add_object<S>(&mut self, transform: impl Into<Transform>, shape: S) -> EntityBuilder
     where
         S: ColliderTraits + MeshFromShapeTraits + ShapeName,
     {
@@ -469,7 +465,7 @@ where
     W: Spawner,
 {
     fn as_ref(&self) -> &E {
-        &self
+        self
     }
 }
 
