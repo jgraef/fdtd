@@ -25,6 +25,7 @@ This app is work-in-progress. It's intended to model electromagnetic behavior. I
  - transform hierarchy: `GlobalTransform`, `Parent`, propagate.
  - Point lights: Not properly implemented right now, as we only need a point light colocated with the camera, for which we don't need any information that the shader already has.
  - use pipeline cache (persistent)
+ - spatial: add tags whether an entity supports a certain spatial query. then in the query methods we can filter by that.
 
 [1]: https://en.wikipedia.org/wiki/Finite-difference_time-domain_method
 [2]: https://en.wikipedia.org/wiki/Finite_element_exterior_calculus

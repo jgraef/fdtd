@@ -62,6 +62,7 @@ use crate::{
                 Label,
                 PopulateScene,
                 Scene,
+                Spawn,
                 serialize::DeserializeEntity,
                 spatial::Collider,
                 transform::Transform,
@@ -426,8 +427,11 @@ impl ComposerState {
         //ctx.request_repaint_after(Duration::from_millis(1000 / 60));
 
         {
+            // some input events are rather tricky to get
+
             let mut copy = false;
             let mut cut = false;
+            let mut escape = false;
             let mut paste = None;
 
             ctx.input(|input| {
@@ -436,6 +440,13 @@ impl ComposerState {
                         egui::Event::Copy => copy = true,
                         egui::Event::Cut => cut = true,
                         egui::Event::Paste(text) if paste.is_none() => paste = Some(text.clone()),
+                        // todo: keybinds
+                        egui::Event::Key {
+                            key: egui::Key::Escape,
+                            pressed: true,
+                            repeat: false,
+                            ..
+                        } => escape = true,
                         _ => {}
                     }
                 }
@@ -450,8 +461,13 @@ impl ComposerState {
                     }
                 }
             }
+
             if let Some(text) = paste {
                 self.paste(&text);
+            }
+
+            if escape {
+                self.selection_mut().clear();
             }
         }
 
@@ -757,12 +773,14 @@ impl PopulateScene for ExampleScene {
         scene
             .add_object(Point3::new(-0.2, 0.0, 0.0), cube(0.1))
             .material(material::named::BRASS)
-            .add(em_material);
+            .component(em_material)
+            .spawn(scene);
 
         scene
             .add_object(Point3::new(0.2, 0.0, 0.0), ball(0.1))
             .material(material::named::BLACKBOARD)
-            .add(em_material);
+            .component(em_material)
+            .spawn(scene);
 
         /*scene
             .add_object(Point3::new(0.2, 0.0, 0.0), shape(0.1))

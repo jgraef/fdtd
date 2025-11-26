@@ -27,6 +27,7 @@ use crate::{
         scene::{
             PopulateScene,
             Scene,
+            Spawn,
             transform::Transform,
         },
     },
@@ -82,7 +83,10 @@ impl<'a> PopulateScene for PopulateWithNec<'a> {
                                     ),
                                 );
 
-                                scene.add_object(transform, shape).material(self.material);
+                                scene
+                                    .add_object(transform, shape)
+                                    .material(self.material)
+                                    .spawn(scene);
                             }
                             WireSegmentDimensions::Tapered { .. } => todo!("truncated cone shape"),
                         }

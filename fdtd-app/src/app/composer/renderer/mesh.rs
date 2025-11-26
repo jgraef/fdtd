@@ -245,6 +245,15 @@ impl From<MeshFromShape> for LoadMesh {
     }
 }
 
+impl<T> From<T> for LoadMesh
+where
+    T: MeshFromShapeTraits,
+{
+    fn from(value: T) -> Self {
+        MeshFromShape::from(value).into()
+    }
+}
+
 impl LoadAsset for LoadMesh {
     type State = LoadMeshState;
 

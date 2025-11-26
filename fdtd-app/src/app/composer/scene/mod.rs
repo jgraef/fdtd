@@ -84,30 +84,22 @@ pub struct Scene {
 }
 
 impl Scene {
-    pub fn add_object<S>(&mut self, transform: impl Into<Transform>, shape: S) -> EntityBuilder<'_>
+    pub fn add_object<'a, S>(
+        &'a mut self,
+        transform: impl Into<Transform>,
+        shape: S,
+    ) -> EntityBuilder
     where
         S: ColliderTraits + MeshFromShapeTraits + ShapeName,
     {
-        let mut builder = hecs::EntityBuilder::new();
+        let builder = EntityBuilder::default();
 
-        let label = Label::from(format!("object.{}", shape.shape_name()));
-        let shape = Arc::new(shape);
-        let mesh_loader = LoadMesh::from(MeshFromShape(shape.clone()));
-        let collider = Collider(shape);
-
-        builder.add_bundle((
-            transform.into(),
-            mesh_loader,
-            collider,
-            label,
-            ShowInTree,
-            Selectable,
-        ));
-
-        EntityBuilder {
-            builder,
-            world: &mut self.entities,
-        }
+        builder
+            .label(format!("object.{}", shape.shape_name()))
+            .transform(transform)
+            .mesh_and_collider(shape)
+            .tagged::<ShowInTree>(true)
+            .tagged::<Selectable>(true)
     }
 
     pub fn add_grid_plane(
@@ -268,6 +260,12 @@ pub struct Label {
 }
 
 impl Label {
+    pub fn new(label: impl Display) -> Self {
+        Self {
+            label: label.to_string().into(),
+        }
+    }
+
     pub fn new_static(label: &'static str) -> Self {
         Self {
             label: label.into(),
@@ -350,44 +348,220 @@ impl From<EntityDebugLabel> for egui::WidgetText {
     }
 }
 
-#[derive(derive_more::Debug)]
-pub struct EntityBuilder<'a> {
+#[must_use]
+#[derive(derive_more::Debug, Default)]
+pub struct EntityBuilder {
     #[debug("hecs::EntityBuilder {{ ... }}")]
     builder: hecs::EntityBuilder,
-    #[debug("hecs::World {{ ... }}")]
-    world: &'a mut hecs::World,
 }
 
-impl<'a> Deref for EntityBuilder<'a> {
-    type Target = hecs::EntityBuilder;
-
-    fn deref(&self) -> &Self::Target {
-        &self.builder
+impl EntityBuilder {
+    pub fn component<T>(mut self, component: T) -> Self
+    where
+        T: hecs::Component,
+    {
+        self.builder.add(component);
+        self
     }
-}
 
-impl<'a> DerefMut for EntityBuilder<'a> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.builder
+    pub fn bundle<B>(mut self, bundle: B) -> Self
+    where
+        B: hecs::DynamicBundle,
+    {
+        self.builder.add_bundle(bundle);
+        self
     }
-}
 
-impl<'a> EntityBuilder<'a> {
+    pub fn transform(mut self, transform: impl Into<Transform>) -> Self {
+        self.builder.add(transform.into());
+        self
+    }
+
     pub fn material(mut self, material: impl Into<Material>) -> Self {
         self.builder.add(material.into());
         self
     }
 
-    pub fn finish(mut self) -> hecs::Entity {
-        let bundle = self.builder.build();
-        self.world.spawn(bundle)
+    pub fn mesh(mut self, mesh: impl Into<LoadMesh>) -> Self {
+        self.builder.add(mesh.into());
+        self
+    }
+
+    pub fn collider(mut self, collider: impl Into<Collider>) -> Self {
+        self.builder.add(collider.into());
+        self
+    }
+
+    pub fn mesh_and_collider<S>(self, shape: S) -> Self
+    where
+        S: MeshFromShapeTraits + ColliderTraits,
+    {
+        let shape = Arc::new(shape);
+        let mesh = MeshFromShape(shape.clone());
+        let collider = Collider(shape);
+        self.mesh(mesh).collider(collider)
+    }
+
+    pub fn label(mut self, label: impl Display) -> Self {
+        self.builder.add(Label::new(label));
+        self
+    }
+
+    pub fn tagged<T>(mut self, on: bool) -> Self
+    where
+        T: Default + hecs::Component,
+    {
+        if on {
+            self.builder.add(T::default());
+        }
+        self
     }
 }
 
-impl<'a> Drop for EntityBuilder<'a> {
+#[derive(Clone, Debug)]
+pub struct SpawnOnDrop<E, W>
+where
+    E: Spawn,
+    W: Spawner,
+{
+    entity: Option<E>,
+    spawner: W,
+}
+
+impl<E, W> SpawnOnDrop<E, W>
+where
+    E: Spawn,
+    W: Spawner,
+{
+    pub fn new(entity: E, world: W) -> Self {
+        Self {
+            entity: Some(entity),
+            spawner: world,
+        }
+    }
+}
+
+impl<E, W> Deref for SpawnOnDrop<E, W>
+where
+    E: Spawn,
+    W: Spawner,
+{
+    type Target = E;
+
+    fn deref(&self) -> &Self::Target {
+        self.entity.as_ref().unwrap()
+    }
+}
+
+impl<E, W> DerefMut for SpawnOnDrop<E, W>
+where
+    E: Spawn,
+    W: Spawner,
+{
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.entity.as_mut().unwrap()
+    }
+}
+
+impl<E, W> AsRef<E> for SpawnOnDrop<E, W>
+where
+    E: Spawn,
+    W: Spawner,
+{
+    fn as_ref(&self) -> &E {
+        &self
+    }
+}
+
+impl<E, W> AsMut<E> for SpawnOnDrop<E, W>
+where
+    E: Spawn,
+    W: Spawner,
+{
+    fn as_mut(&mut self) -> &mut E {
+        &mut *self
+    }
+}
+
+impl<E, W> Drop for SpawnOnDrop<E, W>
+where
+    E: Spawn,
+    W: Spawner,
+{
     fn drop(&mut self) {
-        let bundle = self.builder.build();
-        self.world.spawn(bundle);
+        self.entity.take().unwrap().spawn(&mut self.spawner);
+    }
+}
+
+pub trait Spawn {
+    fn spawn<S>(self, spawner: &mut S) -> S::Output
+    where
+        S: Spawner;
+
+    fn spawn_on_drop<S>(self, spawner: S) -> SpawnOnDrop<Self, S>
+    where
+        S: Spawner,
+        Self: Sized,
+    {
+        SpawnOnDrop::new(self, spawner)
+    }
+}
+
+impl Spawn for hecs::EntityBuilder {
+    fn spawn<S>(mut self, spawner: &mut S) -> S::Output
+    where
+        S: Spawner,
+    {
+        spawner.spawn(self.build())
+    }
+}
+
+impl Spawn for EntityBuilder {
+    fn spawn<S>(mut self, spawner: &mut S) -> S::Output
+    where
+        S: Spawner,
+    {
+        spawner.spawn(self.builder.build())
+    }
+}
+
+pub trait Spawner {
+    type Output;
+
+    fn spawn<B>(&mut self, bundle: B) -> Self::Output
+    where
+        B: hecs::DynamicBundle;
+}
+
+impl Spawner for hecs::World {
+    type Output = hecs::Entity;
+
+    fn spawn<B>(&mut self, bundle: B) -> Self::Output
+    where
+        B: hecs::DynamicBundle,
+    {
+        hecs::World::spawn(self, bundle)
+    }
+}
+
+impl Spawner for hecs::CommandBuffer {
+    type Output = ();
+
+    fn spawn<B>(&mut self, bundle: B) -> Self::Output
+    where
+        B: hecs::DynamicBundle,
+    {
+        hecs::CommandBuffer::spawn(self, bundle);
+    }
+}
+
+impl Spawner for Scene {
+    type Output = hecs::Entity;
+    fn spawn<B>(&mut self, bundle: B) -> Self::Output
+    where
+        B: hecs::DynamicBundle,
+    {
+        self.entities.spawn(bundle)
     }
 }
 
