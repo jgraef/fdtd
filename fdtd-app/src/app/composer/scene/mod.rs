@@ -16,7 +16,6 @@ use std::{
         Deref,
         DerefMut,
     },
-    sync::Arc,
 };
 
 use nalgebra::{
@@ -38,9 +37,8 @@ use crate::app::composer::{
         grid::GridPlane,
         material::Material,
         mesh::{
+            IntoGenerateMesh,
             LoadMesh,
-            MeshFromShape,
-            MeshFromShapeTraits,
         },
     },
     scene::{
@@ -86,14 +84,21 @@ pub struct Scene {
 impl Scene {
     pub fn add_object<S>(&mut self, transform: impl Into<Transform>, shape: S) -> EntityBuilder
     where
-        S: ColliderTraits + MeshFromShapeTraits + ShapeName,
+        S: ColliderTraits + ShapeName + Clone + IntoGenerateMesh,
+        S::Config: Default,
+        S::GenerateMesh: Debug + Send + Sync + 'static,
     {
         let builder = EntityBuilder::default();
 
+        let label = format!("object.{}", shape.shape_name());
+        let collider = Collider::from(shape.clone());
+        let mesh = LoadMesh::from_shape(shape, Default::default());
+
         builder
-            .label(format!("object.{}", shape.shape_name()))
+            .label(label)
             .transform(transform)
-            .mesh_and_collider(shape)
+            .collider(collider)
+            .mesh(mesh)
             .tagged::<ShowInTree>(true)
             .tagged::<Selectable>(true)
     }
@@ -386,16 +391,6 @@ impl EntityBuilder {
     pub fn collider(mut self, collider: impl Into<Collider>) -> Self {
         self.builder.add(collider.into());
         self
-    }
-
-    pub fn mesh_and_collider<S>(self, shape: S) -> Self
-    where
-        S: MeshFromShapeTraits + ColliderTraits,
-    {
-        let shape = Arc::new(shape);
-        let mesh = MeshFromShape(shape.clone());
-        let collider = Collider(shape);
-        self.mesh(mesh).collider(collider)
     }
 
     pub fn label(mut self, label: impl Display) -> Self {

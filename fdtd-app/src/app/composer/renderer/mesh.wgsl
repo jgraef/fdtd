@@ -121,14 +121,26 @@ struct Vertex {
 
 @vertex
 fn vs_main_solid(input: VertexInput) -> VertexOutputSolid {
+    var output: VertexOutputSolid;
+
     let instance = instance_buffer[input.instance_index];
+    output.instance_index = input.instance_index;
 
     let index = index_buffer[input.vertex_index];
     let vertex_data = vertex_buffer[index];
     let vertex_position = vertex_data.position_uvx.xyz;
-    var vertex_normal = vertex_data.normal_uvy.xyz;
-    var vertex_uv = vec2f(vertex_data.position_uvx.w, vertex_data.normal_uvy.w);
 
+    // we only actually use the combined transform, so we could pass the combined to the shader directly
+    let combined_camera_matrix = camera.projection * camera.transform;
+
+    // transform vertex position to world and view coordinates
+    output.world_position = instance.transform * vec4f(vertex_position, 1.0);
+    output.fragment_position = combined_camera_matrix * output.world_position;
+    // vertex uv
+    output.texture_position = vec2f(vertex_data.position_uvx.w, vertex_data.normal_uvy.w);
+
+    // determine world normal for fragment shader
+    var vertex_normal = vertex_data.normal_uvy.xyz;
     if (instance.mesh_flags & FLAG_MESH_NORMALS) == 0 {
         let generator = instance.mesh_flags & FLAG_MESH_NORMALS_GENERATOR_MASK;
 
@@ -137,24 +149,10 @@ fn vs_main_solid(input: VertexInput) -> VertexOutputSolid {
         }
         else {
             // FLAG_MESH_NORMALS_FROM_FACE (default)
-            let first_face_vertex = (input.vertex_index / 3) * 3;
-            let right_neighbor_vertex_index = (input.vertex_index + 1) % 3 + first_face_vertex;
-            let left_neighbor_vertex_index = (input.vertex_index + 2) % 3 + first_face_vertex;
-
-            vertex_normal = calculate_normal(
-                vertex_position,
-                vertex_buffer[index_buffer[right_neighbor_vertex_index]].position_uvx.xyz,
-                vertex_buffer[index_buffer[left_neighbor_vertex_index]].position_uvx.xyz,
-            );
+            vertex_normal = calculate_face_normal(input.vertex_index, vertex_position);;
         }
     }
-
-    var output: VertexOutputSolid;
-    output.instance_index = input.instance_index;
-    output.world_position = instance.transform * vec4f(vertex_position, 1.0);
     output.world_normal = instance.transform * vec4f(vertex_normal, 0.0);
-    output.fragment_position = camera.projection * camera.transform * output.world_position;
-    output.texture_position = vertex_uv;
 
     return output;
 }
@@ -404,4 +402,18 @@ fn vs_main_clear(input: VertexInput) -> VertexOutputSingleColor {
 
 fn calculate_normal(v1: vec3f, v2: vec3f, v3: vec3f,) -> vec3f {
     return cross(v2 - v1, v3 - v1);
+}
+
+fn calculate_face_normal(vertex_index: u32, vertex_position: vec3f) -> vec3f {
+    let first_face_vertex = (vertex_index / 3) * 3;
+    let right_neighbor_vertex_index = (vertex_index + 1) % 3 + first_face_vertex;
+    let left_neighbor_vertex_index = (vertex_index + 2) % 3 + first_face_vertex;
+
+    let face_normal = calculate_normal(
+        vertex_position,
+        vertex_buffer[index_buffer[right_neighbor_vertex_index]].position_uvx.xyz,
+        vertex_buffer[index_buffer[left_neighbor_vertex_index]].position_uvx.xyz,
+    );
+
+    return face_normal;
 }

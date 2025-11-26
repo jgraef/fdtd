@@ -190,18 +190,18 @@ impl PropertiesUi for Material {
 
         let response = egui::Frame::new()
             .show(ui, |ui| {
+                let id = ui.id().with("material_preset");
+
                 #[derive(Clone, Copy, Default, PartialEq, Eq)]
                 struct SelectedPreset(Option<usize>);
-                let mut selected_preset = ui.data(|data| {
-                    data.get_temp::<SelectedPreset>(Id::NULL)
-                        .unwrap_or_default()
-                });
+                let mut selected_preset =
+                    ui.data(|data| data.get_temp::<SelectedPreset>(id).unwrap_or_default());
                 let selected_before = selected_preset;
 
                 ui.horizontal(|ui| {
                     ui.label("Presets");
 
-                    egui::ComboBox::from_id_salt("material_preset")
+                    egui::ComboBox::from_id_salt(id)
                         .selected_text(
                             selected_preset
                                 .0

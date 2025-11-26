@@ -1,9 +1,8 @@
 use std::{
+    convert::Infallible,
     fmt::Debug,
-    ops::{
-        Deref,
-        Range,
-    },
+    ops::Range,
+    path::PathBuf,
     sync::Arc,
 };
 
@@ -29,7 +28,6 @@ use parry3d::{
         Ball,
         Cuboid,
         Cylinder,
-        TriMesh,
     },
 };
 use wgpu::util::DeviceExt;
@@ -45,6 +43,7 @@ use crate::{
         },
         renderer::{
             Fallbacks,
+            Renderer,
             material::{
                 AlbedoTexture,
                 MaterialTexture,
@@ -64,7 +63,7 @@ use crate::{
     util::format_size,
 };
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct Mesh {
     pub index_buffer: wgpu::Buffer,
     pub vertex_buffer: wgpu::Buffer,
@@ -74,119 +73,12 @@ pub struct Mesh {
     pub flags: MeshFlags,
 }
 
-impl Mesh {
-    pub fn from_surface_mesh(surface_mesh: &SurfaceMesh, device: &wgpu::Device) -> Self {
-        // todo: we could just fix the winding order here when we write the indices into
-        // the buffer, and not bother doing that in the shader.
-
-        let num_indices = surface_mesh.indices.len();
-        let num_vertices = surface_mesh.vertices.len();
-        let num_normals = surface_mesh.normals.len();
-        let num_uvs = surface_mesh.uvs.len();
-
-        assert_ne!(num_indices, 0, "Mesh with no indices");
-        assert_ne!(num_vertices, 0, "Mesh with no vertices");
-
-        assert!(
-            num_normals == 0 || num_normals == num_vertices,
-            "Surface mesh has {num_vertices} vertices, but {num_normals} normals."
-        );
-        assert!(
-            num_uvs == 0 || num_uvs == num_vertices,
-            "Surface mesh has {num_vertices} vertices, but {num_uvs} UVs."
-        );
-
-        #[cfg(debug_assertions)]
-        {
-            for index in surface_mesh.indices.iter().flatten() {
-                assert!(
-                    (*index as usize) < num_vertices,
-                    "Vertex index out of bounds"
-                );
-            }
-        }
-
-        let mut flags = MeshFlags::empty();
-        if !surface_mesh.normals.is_empty() {
-            flags.insert(MeshFlags::NORMALS);
-        }
-        if !surface_mesh.uvs.is_empty() {
-            flags.insert(MeshFlags::UVS);
-        }
-
-        let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("mesh/index"),
-            contents: bytemuck::cast_slice(&surface_mesh.indices),
-            usage: wgpu::BufferUsages::STORAGE,
-        });
-
-        // todo: fix winding order in this step
-        let vertex_data = surface_mesh
-            .vertices
-            .iter()
-            .copied()
-            .zip(
-                surface_mesh
-                    .normals
-                    .iter()
-                    .copied()
-                    .chain(std::iter::repeat(Vector3::zeros())),
-            )
-            .zip(
-                surface_mesh
-                    .uvs
-                    .iter()
-                    .copied()
-                    .chain(std::iter::repeat(Point2::origin())),
-            )
-            .map(|((position, normal), uv)| Vertex::new(position, normal, uv))
-            .collect::<Vec<_>>();
-
-        let vertex_data = bytemuck::cast_slice(&vertex_data);
-
-        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("mesh/vertex"),
-            contents: vertex_data,
-            usage: wgpu::BufferUsages::STORAGE,
-        });
-
-        // the indices array in surface_mesh is **not** flat (i.e. it consists of `[u32;
-        // 3]`, one index per face), thus we need to multiply by 3.
-        let num_indices = (surface_mesh.indices.len() * 3) as u32;
-
-        tracing::debug!(
-            ?num_indices,
-            ?num_vertices,
-            ?num_normals,
-            ?num_uvs,
-            ?flags,
-            index_buffer_size = %format_size(num_indices * 3),
-            vertex_buffer_size = %format_size(vertex_data.len()),
-            "created mesh"
-        );
-
-        Self {
-            index_buffer,
-            vertex_buffer,
-            indices: 0..num_indices,
-            base_vertex: 0,
-            winding_order: surface_mesh.winding_order,
-            flags,
-        }
-    }
-
-    pub fn from_shape<S: ToSurfaceMesh + ?Sized>(shape: &S, device: &wgpu::Device) -> Self {
-        let surface_mesh = shape.to_surface_mesh();
-        Self::from_surface_mesh(&surface_mesh, device)
-    }
-}
-
 bitflags! {
     #[derive(Clone, Copy, Debug, Pod, Zeroable)]
     #[repr(C)]
     pub struct MeshFlags: u32 {
-        const UVS     = 0x0000_0001;
-        const NORMALS = 0x0000_0002;
+        const UVS       = 0x0000_0001;
+        const NORMALS   = 0x0000_0002;
     }
 }
 
@@ -251,7 +143,126 @@ impl MeshBindGroup {
     }
 }
 
+#[derive(Debug)]
+pub struct MeshBufferBuilder {
+    flags: MeshFlags,
+    preferred_winding_order: Option<WindingOrder>,
+    index_buffer: Vec<[u32; 3]>,
+    vertex_buffer: Vec<Vertex>,
+}
+
+impl MeshBufferBuilder {
+    pub fn new(preferred_winding_order: Option<WindingOrder>) -> Self {
+        Self {
+            flags: MeshFlags::empty(),
+            preferred_winding_order,
+            index_buffer: vec![],
+            vertex_buffer: vec![],
+        }
+    }
+
+    pub fn finish(self, device: &wgpu::Device, label: &str) -> Mesh {
+        let num_indices = self.index_buffer.len();
+        let num_vertices = self.vertex_buffer.len();
+
+        assert_ne!(num_indices, 0, "Mesh with no indices");
+        assert_ne!(num_vertices, 0, "Mesh with no vertices");
+        let winding_order = self
+            .preferred_winding_order
+            .expect("once we get a face, we must have a winding order");
+
+        #[cfg(debug_assertions)]
+        {
+            for index in self.index_buffer.iter().flatten() {
+                assert!(
+                    (*index as usize) < num_vertices,
+                    "Vertex index out of bounds: {index} < {num_vertices}"
+                );
+            }
+        }
+
+        let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some(&format!("{label}/mesh/index")),
+            contents: bytemuck::cast_slice(&self.index_buffer),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+
+        let vertex_data = bytemuck::cast_slice(&self.vertex_buffer);
+        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some(&format!("{label}/mesh/vertex")),
+            contents: vertex_data,
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+
+        // the indices array in surface_mesh is **not** flat (i.e. it consists of `[u32;
+        // 3]`, one index per face), thus we need to multiply by 3.
+        let num_indices = (self.index_buffer.len() * 3) as u32;
+
+        tracing::debug!(
+            ?label,
+            ?num_indices,
+            flags = ?self.flags,
+            index_buffer_size = %format_size(num_indices * 3),
+            vertex_buffer_size = %format_size(vertex_data.len()),
+            "created mesh"
+        );
+
+        Mesh {
+            index_buffer,
+            vertex_buffer,
+            indices: 0..num_indices,
+            base_vertex: 0,
+            winding_order,
+            flags: self.flags,
+        }
+    }
+}
+
+impl MeshBuilder for MeshBufferBuilder {
+    fn reserve(&mut self, num_faces: usize, num_vertices: usize) {
+        self.index_buffer.reserve(num_faces);
+        self.vertex_buffer.reserve(num_vertices);
+    }
+
+    fn push_face(&mut self, mut face: [u32; 3], winding_order: WindingOrder) {
+        let reverse_winding = if let Some(preferred_winding_order) = self.preferred_winding_order {
+            winding_order != preferred_winding_order
+        }
+        else {
+            self.preferred_winding_order = Some(winding_order);
+            false
+        };
+
+        if reverse_winding {
+            face.reverse();
+        }
+
+        self.index_buffer.push(face);
+    }
+
+    fn push_vertex(
+        &mut self,
+        vertex: Point3<f32>,
+        normal: Option<Vector3<f32>>,
+        uv: Option<Point2<f32>>,
+    ) {
+        if normal.is_some() {
+            self.flags.insert(MeshFlags::NORMALS);
+        }
+        if uv.is_some() {
+            self.flags.insert(MeshFlags::UVS);
+        }
+
+        self.vertex_buffer.push(Vertex::new(
+            vertex,
+            normal.unwrap_or_default(),
+            uv.unwrap_or_default(),
+        ));
+    }
+}
+
 #[derive(Clone, Debug)]
+#[deprecated]
 pub struct SurfaceMesh {
     pub indices: Vec<[u32; 3]>,
     pub vertices: Vec<Point3<f32>>,
@@ -284,41 +295,54 @@ impl WindingOrder {
 
 #[derive(Clone, Debug)]
 pub enum LoadMesh {
-    Shape(MeshFromShape),
+    Generator {
+        generator: Arc<dyn GenerateMeshTraits>,
+        normals: bool,
+        uvs: bool,
+    },
+    File {
+        path: PathBuf,
+    },
 }
 
-impl From<MeshFromShape> for LoadMesh {
-    fn from(value: MeshFromShape) -> Self {
-        Self::Shape(value)
+impl LoadMesh {
+    pub fn from_generator<G>(generator: G) -> Self
+    where
+        G: GenerateMesh + Debug + Send + Sync + 'static,
+    {
+        Self::Generator {
+            generator: Arc::new(generator),
+            // todo: from parameters
+            normals: true,
+            uvs: true,
+        }
     }
-}
 
-impl<T> From<T> for LoadMesh
-where
-    T: MeshFromShapeTraits,
-{
-    fn from(value: T) -> Self {
-        MeshFromShape::from(value).into()
+    // fixme: we don't return a Result here because it's just too easy to
+    // accidentally just stick the whole Result into an entity as component. You
+    // won't even get a warning because, well, the Result is used, but the mesh will
+    // not work.
+    // It's probably a better idea to defer the error until we start loading where
+    // we can emit it anyway.
+    pub fn from_shape<S>(shape: S, config: S::Config) -> Self
+    where
+        S: IntoGenerateMesh,
+        S::GenerateMesh: Debug + Send + Sync + 'static,
+    {
+        Self::from_generator(shape.into_generate_mesh(config).unwrap())
     }
 }
 
 impl LoadAsset for LoadMesh {
-    type State = LoadMeshState;
+    type State = Self;
 
-    fn start_loading(&self, context: &mut LoaderContext) -> Result<LoadMeshState, Error> {
+    fn start_loading(&self, context: &mut LoaderContext) -> Result<Self, Error> {
         let _ = context;
-        match self {
-            LoadMesh::Shape(mesh_from_shape) => Ok(LoadMeshState::Shape(mesh_from_shape.clone())),
-        }
+        Ok(self.clone())
     }
 }
 
-#[derive(Debug)]
-pub enum LoadMeshState {
-    Shape(MeshFromShape),
-}
-
-impl LoadingState for LoadMeshState {
+impl LoadingState for LoadMesh {
     type Output = (Mesh, Changed<Mesh>);
 
     fn poll(
@@ -326,106 +350,227 @@ impl LoadingState for LoadMeshState {
         context: &mut LoaderContext,
     ) -> Result<LoadingProgress<(Mesh, Changed<Mesh>)>, Error> {
         let mesh = match self {
-            LoadMeshState::Shape(shape) => {
-                tracing::debug!(shape = ?shape.0, "loading mesh from shape");
-                Mesh::from_shape(&*shape.0, context.render_resource_creator.device())
+            LoadMesh::Generator {
+                generator,
+                normals,
+                uvs,
+            } => {
+                let mut mesh_builder = MeshBufferBuilder::new(Some(Renderer::WINDING_ORDER));
+                generator.generate(&mut mesh_builder, *normals, *uvs);
+                // todo: label
+                mesh_builder.finish(context.render_resource_creator.device(), "todo")
             }
+            LoadMesh::File { path: _ } => todo!(),
         };
 
         Ok(LoadingProgress::Ready((mesh, Changed::default())))
     }
 }
 
-#[derive(Clone, Debug)]
-pub struct MeshFromShape(pub Arc<dyn MeshFromShapeTraits>);
+pub trait GenerateMeshTraits: GenerateMesh + Debug + Send + Sync + 'static {}
 
-impl<S: MeshFromShapeTraits> From<S> for MeshFromShape {
-    fn from(value: S) -> Self {
-        Self(Arc::new(value))
-    }
+impl<T> GenerateMeshTraits for T where T: GenerateMesh + Debug + Send + Sync + 'static {}
+
+pub trait GenerateMesh {
+    fn generate(&self, mesh_builder: &mut dyn MeshBuilder, normals: bool, uvs: bool);
 }
 
-impl Deref for MeshFromShape {
-    type Target = dyn MeshFromShapeTraits;
-
-    fn deref(&self) -> &Self::Target {
-        &*self.0
-    }
+pub trait MeshBuilder {
+    fn reserve(&mut self, num_faces: usize, num_vertices: usize);
+    fn push_face(&mut self, face: [u32; 3], winding_order: WindingOrder);
+    fn push_vertex(
+        &mut self,
+        vertex: Point3<f32>,
+        normal: Option<Vector3<f32>>,
+        uv: Option<Point2<f32>>,
+    );
 }
 
-/*
-impl Serialize for MeshFromShape {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        self.0.as_typed_shape().serialize(serializer)
-    }
-}*/
+pub trait IntoGenerateMesh {
+    type Config;
+    type GenerateMesh: GenerateMesh;
+    type Error: std::error::Error;
 
-pub trait MeshFromShapeTraits: ToSurfaceMesh + Debug + Send + Sync + 'static {}
-
-impl<T> MeshFromShapeTraits for T where T: ToSurfaceMesh + Debug + Send + Sync + 'static {}
-
-pub trait ToSurfaceMesh {
-    /// Generate surface mesh.
-    ///
-    /// At the moment this is only used for rendering. If an entity has the
-    /// [`Render`] tag and a [`SharedShape`], the renderer will generate a mesh
-    /// for it and send it to the GPU. If this method returns `None` though, the
-    /// [`Render`] tag will be removed.
-    fn to_surface_mesh(&self) -> SurfaceMesh;
+    fn into_generate_mesh(self, config: Self::Config) -> Result<Self::GenerateMesh, Self::Error>;
 }
 
 /// according to the [documentation][1] the tri mesh should be wound
 /// counter-clockwise.
 ///
 /// [1]: https://docs.rs/parry3d/latest/parry3d/shape/struct.TriMesh.html#method.new
-pub const PARRY_WINDING_ORDER: WindingOrder = WindingOrder::CounterClockwise;
+const PARRY_WINDING_ORDER: WindingOrder = WindingOrder::CounterClockwise;
 
-fn parry_surface_mesh(vertices: Vec<Point3<f32>>, indices: Vec<[u32; 3]>) -> SurfaceMesh {
-    SurfaceMesh {
-        indices,
-        vertices,
-        normals: vec![],
-        uvs: vec![],
-        winding_order: PARRY_WINDING_ORDER,
+fn write_parry_to_trimesh_output_into_mesh_builder(
+    mesh_builder: &mut dyn MeshBuilder,
+    (vertices, indices): (Vec<Point3<f32>>, Vec<[u32; 3]>),
+) {
+    for face in indices {
+        mesh_builder.push_face(face, PARRY_WINDING_ORDER);
+    }
+    for vertex in vertices {
+        // todo: normals, uvs
+        mesh_builder.push_vertex(vertex, None, None);
     }
 }
 
-impl ToSurfaceMesh for Ball {
-    fn to_surface_mesh(&self) -> SurfaceMesh {
-        let (vertices, indices) = self.to_trimesh(20, 20);
-        let mut mesh = parry_surface_mesh(vertices, indices);
+#[derive(Clone, Copy, Debug)]
+pub enum BallMeshConfig {
+    Uv {
+        inclination_subdivisions: u32,
+        azimuth_subdivisions: u32,
+    },
+}
 
-        mesh.normals = Vec::with_capacity(mesh.vertices.len());
-
-        for vertex in &mesh.vertices {
-            mesh.normals.push(vertex.coords.normalize());
+impl Default for BallMeshConfig {
+    fn default() -> Self {
+        Self::Uv {
+            inclination_subdivisions: 20,
+            azimuth_subdivisions: 40,
         }
-
-        mesh
     }
 }
 
-impl ToSurfaceMesh for Cuboid {
-    fn to_surface_mesh(&self) -> SurfaceMesh {
-        let (vertices, indices) = self.to_trimesh();
+#[derive(Clone, Copy, Debug)]
+pub struct BallMeshGenerator {
+    pub ball: Ball,
+    pub config: BallMeshConfig,
+}
 
-        parry_surface_mesh(vertices, indices)
+impl GenerateMesh for BallMeshGenerator {
+    fn generate(&self, mesh_builder: &mut dyn MeshBuilder, normals: bool, uvs: bool) {
+        let _ = uvs;
+
+        let (vertices, indices) = match self.config {
+            BallMeshConfig::Uv {
+                azimuth_subdivisions: aximuth_subdivisions,
+                inclination_subdivisions,
+            } => {
+                self.ball
+                    .to_trimesh(aximuth_subdivisions, inclination_subdivisions)
+            }
+        };
+
+        for face in indices {
+            mesh_builder.push_face(face, PARRY_WINDING_ORDER);
+        }
+        for vertex in vertices {
+            let normal = normals.then(|| vertex.coords.normalize());
+            // todo: uvs
+            mesh_builder.push_vertex(vertex, normal, None);
+        }
     }
 }
 
-impl ToSurfaceMesh for Cylinder {
-    fn to_surface_mesh(&self) -> SurfaceMesh {
-        let (vertices, indices) = self.to_trimesh(20);
-        parry_surface_mesh(vertices, indices)
+impl IntoGenerateMesh for Ball {
+    type Config = BallMeshConfig;
+    type GenerateMesh = BallMeshGenerator;
+    type Error = Infallible;
+
+    fn into_generate_mesh(self, config: Self::Config) -> Result<Self::GenerateMesh, Self::Error> {
+        Ok(BallMeshGenerator { ball: self, config })
     }
 }
 
-impl ToSurfaceMesh for TriMesh {
-    fn to_surface_mesh(&self) -> SurfaceMesh {
-        parry_surface_mesh(self.vertices().to_owned(), self.indices().to_owned())
+impl GenerateMesh for Cuboid {
+    fn generate(&self, mesh_builder: &mut dyn MeshBuilder, normals: bool, uvs: bool) {
+        let _ = (normals, uvs);
+        write_parry_to_trimesh_output_into_mesh_builder(mesh_builder, self.to_trimesh());
+    }
+}
+
+impl IntoGenerateMesh for Cuboid {
+    type Config = ();
+    type GenerateMesh = Self;
+    type Error = Infallible;
+
+    fn into_generate_mesh(self, config: Self::Config) -> Result<Self::GenerateMesh, Self::Error> {
+        // clippy! this is obviously on purrrrpooossse
+        #[allow(clippy::let_unit_value)]
+        let _ = config;
+        Ok(self)
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct CylinderMeshConfig {
+    pub subdivisions: u32,
+}
+
+impl Default for CylinderMeshConfig {
+    fn default() -> Self {
+        Self { subdivisions: 20 }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct CylinderMeshGenerator {
+    pub cylinder: Cylinder,
+    pub config: CylinderMeshConfig,
+}
+
+impl GenerateMesh for CylinderMeshGenerator {
+    fn generate(&self, mesh_builder: &mut dyn MeshBuilder, normals: bool, uvs: bool) {
+        let _ = (normals, uvs);
+        write_parry_to_trimesh_output_into_mesh_builder(
+            mesh_builder,
+            self.cylinder.to_trimesh(self.config.subdivisions),
+        );
+    }
+}
+
+impl IntoGenerateMesh for Cylinder {
+    type Config = CylinderMeshConfig;
+    type GenerateMesh = CylinderMeshGenerator;
+    type Error = Infallible;
+
+    fn into_generate_mesh(self, config: Self::Config) -> Result<Self::GenerateMesh, Self::Error> {
+        Ok(CylinderMeshGenerator {
+            cylinder: self,
+            config,
+        })
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct QuadMeshConfig {
+    pub back_face: bool,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct QuadMeshGenerator {
+    pub quad: Quad,
+    pub config: QuadMeshConfig,
+}
+
+impl GenerateMesh for QuadMeshGenerator {
+    fn generate(&self, mesh_builder: &mut dyn MeshBuilder, normals: bool, uvs: bool) {
+        const VERTICES: [(f32, f32); 4] = [(0.0, 0.0), (0.0, 1.0), (1.0, 1.0), (1.0, 0.0)];
+        const INDICES: [[u32; 3]; 2] = [[0, 1, 2], [0, 2, 3]];
+
+        for face in INDICES {
+            mesh_builder.push_face(face, WindingOrder::CounterClockwise);
+        }
+        for (x, y) in VERTICES {
+            mesh_builder.push_vertex(
+                Point3::new(
+                    self.quad.half_extents.x * (2.0 * x - 1.0),
+                    self.quad.half_extents.y * (2.0 * y - 1.0),
+                    0.0,
+                ),
+                normals.then(|| -Vector3::z()),
+                uvs.then(|| Point2::new(x, 1.0 - y)),
+            );
+        }
+    }
+}
+
+impl IntoGenerateMesh for Quad {
+    type Config = QuadMeshConfig;
+    type GenerateMesh = QuadMeshGenerator;
+    type Error = Infallible;
+
+    fn into_generate_mesh(self, config: Self::Config) -> Result<Self::GenerateMesh, Self::Error> {
+        Ok(QuadMeshGenerator { quad: self, config })
     }
 }
 
@@ -439,33 +584,6 @@ impl Quad {
     pub fn new(half_extents: impl Into<Vector2<f32>>) -> Self {
         Self {
             half_extents: half_extents.into(),
-        }
-    }
-}
-
-impl ToSurfaceMesh for Quad {
-    fn to_surface_mesh(&self) -> SurfaceMesh {
-        const VERTICES: [(f32, f32); 4] = [(0.0, 0.0), (0.0, 1.0), (1.0, 1.0), (1.0, 0.0)];
-        const INDICES: [[u32; 3]; 2] = [[0, 1, 2], [0, 2, 3]];
-
-        SurfaceMesh {
-            indices: INDICES.into(),
-            vertices: VERTICES
-                .iter()
-                .map(|(x, y)| {
-                    Point3::new(
-                        self.half_extents.x * (2.0 * *x - 1.0),
-                        self.half_extents.y * (2.0 * *y - 1.0),
-                        0.0,
-                    )
-                })
-                .collect(),
-            normals: std::iter::repeat_n(-Vector3::z(), 4).collect(),
-            uvs: VERTICES
-                .iter()
-                .map(|(x, y)| Point2::new(*x, 1.0 - *y))
-                .collect(),
-            winding_order: WindingOrder::CounterClockwise,
         }
     }
 }
