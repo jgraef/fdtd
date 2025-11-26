@@ -4,7 +4,6 @@ This app is work-in-progress. It's intended to model electromagnetic behavior. I
 
 # TODO
 
- - must render back side for some meshes (e.g. quad).
  - staging belt! we're writing many buffers to gpu every frame.
   - check if the wgpu `Queue::write` functions (which we e.g. don't use for `TypedArrayBuffer`s anymore) use a staging belt.
   - check if the `wgpu::util` staging belt is suitable (probably not).
@@ -19,7 +18,6 @@ This app is work-in-progress. It's intended to model electromagnetic behavior. I
   - we could then also store the original properties (eps, mu, etc.) for rendering.
  - manipulating objects's isometry in scene view
  - pass more config to properties_ui for floats for proper formatting
- - persist settings like `CameraConfig`, `CameraLightFilters` (global or per project?)
  - keybindings
  - 2D scene view
  - transform hierarchy: `GlobalTransform`, `Parent`, propagate.

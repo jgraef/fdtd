@@ -54,6 +54,7 @@ use crate::{
                 mesh::{
                     LoadMesh,
                     Quad,
+                    QuadMeshConfig,
                 },
             },
             scene::{
@@ -820,7 +821,7 @@ impl PopulateScene for ExampleScene {
             Transform::identity(),
             Collider::from(quad),
             Selectable,
-            LoadMesh::from_shape(quad, Default::default()),
+            LoadMesh::from_shape(quad, QuadMeshConfig { back_face: true }),
         ));
 
         scene.entities.spawn((

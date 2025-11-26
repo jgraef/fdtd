@@ -533,6 +533,7 @@ impl IntoGenerateMesh for Cylinder {
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct QuadMeshConfig {
+    // todo: config how uvs should behave with back face
     pub back_face: bool,
 }
 
@@ -550,17 +551,30 @@ impl GenerateMesh for QuadMeshGenerator {
         for face in INDICES {
             mesh_builder.push_face(face, WindingOrder::CounterClockwise);
         }
-        for (x, y) in VERTICES {
-            mesh_builder.push_vertex(
-                Point3::new(
-                    self.quad.half_extents.x * (2.0 * x - 1.0),
-                    self.quad.half_extents.y * (2.0 * y - 1.0),
-                    0.0,
-                ),
-                normals.then(|| -Vector3::z()),
-                uvs.then(|| Point2::new(x, 1.0 - y)),
-            );
+        if self.config.back_face {
+            for face in INDICES {
+                mesh_builder.push_face(
+                    [face[2] + 4, face[1] + 4, face[0] + 4],
+                    WindingOrder::CounterClockwise,
+                );
+            }
         }
+
+        let mut emit_vertices = |normal| {
+            for (x, y) in VERTICES {
+                mesh_builder.push_vertex(
+                    Point3::new(
+                        self.quad.half_extents.x * (2.0 * x - 1.0),
+                        self.quad.half_extents.y * (2.0 * y - 1.0),
+                        0.0,
+                    ),
+                    normals.then_some(normal),
+                    uvs.then(|| Point2::new(x, 1.0 - y)),
+                );
+            }
+        };
+        emit_vertices(-Vector3::z());
+        emit_vertices(Vector3::z());
     }
 }
 
