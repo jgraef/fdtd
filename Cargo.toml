@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["fdtd-app", "fdtd-build"]
+members = ["fdtd-app"]
 
 [patch.crates-io]
 eframe = { git = "https://github.com/jgraef/egui.git", branch = "switch/wgpu-stencil-buffer" }

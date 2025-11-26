@@ -50,7 +50,10 @@ use crate::{
                     AmbientLight,
                     PointLight,
                 },
-                material,
+                material::{
+                    self,
+                    IntoMaterial,
+                },
                 mesh::{
                     LoadMesh,
                     MeshFromShape,

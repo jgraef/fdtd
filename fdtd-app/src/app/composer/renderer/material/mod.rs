@@ -54,24 +54,19 @@ pub mod named {
     #![allow(clippy::all)]
 
     use palette::{
-        LinSrgb,
         Srgb,
         Srgba,
         WithAlpha,
     };
+    pub use pbr_presets::*;
 
     use crate::{
-        app::composer::renderer::material::Material,
+        app::composer::renderer::material::{
+            IntoMaterial,
+            Material,
+        },
         util::palette::ColorExt as _,
     };
-
-    #[derive(Clone, Copy, Debug)]
-    pub struct MaterialPreset {
-        pub name: &'static str,
-        pub albedo: LinSrgb,
-        pub metalness: f32,
-        pub roughness: f32,
-    }
 
     impl From<MaterialPreset> for Material {
         fn from(value: MaterialPreset) -> Self {
@@ -79,8 +74,8 @@ pub mod named {
         }
     }
 
-    impl MaterialPreset {
-        pub fn into_material(self) -> Material {
+    impl IntoMaterial for MaterialPreset {
+        fn into_material(self) -> Material {
             Material {
                 wireframe: Srgba::BLACK,
                 albedo: Srgb::from_linear(self.albedo).with_alpha(1.0),
@@ -90,9 +85,10 @@ pub mod named {
             }
         }
     }
+}
 
-    // this is build by a build-script from materials.json
-    include!(concat!(env!("OUT_DIR"), "/materials.rs"));
+pub trait IntoMaterial {
+    fn into_material(self) -> Material;
 }
 
 /// Material properties that define how an object looks in the scene.
