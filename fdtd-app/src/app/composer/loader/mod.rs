@@ -27,7 +27,6 @@ use crate::{
             Scene,
         },
     },
-    util::ImageLoadExt,
 };
 
 #[derive(Debug)]
@@ -102,26 +101,41 @@ pub struct LoaderContext<'a> {
 }
 
 impl<'a> LoaderContext<'a> {
-    pub fn load_texture_from_file<P>(
+    pub fn load_texture_from_file<P, F>(
         &mut self,
         path: P,
         usage: wgpu::TextureUsages,
+        mut preprocess_image: F,
     ) -> Result<Arc<TextureAndView>, Error>
     where
         P: AsRef<Path>,
+        F: FnMut(&mut image::RgbaImage, &PreprocessImageInfo) -> Result<(), Error>,
     {
         let path = path.as_ref();
         self.texture_cache.get_or_insert(path, || {
             tracing::debug!(path = %path.display(), "loaing texture from file");
 
             let label = path.display().to_string();
-            let image = image::RgbaImage::from_path(path)?;
+
+            let image = image::ImageReader::open(path)?.decode()?;
+            let info = PreprocessImageInfo {
+                original_color_type: image.color(),
+            };
+            let mut image = image.into_rgba8();
+
+            preprocess_image(&mut image, &info)?;
+
             let texture = self
                 .render_resource_creator
                 .create_texture_from_image(&image, usage, &label);
             Ok(TextureAndView::from_texture(texture, &label))
         })
     }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct PreprocessImageInfo {
+    pub original_color_type: image::ColorType,
 }
 
 struct RunLoaders<'a> {

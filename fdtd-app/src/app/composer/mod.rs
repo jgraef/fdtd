@@ -50,10 +50,7 @@ use crate::{
                     AmbientLight,
                     PointLight,
                 },
-                material::{
-                    self,
-                    IntoMaterial,
-                },
+                material,
                 mesh::{
                     LoadMesh,
                     MeshFromShape,
@@ -775,13 +772,13 @@ impl PopulateScene for ExampleScene {
 
         scene
             .add_object(Point3::new(-0.2, 0.0, 0.0), cube(0.1))
-            .material(material::named::BRASS)
+            .material(material::presets::BRASS)
             .component(em_material)
             .spawn(scene);
 
         scene
             .add_object(Point3::new(0.2, 0.0, 0.0), ball(0.1))
-            .material(material::named::BLACKBOARD)
+            .material(material::presets::BLACKBOARD)
             .component(em_material)
             .spawn(scene);
 
@@ -820,7 +817,7 @@ impl PopulateScene for ExampleScene {
                 half_extents: Vector2::new(1.0, 1.0),
             },
             material::LoadAlbedoTexture::new("tmp/test_pattern.png"),
-            material::named::OFFICE_PAPER.into_material(),
+            material::Material::from(material::presets::OFFICE_PAPER),
             Transform::identity(),
             Collider::from(quad),
             Selectable,

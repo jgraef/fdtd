@@ -7,7 +7,6 @@ use crate::app::{
     composer::{
         Composer,
         ComposerState,
-        renderer::camera::CameraConfig,
     },
     error_dialog::ResultExt,
     menubar::setup_menu,
@@ -207,25 +206,6 @@ impl<'a> ComposerMenuElements<'a> {
             );
 
             ui.separator();
-
-            let mut dummy = CameraConfig::default();
-            let camera_config = camera
-                .as_mut()
-                .and_then(|camera| camera.query::<&mut CameraConfig>())
-                .unwrap_or(&mut dummy);
-
-            ui.add_enabled(
-                has_file_open,
-                egui::Checkbox::new(&mut camera_config.show_solid, "Show Solid"),
-            );
-            ui.add_enabled(
-                has_file_open,
-                egui::Checkbox::new(&mut camera_config.show_outline, "Show Outline"),
-            );
-            ui.add_enabled(
-                has_file_open,
-                egui::Checkbox::new(&mut camera_config.show_wireframe, "Show Wireframe"),
-            );
 
             if ui
                 .add_enabled(has_file_open, egui::Button::new("Configure"))

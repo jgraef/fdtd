@@ -16,7 +16,7 @@ struct Instance {
     flags: u32,
     base_vertex: u32,
     outline_thickness: f32,
-    // padding 4 bytes
+    alpha_threshold: f32,
     outline_color: vec4f,
     material: Material,
 }
@@ -42,7 +42,7 @@ const FLAG_INSTANCE_REVERSE_WINDING: u32 = 0x01;
 //const FLAG_INSTANCE_SHOW_OUTLINE: u32 = 0x08;
 const FLAG_INSTANCE_ENABLE_TEXTURES: u32 = 0x10;
 const FLAG_INSTANCE_UV_BUFFER_VALID: u32 = 0x20;
-const FLAG_INSTANCE_ENABLE_TRANSPARENCY: u32 = 0x40;
+const FLAG_INSTANCE_TRANSPARENT: u32 = 0x40;
 
 const FLAG_MATERIAL_METALLIC: u32 = 0x01;
 const FLAG_MATERIAL_ROUGHNESS: u32 = 0x02;
@@ -175,7 +175,10 @@ fn fs_main_solid(input: VertexOutputSolid, @builtin(front_facing) front_face: bo
         }
 
         // optionally disable transparency
-        if (instance.flags & FLAG_INSTANCE_ENABLE_TRANSPARENCY) == 0 {
+        if (instance.flags & FLAG_INSTANCE_TRANSPARENT) == 0 {
+            if alpha < instance.alpha_threshold {
+                discard;
+            }
             alpha = 1.0;
         }
 

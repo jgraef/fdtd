@@ -312,7 +312,8 @@ bitflags! {
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct CameraConfig {
     // todo: should this just contain the DrawCommandPipelineEnableFlags?
-    pub show_solid: bool,
+    pub show_mesh_opaque: bool,
+    pub show_mesh_transparent: bool,
     pub show_wireframe: bool,
     pub show_outline: bool,
     pub tone_map: bool,
@@ -323,7 +324,22 @@ impl CameraConfig {
         &self,
         pipeline_enable_flags: &mut DrawCommandEnablePipelineFlags,
     ) {
-        pipeline_enable_flags.set(DrawCommandEnablePipelineFlags::SOLID, self.show_solid);
+        // note: if we didn't set them individually like this, turning transparent
+        // meshes off, would turn the mesh flag off, rendering no meshes at all. but we
+        // also don't want to assume we're starting from an empty bitflags.
+        pipeline_enable_flags.set(
+            DrawCommandEnablePipelineFlags::OPAQUE,
+            self.show_mesh_opaque,
+        );
+        pipeline_enable_flags.set(
+            DrawCommandEnablePipelineFlags::TRANSPARENT,
+            self.show_mesh_transparent,
+        );
+        pipeline_enable_flags.set(
+            DrawCommandEnablePipelineFlags::MESH,
+            self.show_mesh_opaque || self.show_mesh_transparent,
+        );
+
         pipeline_enable_flags.set(
             DrawCommandEnablePipelineFlags::WIREFRAME,
             self.show_wireframe,
@@ -335,7 +351,8 @@ impl CameraConfig {
 impl Default for CameraConfig {
     fn default() -> Self {
         Self {
-            show_solid: true,
+            show_mesh_opaque: true,
+            show_mesh_transparent: true,
             show_wireframe: false,
             show_outline: true,
             tone_map: true,
@@ -357,7 +374,18 @@ impl PropertiesUi for CameraConfig {
 
         let response = egui::Frame::new()
             .show(ui, |ui: &mut egui::Ui| {
-                label_and_value(ui, "Show Solid", &mut changes, &mut self.show_solid);
+                label_and_value(
+                    ui,
+                    "Show Mesh (Opaque)",
+                    &mut changes,
+                    &mut self.show_mesh_opaque,
+                );
+                label_and_value(
+                    ui,
+                    "Show Mesh (Transparent)",
+                    &mut changes,
+                    &mut self.show_mesh_transparent,
+                );
                 label_and_value(ui, "Show Wireframe", &mut changes, &mut self.show_wireframe);
                 label_and_value(ui, "Show Outline", &mut changes, &mut self.show_outline);
                 label_and_value(ui, "Tone Map", &mut changes, &mut self.tone_map);

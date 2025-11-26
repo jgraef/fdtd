@@ -170,7 +170,8 @@ pub struct Renderer {
     mesh_shader_module: wgpu::ShaderModule,
 
     clear_pipeline: ClearPipeline,
-    solid_pipeline: MeshPipeline,
+    mesh_opaque_pipeline: MeshPipeline,
+    mesh_transparent_pipeline: MeshPipeline,
     wireframe_pipeline: MeshPipeline,
     outline_pipeline: MeshPipeline,
 
@@ -187,7 +188,7 @@ pub struct Renderer {
     draw_command_buffer: DrawCommandBuffer,
 
     /// Fallbacks for textures and sampler
-    texture_defaults: Fallbacks,
+    fallbacks: Fallbacks,
 
     /// Command queue to asynchronously send commands to the renderer.
     ///
@@ -311,10 +312,10 @@ impl Renderer {
             },
         );
 
-        let solid_pipeline = MeshPipeline::new(
+        let mesh_opaque_pipeline = MeshPipeline::new(
             &context.wgpu_context.device,
             &MeshPipelineDescriptor {
-                label: "render/mesh/solid",
+                label: "render/mesh/opaque",
                 renderer_config: &context.renderer_config,
                 camera_bind_group_layout: &camera_bind_group_layout,
                 mesh_bind_group_layout: &mesh_bind_group_layout,
@@ -325,6 +326,23 @@ impl Renderer {
                 vertex_shader_entry_point: "vs_main_solid",
                 fragment_shader_entry_point: "fs_main_solid",
                 alpha_blending: false,
+            },
+        );
+
+        let mesh_transparent_pipeline = MeshPipeline::new(
+            &context.wgpu_context.device,
+            &MeshPipelineDescriptor {
+                label: "render/mesh/opaque",
+                renderer_config: &context.renderer_config,
+                camera_bind_group_layout: &camera_bind_group_layout,
+                mesh_bind_group_layout: &mesh_bind_group_layout,
+                shader_module: &mesh_shader_module,
+                depth_state: DepthState::new(true, wgpu::CompareFunction::Less),
+                stencil_state: wgpu::StencilState::new(Some(Stencil::OUTLINE), None),
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                vertex_shader_entry_point: "vs_main_solid",
+                fragment_shader_entry_point: "fs_main_solid",
+                alpha_blending: true,
             },
         );
 
@@ -379,8 +397,7 @@ impl Renderer {
         );
         assert!(instance_buffer.buffer.is_allocated());
 
-        let texture_defaults =
-            Fallbacks::new(&context.wgpu_context.device, &context.wgpu_context.queue);
+        let fallbacks = Fallbacks::new(&context.wgpu_context.device, &context.wgpu_context.queue);
 
         Self {
             wgpu_context: context.wgpu_context.clone(),
@@ -390,12 +407,13 @@ impl Renderer {
             mesh_bind_group_layout,
             mesh_shader_module,
             clear_pipeline,
-            solid_pipeline,
+            mesh_opaque_pipeline,
+            mesh_transparent_pipeline,
             wireframe_pipeline,
             outline_pipeline,
             instance_buffer,
             draw_command_buffer: Default::default(),
-            texture_defaults,
+            fallbacks,
             command_queue: CommandQueue::new(512),
         }
     }
@@ -425,7 +443,7 @@ impl Renderer {
             scene,
             &self.wgpu_context.device,
             &self.mesh_bind_group_layout,
-            &self.texture_defaults,
+            &self.fallbacks,
         );
 
         // next we prepare the draw commands.
@@ -466,7 +484,7 @@ impl Renderer {
         // prepare the actual draw commands
         let mut draw_command_builder = self.draw_command_buffer.builder();
 
-        // draw meshes (solid, wireframe, outlines)
+        // draw meshes (opaque, transparent, wireframe, outlines)
         for (
             _,
             (transform, mesh, mesh_bind_group, material, albedo_texture, material_texture, outline),
@@ -483,17 +501,28 @@ impl Renderer {
             .without::<&Hidden>()
         {
             // write per-instance data into a buffer
-            self.instance_buffer.push(InstanceData::new_mesh(
+            let instance_data = InstanceData::new_mesh(
                 transform,
                 mesh,
                 material,
                 albedo_texture,
                 material_texture,
                 outline,
-            ));
+            );
+            let transparent = instance_data
+                .flags
+                .contains(InstanceFlags::TRANSPARENT)
+                .then(|| transform.position());
+            self.instance_buffer.push(instance_data);
 
             // prepare draw commands
-            draw_command_builder.draw_mesh(instances(), mesh, mesh_bind_group, outline.is_some());
+            draw_command_builder.draw_mesh(
+                instances(),
+                mesh,
+                mesh_bind_group,
+                outline.is_some(),
+                transparent,
+            );
         }
 
         // send instance data to gpu
@@ -516,45 +545,39 @@ impl Renderer {
         &mut self,
         camera_entity: Option<hecs::EntityRef<'_>>,
     ) -> Option<DrawCommand> {
+        // fixme: use a fallback camera buffer to call the clear screen
+        // only.
+        //
+        // if we don't have a camera we can't do anything. since we can't
+        // bind a camera bind group, we can't even clear. we
+        // could have a fallback camera bind group that is only
+        // used for clearing. or separate the clear color from
+        // the camera.
+        let camera_entity = camera_entity?;
+
         // get bind group and config for our camera
-        let Some((camera_bind_group, camera_config, has_clear_color)) =
-            camera_entity.and_then(|camera_entity| {
-                let mut query = camera_entity.query::<(
-                    &CameraResources,
-                    Option<&CameraConfig>,
-                    hecs::Satisfies<&ClearColor>,
-                )>();
+        let mut query = camera_entity.query::<(
+            &CameraResources,
+            Option<&CameraConfig>,
+            hecs::Satisfies<&ClearColor>,
+            &Transform,
+        )>();
 
-                query
-                    .get()
-                    .map(|(camera_resources, camera_config, has_clear_color)| {
-                        (
-                            camera_resources.bind_group.clone(),
-                            camera_config.cloned().unwrap_or_default(),
-                            has_clear_color,
-                        )
-                    })
-            })
-        else {
-            // fixme: use a fallback camera buffer to call the clear shader only.
-
-            // if we don't have a camera we can't do anything. since we can't bind a camera
-            // bind group, we can't even clear. we could have a fallback camera
-            // bind group that is only used for clearing. or separate the clear color from
-            // the camera.
-            return None;
-        };
+        let (camera_resources, camera_config, has_clear_color, camera_transform) = query.get()?;
 
         // default to all, then apply configuration, so by default stuff will render and
         // we don't have to debug for 15 minutes to find that we don't enable the
         // pipeline
         let mut pipeline_enable_flags = DrawCommandEnablePipelineFlags::all();
         pipeline_enable_flags.set(DrawCommandEnablePipelineFlags::CLEAR, has_clear_color);
-        camera_config.apply_to_pipeline_enable_flags(&mut pipeline_enable_flags);
+        if let Some(camera_config) = camera_config {
+            camera_config.apply_to_pipeline_enable_flags(&mut pipeline_enable_flags);
+        }
 
         Some(self.draw_command_buffer.finish(
             self,
-            camera_bind_group,
+            camera_resources.bind_group.clone(),
+            camera_transform.position(),
             DrawCommandOptions {
                 pipeline_enable_flags,
             },
@@ -585,7 +608,7 @@ struct InstanceData {
     flags: InstanceFlags,
     base_vertex: u32,
     outline_thickness: f32,
-    _padding: [u32; 1],
+    alpha_threshold: f32,
     outline_color: LinSrgba,
     material: MaterialData,
 }
@@ -600,13 +623,24 @@ impl InstanceData {
         material_texture: Option<&MaterialTexture>,
         outline: Option<&Outline>,
     ) -> Self {
-        let mut flags = InstanceFlags::ENABLE_TRANSPARENCY;
+        let mut flags = InstanceFlags::empty();
         if mesh.winding_order != Renderer::WINDING_ORDER {
             flags.insert(InstanceFlags::REVERSE_WINDING);
         }
+
         if material_texture.is_some() || albedo_texture.is_some() {
             flags.insert(InstanceFlags::ENABLE_TEXTURES);
         }
+        if material.is_some_and(|material| material.transparent)
+            || albedo_texture.is_some_and(|albedo_texture| albedo_texture.transparent)
+        {
+            flags.insert(InstanceFlags::TRANSPARENT);
+        }
+
+        let alpha_threshold = material
+            .map(|material| material.alpha_threshold)
+            .unwrap_or_default();
+
         if mesh.uv_buffer.is_some() {
             flags.insert(InstanceFlags::UV_BUFFER_VALID);
         }
@@ -625,7 +659,7 @@ impl InstanceData {
             flags,
             base_vertex: mesh.base_vertex,
             outline_thickness,
-            _padding: [0; _],
+            alpha_threshold,
             outline_color,
             material: MaterialData::new(material, albedo_texture, material_texture),
         }
@@ -649,7 +683,7 @@ bitflags! {
 
         const ENABLE_TEXTURES     = 0b0001_0000;
         const UV_BUFFER_VALID     = 0b0010_0000;
-        const ENABLE_TRANSPARENCY = 0b0100_0000;
+        const TRANSPARENT        = 0b0100_0000;
     }
 }
 

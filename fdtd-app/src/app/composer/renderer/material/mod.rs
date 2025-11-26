@@ -32,6 +32,7 @@ use crate::{
             LoaderContext,
             LoadingProgress,
             LoadingState,
+            PreprocessImageInfo,
         },
         properties::{
             HasChangeValue,
@@ -50,7 +51,7 @@ use crate::{
     },
 };
 
-pub mod named {
+pub mod presets {
     #![allow(clippy::all)]
 
     use palette::{
@@ -61,34 +62,23 @@ pub mod named {
     pub use pbr_presets::*;
 
     use crate::{
-        app::composer::renderer::material::{
-            IntoMaterial,
-            Material,
-        },
+        app::composer::renderer::material::Material,
         util::palette::ColorExt as _,
     };
 
     impl From<MaterialPreset> for Material {
         fn from(value: MaterialPreset) -> Self {
-            value.into_material()
-        }
-    }
-
-    impl IntoMaterial for MaterialPreset {
-        fn into_material(self) -> Material {
             Material {
                 wireframe: Srgba::BLACK,
-                albedo: Srgb::from_linear(self.albedo).with_alpha(1.0),
-                metalness: self.metalness,
-                roughness: self.roughness,
+                albedo: Srgb::from_linear(value.albedo).with_alpha(1.0),
+                metalness: value.metalness,
+                roughness: value.roughness,
                 ambient_occlusion: 1.0,
+                transparent: false,
+                alpha_threshold: 0.0,
             }
         }
     }
-}
-
-pub trait IntoMaterial {
-    fn into_material(self) -> Material;
 }
 
 /// Material properties that define how an object looks in the scene.
@@ -118,6 +108,9 @@ pub struct Material {
     pub metalness: f32,
     pub roughness: f32,
     pub ambient_occlusion: f32,
+
+    pub transparent: bool,
+    pub alpha_threshold: f32,
 }
 
 impl Material {
@@ -125,12 +118,16 @@ impl Material {
     where
         Srgba: From<C>,
     {
+        let albedo: Srgba = color.into();
+        let transparent = albedo.alpha < 1.0;
         Self {
             wireframe: Srgba::BLACK,
-            albedo: color.into(),
+            albedo,
             metalness: 0.0,
             roughness: 0.0,
             ambient_occlusion: 1.0,
+            transparent,
+            alpha_threshold: 0.0,
         }
     }
 
@@ -146,6 +143,11 @@ impl Material {
 
     pub fn with_roughness(mut self, roughness: f32) -> Self {
         self.roughness = roughness;
+        self
+    }
+
+    pub fn with_transparency(mut self, enable: bool) -> Self {
+        self.transparent = enable;
         self
     }
 }
@@ -203,11 +205,11 @@ impl PropertiesUi for Material {
                         .selected_text(
                             selected_preset
                                 .0
-                                .map(|i| named::ALL[i].name)
+                                .map(|i| presets::ALL[i].name)
                                 .unwrap_or_default(),
                         )
                         .show_ui(ui, |ui| {
-                            for (i, preset) in named::ALL.iter().enumerate() {
+                            for (i, preset) in presets::ALL.iter().enumerate() {
                                 ui.selectable_value(
                                     &mut selected_preset,
                                     SelectedPreset(Some(i)),
@@ -220,12 +222,18 @@ impl PropertiesUi for Material {
                 if selected_before != selected_preset {
                     ui.data_mut(|ui| ui.insert_temp(Id::NULL, selected_preset));
                     if let Some(i) = selected_preset.0 {
-                        *self = (*named::ALL[i]).into();
+                        *self = (*presets::ALL[i]).into();
                     }
                 }
 
                 label_and_value(ui, "Wireframe", &mut changes, &mut self.wireframe);
-                label_and_value(ui, "Albedo", &mut changes, &mut self.albedo);
+                if self.transparent {
+                    label_and_value(ui, "Albedo", &mut changes, &mut self.albedo);
+                }
+                else {
+                    label_and_value(ui, "Albedo", &mut changes, &mut self.albedo.color);
+                }
+
                 label_and_value_with_config(
                     ui,
                     "Metallic",
@@ -240,6 +248,7 @@ impl PropertiesUi for Material {
                     &mut self.roughness,
                     &NumericPropertyUiConfig::Slider { range: 0.0..=1.0 },
                 );
+                label_and_value(ui, "Transparent", &mut changes, &mut self.transparent);
 
                 if changes.changed {
                     // invalidate preset?
@@ -259,6 +268,7 @@ impl PropertiesUi for Material {
 #[derive(Clone, Debug)]
 pub struct AlbedoTexture {
     pub texture: Arc<TextureAndView>,
+    pub transparent: bool,
 }
 
 /// Combined ambient occlusion, roughness, metalness map
@@ -354,19 +364,26 @@ impl MaterialData {
 #[derive(Clone, Debug)]
 pub struct LoadAlbedoTexture {
     pub source: TextureSource,
+    pub transparency: Option<bool>,
 }
 
 impl LoadAlbedoTexture {
     pub fn new(source: impl Into<TextureSource>) -> Self {
         Self {
             source: source.into(),
+            transparency: None,
         }
+    }
+
+    pub fn with_transparency(mut self, enable: bool) -> Self {
+        self.transparency = Some(enable);
+        self
     }
 }
 
 impl From<TextureSource> for LoadAlbedoTexture {
     fn from(value: TextureSource) -> Self {
-        Self { source: value }
+        Self::new(value)
     }
 }
 
@@ -386,12 +403,47 @@ impl LoadingState for LoadAlbedoTexture {
         &mut self,
         context: &mut LoaderContext,
     ) -> Result<LoadingProgress<AndChanged<AlbedoTexture>>, Error> {
+        let texture = self.source.load_with(context, |_image, info| {
+            if self.transparency.is_none() {
+                if info.original_color_type.has_alpha() {
+                    // is scanning the whole image worth it? the artist should just save it without
+                    // alpha channel self.transparency =
+                    // Some(scan_image_for_alpha_pixels(image));
+                    self.transparency = Some(true);
+                }
+                else {
+                    self.transparency = Some(false)
+                };
+            }
+            Ok(())
+        })?;
+
+        let transparency = self
+            .transparency
+            .expect("bug: transparency should have been determined by now");
+
         Ok(LoadingProgress::Ready(
             AlbedoTexture {
-                texture: self.source.load(context)?,
+                texture,
+                transparent: transparency,
             }
             .into(),
         ))
+    }
+}
+
+fn scan_image_for_alpha_pixels(image: &image::RgbaImage) -> bool {
+    let check = |pixel: &image::Rgba<u8>| -> bool { pixel.0[3] < 0xff };
+
+    #[cfg(feature = "rayon")]
+    {
+        use rayon::iter::ParallelIterator;
+        image.par_pixels().any(check)
+    }
+
+    #[cfg(not(feature = "rayon"))]
+    {
+        image.pixels().any(check)
     }
 }
 
@@ -443,16 +495,27 @@ pub enum TextureSource {
 }
 
 impl TextureSource {
-    fn load(&self, context: &mut LoaderContext) -> Result<Arc<TextureAndView>, Error> {
+    pub fn load_with<F>(
+        &self,
+        context: &mut LoaderContext,
+        preprocess_image: F,
+    ) -> Result<Arc<TextureAndView>, Error>
+    where
+        F: FnMut(&mut image::RgbaImage, &PreprocessImageInfo) -> Result<(), Error>,
+    {
         match self {
             TextureSource::File { path } => {
                 // todo: this should not be implied here
                 let usage = wgpu::TextureUsages::TEXTURE_BINDING;
 
-                context.load_texture_from_file(path, usage)
+                context.load_texture_from_file(path, usage, preprocess_image)
             }
             TextureSource::Channel { receiver } => Ok(receiver.inner.clone()),
         }
+    }
+
+    pub fn load(&self, context: &mut LoaderContext) -> Result<Arc<TextureAndView>, Error> {
+        self.load_with(context, |_, _| Ok(()))
     }
 }
 
