@@ -80,7 +80,10 @@ use crate::{
                     UndoBuffer,
                 },
             },
-            tree::ObjectTreeState,
+            tree::{
+                ObjectTreeState,
+                ShowInTree,
+            },
             view::{
                 ScenePointer,
                 SceneView,
@@ -863,6 +866,7 @@ impl PopulateScene for ExampleScene {
 
         let quad = Quad::new(Vector2::new(1.0, 1.0));
         scene.entities.spawn((
+            Label::new_static("Test Observer"),
             Observer {
                 write_to_gif: None,
                 display_as_texture: true,
@@ -875,6 +879,7 @@ impl PopulateScene for ExampleScene {
             Transform::identity(),
             Collider::from(quad),
             Selectable,
+            ShowInTree,
             LoadMesh::from_shape(quad, QuadMeshConfig { back_face: true }),
         ));
 

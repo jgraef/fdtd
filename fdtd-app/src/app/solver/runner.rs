@@ -474,7 +474,7 @@ impl<P> Observers<P> {
                     needs_repaint = true;
 
                     let parameters = ProjectionParameters {
-                        projection: Matrix4::identity(),
+                        projection: Matrix4::identity(), // todo
                         field: observer.field,
                         color_map: observer.color_map,
                     };

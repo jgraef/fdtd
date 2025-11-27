@@ -1,7 +1,13 @@
 use egui_ltreeview::{
     Action,
+    IndentHintStyle,
     TreeView,
+    TreeViewBuilder,
     TreeViewState,
+};
+use hecs_hierarchy::{
+    Child,
+    Hierarchy,
 };
 use serde::{
     Deserialize,
@@ -19,8 +25,6 @@ use crate::app::composer::{
 #[derive(Debug, Default)]
 pub struct ObjectTreeState {
     tree_state: TreeViewState<ObjectTreeId>,
-
-    object_scratch: Vec<(hecs::Entity, Option<Label>)>,
 }
 
 impl ComposerState {
@@ -31,37 +35,22 @@ impl ComposerState {
                 selected.map(|(entity, ())| entity.into()).collect()
             }));
 
-        let (response, actions) = TreeView::new(ui.make_persistent_id("composer_object_tree"))
+        let (response, actions) = TreeView::new(ui.id().with("composer_object_tree"))
             .allow_multi_selection(true)
             .allow_drag_and_drop(false)
+            .indent_hint_style(IndentHintStyle::Line)
+            .override_indent(Some(2.0))
             .show_state(ui, &mut self.object_tree.tree_state, |builder| {
-                builder.dir(ObjectTreeId::ObjectDirectory, "Objects");
+                builder.dir(ObjectTreeId::Root, "Scene");
 
-                for (entity, label) in self
-                    .scene
-                    .entities
-                    .query_mut::<Option<&Label>>()
-                    .with::<&ShowInTree>()
-                {
-                    self.object_tree
-                        .object_scratch
-                        .push((entity, label.cloned()));
-                }
+                let mut labels = self.scene.entities.view::<Option<&Label>>();
 
-                self.object_tree
-                    .object_scratch
-                    .sort_by_key(|(entity, _)| *entity);
-
-                for (entity, label) in self.object_tree.object_scratch.drain(..) {
-                    builder.leaf(
-                        entity.into(),
-                        EntityDebugLabel {
-                            entity,
-                            label,
-                            invalid: false,
-                        },
-                    );
-                }
+                let mut visitor = Visitor {
+                    world: &self.scene.entities,
+                    builder,
+                    labels: &mut labels,
+                };
+                visitor.visit_roots();
             });
 
         // whether something was selected in the tree view
@@ -100,13 +89,57 @@ impl ComposerState {
     }
 }
 
+struct Visitor<'a, 'ui, 'world> {
+    world: &'a hecs::World,
+    builder: &'a mut TreeViewBuilder<'ui, ObjectTreeId>,
+    labels: &'a mut hecs::ViewBorrow<'world, Option<&'world Label>>,
+}
+
+impl<'a, 'ui, 'world> Visitor<'a, 'ui, 'world> {
+    fn visit_all(&mut self, entities: impl Iterator<Item = hecs::Entity>) {
+        let mut scratch = entities.collect::<Vec<_>>();
+        scratch.sort_by_key(|entity| *entity);
+
+        for entity in scratch {
+            let label = self.labels.get(entity).flatten();
+            let label = EntityDebugLabel {
+                entity,
+                label: label.cloned(),
+                invalid: false,
+            };
+
+            let mut children = self.world.children::<()>(entity).peekable();
+
+            if children.peek().is_some() {
+                self.builder.dir(entity.into(), label);
+                self.visit_all(children);
+                self.builder.close_dir();
+            }
+            else {
+                self.builder.leaf(entity.into(), label);
+            }
+        }
+    }
+
+    fn visit_roots(&mut self) {
+        self.visit_all(
+            self.world
+                .query::<()>()
+                .with::<&ShowInTree>()
+                .without::<&Child<()>>()
+                .iter()
+                .map(|(entity, _)| entity),
+        );
+    }
+}
+
 /// Tag for entities that are to be shown in the object tree
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
 pub struct ShowInTree;
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum ObjectTreeId {
-    ObjectDirectory,
+    Root,
     Entity(hecs::Entity),
 }
 
