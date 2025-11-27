@@ -477,7 +477,7 @@ impl<P> Observers<P> {
                     scene.command_buffer.insert(
                         entity,
                         (
-                            material::LoadAlbedoTexture::new(receiver),
+                            material::LoadAlbedoTexture::new(receiver).with_transparency(false),
                             material::Material::from_albedo(Srgba::WHITE)
                                 .with_metalness(0.0)
                                 .with_roughness(0.0),

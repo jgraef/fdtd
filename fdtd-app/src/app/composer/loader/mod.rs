@@ -101,15 +101,13 @@ pub struct LoaderContext<'a> {
 }
 
 impl<'a> LoaderContext<'a> {
-    pub fn load_texture_from_file<P, F>(
+    pub fn load_texture_from_file<P>(
         &mut self,
         path: P,
         usage: wgpu::TextureUsages,
-        mut preprocess_image: F,
-    ) -> Result<Arc<TextureAndView>, Error>
+    ) -> Result<(Arc<TextureAndView>, ImageInfo), Error>
     where
         P: AsRef<Path>,
-        F: FnMut(&mut image::RgbaImage, &PreprocessImageInfo) -> Result<(), Error>,
     {
         let path = path.as_ref();
         self.texture_cache.get_or_insert(path, || {
@@ -118,23 +116,24 @@ impl<'a> LoaderContext<'a> {
             let label = path.display().to_string();
 
             let image = image::ImageReader::open(path)?.decode()?;
-            let info = PreprocessImageInfo {
-                original_color_type: image.color(),
-            };
-            let mut image = image.into_rgba8();
-
-            preprocess_image(&mut image, &info)?;
+            let original_color_type = image.color();
+            let image = image.into_rgba8();
 
             let texture = self
                 .render_resource_creator
                 .create_texture_from_image(&image, usage, &label);
-            Ok(TextureAndView::from_texture(texture, &label))
+            Ok((
+                TextureAndView::from_texture(texture, &label),
+                ImageInfo {
+                    original_color_type,
+                },
+            ))
         })
     }
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct PreprocessImageInfo {
+pub struct ImageInfo {
     pub original_color_type: image::ColorType,
 }
 
@@ -206,29 +205,35 @@ impl<'a> RunLoaders<'a> {
 // todo: make this generic
 #[derive(Debug, Default)]
 pub struct TextureCache {
-    cache: HashMap<PathBuf, Weak<TextureAndView>>,
+    cache: HashMap<PathBuf, (Weak<TextureAndView>, ImageInfo)>,
 }
 
 impl TextureCache {
-    pub fn get_or_insert<E, L>(&mut self, path: &Path, load: L) -> Result<Arc<TextureAndView>, E>
+    pub fn get_or_insert<E, L>(
+        &mut self,
+        path: &Path,
+        load: L,
+    ) -> Result<(Arc<TextureAndView>, ImageInfo), E>
     where
-        L: FnOnce() -> Result<TextureAndView, E>,
+        L: FnOnce() -> Result<(TextureAndView, ImageInfo), E>,
     {
-        if let Some(weak) = self.cache.get_mut(path) {
+        if let Some((weak, info)) = self.cache.get_mut(path) {
             if let Some(texture_and_view) = weak.upgrade() {
-                Ok(texture_and_view)
+                Ok((texture_and_view, *info))
             }
             else {
-                let texture_and_view = Arc::new(load()?);
+                let (texture_and_view, info) = load()?;
+                let texture_and_view = Arc::new(texture_and_view);
                 *weak = Arc::downgrade(&texture_and_view);
-                Ok(texture_and_view)
+                Ok((texture_and_view, info))
             }
         }
         else {
-            let texture_and_view = Arc::new(load()?);
+            let (texture_and_view, info) = load()?;
+            let texture_and_view = Arc::new(texture_and_view);
             self.cache
-                .insert(path.to_owned(), Arc::downgrade(&texture_and_view));
-            Ok(texture_and_view)
+                .insert(path.to_owned(), (Arc::downgrade(&texture_and_view), info));
+            Ok((texture_and_view, info))
         }
     }
 }

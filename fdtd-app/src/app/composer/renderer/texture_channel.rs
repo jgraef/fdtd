@@ -21,6 +21,7 @@ use crate::app::composer::renderer::{
 pub(super) fn texture_channel(
     texture_and_view: Arc<TextureAndView>,
     size: Vector2<u32>,
+
     command_sender: CommandSender,
 ) -> (UndecidedTextureSender, TextureReceiver) {
     let shared = Arc::new(Shared {

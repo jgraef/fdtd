@@ -28,11 +28,11 @@ use crate::{
     app::composer::{
         loader::{
             AndChanged,
+            ImageInfo,
             LoadAsset,
             LoaderContext,
             LoadingProgress,
             LoadingState,
-            PreprocessImageInfo,
         },
         properties::{
             HasChangeValue,
@@ -422,29 +422,21 @@ impl LoadingState for LoadAlbedoTexture {
         &mut self,
         context: &mut LoaderContext,
     ) -> Result<LoadingProgress<AndChanged<AlbedoTexture>>, Error> {
-        let texture = self.source.load_with(context, |_image, info| {
-            if self.transparency.is_none() {
-                if info.original_color_type.has_alpha() {
-                    // is scanning the whole image worth it? the artist should just save it without
-                    // alpha channel self.transparency =
-                    // Some(scan_image_for_alpha_pixels(image));
-                    self.transparency = Some(true);
-                }
-                else {
-                    self.transparency = Some(false)
-                };
-            }
-            Ok(())
-        })?;
+        let loaded_texture = self.source.load_with(context)?;
 
-        let transparency = self
+        let transparent = self
             .transparency
-            .expect("bug: transparency should have been determined by now");
+            .or_else(|| {
+                loaded_texture
+                    .info
+                    .map(|info| info.original_color_type.has_alpha())
+            })
+            .unwrap_or_default();
 
         Ok(LoadingProgress::Ready(
             AlbedoTexture {
-                texture,
-                transparent: transparency,
+                texture: loaded_texture.texture_and_view,
+                transparent,
             }
             .into(),
         ))
@@ -497,9 +489,11 @@ impl LoadingState for LoadMaterialTexture {
         &mut self,
         context: &mut LoaderContext,
     ) -> Result<LoadingProgress<AndChanged<MaterialTexture>>, Error> {
+        let loaded_texture = self.source.load(context)?;
+
         Ok(LoadingProgress::Ready(
             MaterialTexture {
-                texture: self.source.load(context)?,
+                texture: loaded_texture.texture_and_view,
                 flags: self.flags,
             }
             .into(),
@@ -514,28 +508,37 @@ pub enum TextureSource {
 }
 
 impl TextureSource {
-    pub fn load_with<F>(
-        &self,
-        context: &mut LoaderContext,
-        preprocess_image: F,
-    ) -> Result<Arc<TextureAndView>, Error>
-    where
-        F: FnMut(&mut image::RgbaImage, &PreprocessImageInfo) -> Result<(), Error>,
-    {
+    pub fn load_with(&self, context: &mut LoaderContext) -> Result<LoadedTexture, Error> {
         match self {
             TextureSource::File { path } => {
                 // todo: this should not be implied here
                 let usage = wgpu::TextureUsages::TEXTURE_BINDING;
 
-                context.load_texture_from_file(path, usage, preprocess_image)
+                let (texture_and_view, info) = context.load_texture_from_file(path, usage)?;
+
+                Ok(LoadedTexture {
+                    texture_and_view,
+                    info: Some(info),
+                })
             }
-            TextureSource::Channel { receiver } => Ok(receiver.inner.clone()),
+            TextureSource::Channel { receiver } => {
+                Ok(LoadedTexture {
+                    texture_and_view: receiver.inner.clone(),
+                    info: None,
+                })
+            }
         }
     }
 
-    pub fn load(&self, context: &mut LoaderContext) -> Result<Arc<TextureAndView>, Error> {
-        self.load_with(context, |_, _| Ok(()))
+    pub fn load(&self, context: &mut LoaderContext) -> Result<LoadedTexture, Error> {
+        self.load_with(context)
     }
+}
+
+#[derive(Clone, Debug)]
+pub struct LoadedTexture {
+    texture_and_view: Arc<TextureAndView>,
+    info: Option<ImageInfo>,
 }
 
 impl From<PathBuf> for TextureSource {
