@@ -66,6 +66,7 @@ use crate::{
     },
     physics::material::Material,
     util::{
+        egui::RepaintTrigger,
         format_size,
         palette::ColorExt,
     },
@@ -75,16 +76,19 @@ use crate::{
 pub struct SolverRunner {
     fdtd_wgpu: FdtdWgpuBackend,
     render_resource_creator: RenderResourceCreator,
+    repaint_trigger: RepaintTrigger,
 }
 
 impl SolverRunner {
     pub fn new(
         wgpu_context: &WgpuContext,
         render_resource_creator: &RenderResourceCreator,
+        repaint_trigger: RepaintTrigger,
     ) -> Self {
         Self {
             fdtd_wgpu: FdtdWgpuBackend::new(&wgpu_context.device, &wgpu_context.queue),
             render_resource_creator: render_resource_creator.clone(),
+            repaint_trigger,
         }
     }
 
@@ -115,6 +119,7 @@ impl SolverRunner {
                 fdtd_config,
                 &FdtdCpuBackend::single_threaded(),
                 &self.render_resource_creator,
+                self.repaint_trigger.clone(),
             )
         };
 
@@ -148,6 +153,7 @@ impl SolverRunner {
                         fdtd_config,
                         &FdtdCpuBackend::multi_threaded(*num_threads)?,
                         &self.render_resource_creator,
+                        self.repaint_trigger.clone(),
                     )?;
                 }
             }
@@ -159,6 +165,7 @@ impl SolverRunner {
                     fdtd_config,
                     &self.fdtd_wgpu,
                     &self.render_resource_creator,
+                    self.repaint_trigger.clone(),
                 )?;
             }
         }
@@ -173,6 +180,7 @@ fn run_fdtd_with_backend<Backend>(
     fdtd_config: &SolverConfigFdtd,
     backend: &Backend,
     render_resource_creator: &RenderResourceCreator,
+    repaint_trigger: RepaintTrigger,
 ) -> Result<(), Error>
 where
     Backend: SolverBackend<FdtdSolverConfig, Point3<usize>>,
@@ -299,6 +307,7 @@ where
         scene,
         &lattice_size,
         render_resource_creator,
+        repaint_trigger,
     );
 
     tracing::debug!("time to create simulation: {:?}", time_start.elapsed());
@@ -426,6 +435,7 @@ impl<'a, 'b> DomainDescription<Point3<usize>> for SceneDomainDescription<'a, 'b>
 #[derive(Debug, Default)]
 struct Observers<P> {
     projections: Vec<P>,
+    repaint_trigger: Option<RepaintTrigger>,
 }
 
 impl<P> Observers<P> {
@@ -435,6 +445,7 @@ impl<P> Observers<P> {
         scene: &mut Scene,
         lattice_size: &Vector3<usize>,
         render_resource_creator: &RenderResourceCreator,
+        repaint_trigger: RepaintTrigger,
     ) -> Self
     where
         I: CreateProjection<UndecidedTextureSender, Projection = P>,
@@ -443,6 +454,8 @@ impl<P> Observers<P> {
         // todo:
         // - derive projection from observer and transform
         // - transform projection into simulation coordinate space
+
+        let mut needs_repaint = false;
 
         // clippy, i want to chain other options into it later.
         #[allow(clippy::let_and_return)]
@@ -454,6 +467,8 @@ impl<P> Observers<P> {
                 tracing::debug!(?observer, "creating observer");
 
                 let display_as_texture = observer.display_as_texture.then(|| {
+                    needs_repaint = true;
+
                     let parameters = ProjectionParameters {
                         projection: Matrix4::identity(),
                         field: observer.field,
@@ -494,7 +509,10 @@ impl<P> Observers<P> {
         // apply deferred commands
         scene.apply_deferred();
 
-        Self { projections }
+        Self {
+            projections,
+            repaint_trigger: needs_repaint.then_some(repaint_trigger),
+        }
     }
 
     pub fn run<I>(&mut self, instance: &I, state: &I::State)
@@ -509,6 +527,10 @@ impl<P> Observers<P> {
         }
 
         pass.finish();
+
+        if let Some(repaint_trigger) = &self.repaint_trigger {
+            repaint_trigger.repaint();
+        }
     }
 }
 

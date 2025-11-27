@@ -127,7 +127,10 @@ use crate::{
         PhysicalConstants,
         material::Material,
     },
-    util::format_size,
+    util::{
+        egui::EguiUtilContextExt,
+        format_size,
+    },
 };
 
 /// Scene composer widget.
@@ -154,7 +157,11 @@ impl Composer {
 
         let asset_loader = AssetLoader::new(&render_resource_creator);
 
-        let solver_runner = SolverRunner::new(&context.wgpu_context, &render_resource_creator);
+        let solver_runner = SolverRunner::new(
+            &context.wgpu_context,
+            &render_resource_creator,
+            context.egui_context.repaint_trigger().with_max_fps(30),
+        );
 
         Self {
             state: None,

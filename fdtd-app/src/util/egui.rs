@@ -1,7 +1,16 @@
 //! Source code example of how to create your own widget.
 //! This is meant to be read as a tutorial, hence the plethora of comments.
 
-use std::path::Path;
+use std::{
+    path::Path,
+    sync::Arc,
+    time::{
+        Duration,
+        Instant,
+    },
+};
+
+use parking_lot::Mutex;
 
 use crate::util::FormatPath;
 
@@ -116,13 +125,27 @@ fn toggle_ui_compact(ui: &mut egui::Ui, on: &mut bool) -> egui::Response {
     response
 }
 
-pub trait EguiUtilExt {
+pub trait EguiUtilUiExt {
     fn toggle_button(&mut self, on: &mut bool) -> egui::Response;
 }
 
-impl EguiUtilExt for egui::Ui {
+impl EguiUtilUiExt for egui::Ui {
     fn toggle_button(&mut self, on: &mut bool) -> egui::Response {
         toggle_ui(self, on)
+    }
+}
+
+pub trait EguiUtilContextExt {
+    fn repaint_trigger(&self) -> RepaintTrigger;
+}
+
+impl EguiUtilContextExt for egui::Context {
+    fn repaint_trigger(&self) -> RepaintTrigger {
+        RepaintTrigger {
+            repaint_interval: None,
+            egui: self.clone(),
+            viewport: self.viewport_id(),
+        }
     }
 }
 
@@ -134,3 +157,45 @@ where
         value.to_string().into()
     }
 }
+
+#[derive(Clone, Debug)]
+pub struct RepaintTrigger {
+    repaint_interval: Option<Duration>,
+    egui: egui::Context,
+    viewport: egui::ViewportId,
+}
+
+impl RepaintTrigger {
+    pub fn with_max_fps(mut self, max_fps: u16) -> Self {
+        self.repaint_interval = Some(Duration::from_millis(1000 / u64::from(max_fps)));
+        self
+    }
+
+    pub fn repaint(&self) {
+        let mut do_repaint = true;
+
+        if let Some(repaint_interval) = self.repaint_interval {
+            let last_repaint = self
+                .egui
+                .data(|data| data.get_temp::<LastRepaint>(egui::Id::NULL));
+
+            if let Some(last_repaint) = last_repaint {
+                let mut last_repaint = last_repaint.0.lock();
+                let now = Instant::now();
+                if now > *last_repaint + repaint_interval {
+                    *last_repaint = now;
+                }
+                else {
+                    do_repaint = false;
+                }
+            }
+        }
+
+        if do_repaint {
+            self.egui.request_repaint_of(self.viewport);
+        }
+    }
+}
+
+#[derive(Clone)]
+struct LastRepaint(Arc<Mutex<Instant>>);

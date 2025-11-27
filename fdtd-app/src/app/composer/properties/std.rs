@@ -6,7 +6,7 @@ use crate::{
     app::composer::properties::PropertiesUi,
     util::{
         Moo,
-        egui::EguiUtilExt,
+        egui::EguiUtilUiExt,
     },
 };
 
