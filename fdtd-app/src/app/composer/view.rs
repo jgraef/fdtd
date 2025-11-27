@@ -264,19 +264,19 @@ impl<'a> egui::Widget for SceneView<'a> {
         // handle inputs (and resizing)
         self.handle_input(&response);
 
-        if !ui.is_sizing_pass() && ui.is_rect_visible(response.rect) {
+        if !ui.is_sizing_pass()
+            && ui.is_rect_visible(response.rect)
+            && let Some(camera_entity) = self.camera_entity
+            && let Some(draw_command) = self
+                .renderer
+                .prepare_frame(self.scene.entities.entity(camera_entity).ok())
+        {
             // draw frame
-
-            if let Some(draw_command) = self.renderer.prepare_frame(
-                self.camera_entity
-                    .and_then(|camera_entity| self.scene.entities.entity(camera_entity).ok()),
-            ) {
-                let painter = ui.painter();
-                painter.add(egui_wgpu::Callback::new_paint_callback(
-                    response.rect,
-                    draw_command,
-                ));
-            }
+            let painter = ui.painter();
+            painter.add(egui_wgpu::Callback::new_paint_callback(
+                response.rect,
+                draw_command,
+            ));
         }
 
         response

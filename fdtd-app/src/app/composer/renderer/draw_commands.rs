@@ -7,6 +7,7 @@ use std::{
         Range,
     },
     sync::Arc,
+    time::Instant,
 };
 
 use bitflags::bitflags;
@@ -16,6 +17,8 @@ use crate::{
     app::composer::renderer::{
         Renderer,
         Stencil,
+        camera::CameraRenderInfo,
+        command::CommandSender,
         mesh::{
             Mesh,
             MeshBindGroup,
@@ -52,6 +55,7 @@ impl DrawCommandBuffer {
         camera_bind_group: wgpu::BindGroup,
         camera_position: Point3<f32>,
         options: DrawCommandOptions,
+        camera_entity: hecs::Entity,
     ) -> DrawCommand {
         DrawCommand {
             camera_bind_group,
@@ -77,6 +81,8 @@ impl DrawCommandBuffer {
                 .contains(DrawCommandEnablePipelineFlags::OUTLINE)
                 .then(|| renderer.outline_pipeline.pipeline.clone()),
             buffer: self.buffer.get(),
+            camera_entity,
+            command_sender: renderer.command_queue.sender.clone(),
         }
     }
 }
@@ -233,10 +239,16 @@ pub struct DrawCommand {
     outline_pipeline: Option<wgpu::RenderPipeline>,
 
     buffer: Arc<DrawCommandBuilderBuffer>,
+
+    // for recording timings
+    camera_entity: hecs::Entity,
+    command_sender: CommandSender,
 }
 
 impl DrawCommand {
     pub fn render(&self, render_pass: &mut wgpu::RenderPass<'static>) {
+        let time_start = Instant::now();
+
         let mut render_pass = RenderPass::from(render_pass);
 
         // set camera
@@ -317,6 +329,17 @@ impl DrawCommand {
                 identity,
             );
         }
+
+        let time = time_start.elapsed();
+        self.command_sender.send(DrawCommandInfo {
+            camera_entity: self.camera_entity,
+            info: CameraRenderInfo {
+                total: time,
+                num_opaque: self.buffer.draw_meshes_opaque.len(),
+                num_transparent: self.buffer.draw_meshes_transparent.len(),
+                num_outlines: self.buffer.draw_outlines.len(),
+            },
+        })
     }
 }
 
@@ -329,6 +352,12 @@ impl egui_wgpu::CallbackTrait for DrawCommand {
     ) {
         self.render(render_pass);
     }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct DrawCommandInfo {
+    pub camera_entity: hecs::Entity,
+    pub info: CameraRenderInfo,
 }
 
 /// Wrapper around [`wgpu::RenderPass`] for convenience.

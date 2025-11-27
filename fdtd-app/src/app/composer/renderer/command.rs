@@ -1,15 +1,25 @@
 use std::sync::mpsc;
 
-use crate::app::composer::renderer::texture_channel::CopyImageToTextureCommand;
+use crate::app::composer::renderer::{
+    draw_commands::DrawCommandInfo,
+    texture_channel::CopyImageToTextureCommand,
+};
 
 #[derive(Debug)]
 pub(super) enum Command {
     CopyImageToTexture(CopyImageToTextureCommand),
+    DrawCommandInfo(DrawCommandInfo),
 }
 
 impl From<CopyImageToTextureCommand> for Command {
     fn from(value: CopyImageToTextureCommand) -> Self {
         Self::CopyImageToTexture(value)
+    }
+}
+
+impl From<DrawCommandInfo> for Command {
+    fn from(value: DrawCommandInfo) -> Self {
+        Self::DrawCommandInfo(value)
     }
 }
 

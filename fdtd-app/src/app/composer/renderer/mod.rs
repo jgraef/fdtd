@@ -470,7 +470,7 @@ impl Renderer {
             .with_belt(&mut self.write_staging_belt);
 
         // handle command queue
-        handle_commands(&mut self.command_queue.receiver, &mut write_staging);
+        handle_commands(&mut self.command_queue.receiver, &mut write_staging, scene);
 
         // generate meshes (for rendering) for objects that don't have them yet.
         mesh::update_mesh_bind_groups(
@@ -568,6 +568,7 @@ impl Renderer {
             DrawCommandOptions {
                 pipeline_enable_flags,
             },
+            camera_entity.entity(),
         ))
     }
 
@@ -576,7 +577,11 @@ impl Renderer {
     }
 }
 
-fn handle_commands(command_receiver: &mut CommandReceiver, write_staging: &mut WriteStaging) {
+fn handle_commands(
+    command_receiver: &mut CommandReceiver,
+    write_staging: &mut WriteStaging,
+    scene: &mut Scene,
+) {
     // todo: don't take the queue, but pass the WriteStaging
     //
     // note: for now we handle everything on the same thread, having &mut access to
@@ -589,6 +594,11 @@ fn handle_commands(command_receiver: &mut CommandReceiver, write_staging: &mut W
                 command.handle(|image, texture| {
                     image.write_to_texture(texture, write_staging);
                 });
+            }
+            Command::DrawCommandInfo(info) => {
+                scene
+                    .command_buffer
+                    .insert_one(info.camera_entity, info.info);
             }
         }
     }

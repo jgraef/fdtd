@@ -4,11 +4,10 @@ This app is work-in-progress. It's intended to model electromagnetic behavior. I
 
 # TODO
 
- - staging belt! we're writing many buffers to gpu every frame.
-  - check if the wgpu `Queue::write` functions (which we e.g. don't use for `TypedArrayBuffer`s anymore) use a staging belt.
-  - check if the `wgpu::util` staging belt is suitable (probably not).
-  - add support to `TypedArrayBuffer` to pass in staging buffer/belt.
-  - check where else we copy data to/from GPU that doesn't involve `TypedArraBuffer`. E.g. the fdtd-cpu projection implementation seems to slow everything down quite a bit.
+ - staging belt:
+  - read (gpu to host)
+  - make WriteStaging a trait implemented by StagingBelt and a OneTimeStaging
+  - SharedStagingBelt: staging belts that share a common pool of free chunks
  - limit how often a running solver projects into textures. done, but needs to be in config somewhere
  - make observers selectable in scene and tree view. the tree view should have a separate category for it. put something into the tree view (and context menus) to show/hide entities. speaking of context menus. i think they're not implemented for the tree view.
  - PRs for `egui_ltreeview`

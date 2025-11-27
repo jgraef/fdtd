@@ -1,4 +1,7 @@
-use std::f32::consts::FRAC_PI_4;
+use std::{
+    f32::consts::FRAC_PI_4,
+    time::Duration,
+};
 
 use bitflags::bitflags;
 use bytemuck::{
@@ -399,6 +402,14 @@ impl PropertiesUi for CameraConfig {
 
         changes.propagated(response)
     }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct CameraRenderInfo {
+    pub total: Duration,
+    pub num_opaque: usize,
+    pub num_transparent: usize,
+    pub num_outlines: usize,
 }
 
 pub(super) fn update_cameras(

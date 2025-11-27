@@ -18,7 +18,10 @@ use std::{
 
 use base64::engine::Engine;
 use color_eyre::eyre::bail;
-use egui::RichText;
+use egui::{
+    Id,
+    RichText,
+};
 use nalgebra::{
     Isometry3,
     Point3,
@@ -45,6 +48,7 @@ use crate::{
                 camera::{
                     CameraConfig,
                     CameraProjection,
+                    CameraRenderInfo,
                 },
                 light::{
                     AmbientLight,
@@ -160,7 +164,7 @@ impl Composer {
         let solver_runner = SolverRunner::new(
             &context.wgpu_context,
             &render_resource_creator,
-            context.egui_context.repaint_trigger().with_max_fps(30),
+            context.egui_context.repaint_trigger(),
         );
 
         Self {
@@ -273,6 +277,20 @@ impl Composer {
                 "Staged last frame: {}",
                 format_size(renderer_info.prepare_world_staged_bytes)
             ));
+
+            if let Some(state) = &mut self.state {
+                ui.separator();
+
+                for (entity, info) in state.scene.entities.query_mut::<&CameraRenderInfo>() {
+                    ui.label(format!("Camera {entity:?}"));
+                    ui.indent(Id::NULL, |ui| {
+                        ui.label(format!("Total: {:?}", info.total));
+                        ui.label(format!("Opaque: {:?}", info.num_opaque));
+                        ui.label(format!("Transparent: {:?}", info.num_transparent));
+                        ui.label(format!("Outlines: {:?}", info.num_outlines));
+                    });
+                }
+            }
         });
 
         if let Some(state) = &mut self.state {
