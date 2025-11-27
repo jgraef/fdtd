@@ -18,10 +18,7 @@ use std::{
 
 use base64::engine::Engine;
 use color_eyre::eyre::bail;
-use egui::{
-    Id,
-    RichText,
-};
+use hecs_hierarchy::HierarchyMut;
 use nalgebra::{
     Isometry3,
     Point3,
@@ -137,6 +134,7 @@ use crate::{
     util::{
         egui::EguiUtilContextExt,
         format_size,
+        wgpu::get_wgpu_device_info,
     },
 };
 
@@ -261,7 +259,7 @@ impl Composer {
             egui::CentralPanel::default().show(ctx, |ui| {
                 ui.add_space(100.0);
                 ui.vertical_centered(|ui| {
-                    ui.label(RichText::new("Welcome!").heading());
+                    ui.label(egui::RichText::new("Welcome!").heading());
                     ui.label(lipsum!(20));
                 });
             });
@@ -269,20 +267,60 @@ impl Composer {
     }
 
     pub fn show_debug(&mut self, ui: &mut egui::Ui) {
-        ui.collapsing("Renderer", |ui| {
-            let renderer_info = self.renderer.info();
-            let staging_belt_info = self.renderer.wgpu_context().staging_pool.info();
+        let renderer_info = self.renderer.info();
+        let renderer_config = self.renderer.config();
+        let wgpu_context = self.renderer.wgpu_context();
+        let staging_belt_info = wgpu_context.staging_pool.info();
+        let device_info = get_wgpu_device_info(&wgpu_context.device, ui.ctx());
 
+        ui.collapsing("wgpu", |ui| {
+            ui.small("Adapter");
             ui.label(format!(
-                "Prepare world time: {:?}",
-                renderer_info.prepare_world_time
+                "{} ({:04x}:{:04x})",
+                wgpu_context.adapter_info.name,
+                wgpu_context.adapter_info.vendor,
+                wgpu_context.adapter_info.device
             ));
+            ui.small("Backend");
+            ui.label(format!("{:?}", wgpu_context.adapter_info.backend));
+            ui.small("Driver");
+            ui.label(format!(
+                "{} ({})",
+                wgpu_context.adapter_info.driver, wgpu_context.adapter_info.driver_info
+            ));
+            ui.small("Device type");
+            ui.label(format!("{:?}", wgpu_context.adapter_info.device_type));
+
+            if let Some(report) = &device_info.allocator_report {
+                ui.separator();
+
+                ui.label("Allocator report:");
+                ui.indent(egui::Id::NULL, |ui| {
+                    ui.label(format!(
+                        "Total allocated: {}",
+                        format_size(report.total_allocated_bytes)
+                    ));
+                    ui.label(format!(
+                        "Total reserved: {}",
+                        format_size(report.total_reserved_bytes)
+                    ));
+                    for allocation in &report.allocations {
+                        ui.label(format!(
+                            "{}: {}",
+                            allocation.name,
+                            format_size(allocation.size)
+                        ));
+                    }
+                });
+            }
+
+            ui.separator();
 
             ui.label("Staging belt:");
-            ui.indent(Id::NULL, |ui| {
+            ui.indent(egui::Id::NULL, |ui| {
                 ui.label(format!(
                     "Bytes last frame: {}",
-                    renderer_info.prepare_world_staged_bytes
+                    format_size(renderer_info.prepare_world_staged_bytes),
                 ));
                 ui.label(format!(
                     "In-flight chunks: {}",
@@ -295,13 +333,33 @@ impl Composer {
                     format_size(staging_belt_info.total_allocation_bytes)
                 ));
             });
+        });
+
+        ui.collapsing("Renderer", |ui| {
+            ui.label(format!(
+                "Prepare world time: {:?}",
+                renderer_info.prepare_world_time
+            ));
+
+            ui.label(format!(
+                "Surface texture: {:?}",
+                renderer_config.target_texture_format
+            ));
+            ui.label(format!(
+                "Depth texture: {:?}",
+                renderer_config.depth_texture_format
+            ));
+            ui.label(format!(
+                "Multisampling: {:?}",
+                renderer_config.multisample_count
+            ));
 
             if let Some(state) = &mut self.state {
                 ui.separator();
 
                 for (entity, info) in state.scene.entities.query_mut::<&CameraRenderInfo>() {
                     ui.label(format!("Camera {entity:?}"));
-                    ui.indent(Id::NULL, |ui| {
+                    ui.indent(egui::Id::NULL, |ui| {
                         ui.label(format!("Total: {:?}", info.total));
                         ui.label(format!("Opaque: {:?}", info.num_opaque));
                         ui.label(format!("Transparent: {:?}", info.num_transparent));
@@ -380,8 +438,9 @@ struct ComposerState {
     solver_configs: Vec<SolverConfig>,
     solver_config_window: SolverConfigUiWindow,
 
-    /// For which entities a properties window is open
-    entity_windows: EntityWindows,
+    // note: only used as a temporary scratch buffer. this is queries from the scene right before
+    // the windows are rendered
+    entity_windows: Vec<(hecs::Entity, EntityWindow)>,
 }
 
 impl ComposerState {
@@ -401,15 +460,16 @@ impl ComposerState {
             ClearColor::from(view_config.background_color),
             CameraProjection::new(view_config.fovy.to_radians()),
             CameraConfig {
-                tone_map: view_config.tone_map,
+                //tone_map: view_config.tone_map,
+                tone_map: false,
                 ..Default::default()
             },
             view_config
                 .ambient_light
-                .unwrap_or_else(|| AmbientLight::white_light(0.03)),
+                .unwrap_or_else(|| AmbientLight::white_light(0.1)),
             view_config
                 .point_light
-                .unwrap_or_else(|| PointLight::white_light(1.0)),
+                .unwrap_or_else(|| PointLight::white_light(0.5)),
             Label::new_static("camera"),
         ));
 
@@ -462,7 +522,7 @@ impl ComposerState {
             undo_buffer,
             solver_configs,
             solver_config_window: SolverConfigUiWindow::default(),
-            entity_windows: Default::default(),
+            entity_windows: vec![],
         }
     }
 }
@@ -623,7 +683,26 @@ impl ComposerState {
                 self.context_menu(&view_response);
             }
 
-            self.entity_windows.show(ctx, &mut self.scene);
+            {
+                assert!(self.entity_windows.is_empty());
+                for (entity, window) in self.scene.entities.query_mut::<&EntityWindow>() {
+                    self.entity_windows.push((entity, *window));
+                }
+
+                for (entity, window) in &self.entity_windows {
+                    EntityPropertiesWindow::new(
+                        egui::Id::new("entity_properties").with(entity),
+                        &mut self.scene,
+                        *entity,
+                    )
+                    .deletable(window.despawn_button)
+                    .show(ctx, scene_ui::default_title, scene_ui::debug(true));
+                }
+
+                self.scene.apply_deferred();
+
+                self.entity_windows.clear();
+            }
 
             self.solver_config_window
                 .show(ctx, &mut self.solver_configs);
@@ -674,7 +753,10 @@ impl ComposerState {
             ui.separator();
 
             if ui.button("Properties").clicked() {
-                self.entity_windows.open(entity);
+                let _ = self
+                    .scene
+                    .entities
+                    .insert_one(entity, EntityWindow::default());
             }
         });
 
@@ -721,7 +803,10 @@ impl ComposerState {
     }
 
     pub fn open_camera_window(&mut self) {
-        self.entity_windows.open(self.camera_entity);
+        let _ = self
+            .scene
+            .entities
+            .insert_one(self.camera_entity, EntityWindow::default());
     }
 
     pub fn open_solver_config_window(&mut self) {
@@ -827,17 +912,18 @@ impl PopulateScene for ExampleScene {
             ..crate::physics::material::Material::VACUUM
         };
 
-        scene
+        let cube = scene
             .add_object(Point3::new(-0.2, 0.0, 0.0), cube(0.1))
             .material(material::presets::BRASS)
             .component(em_material)
             .spawn(scene);
 
-        scene
+        let ball = scene
             .add_object(Point3::new(0.2, 0.0, 0.0), ball(0.1))
             .material(material::presets::BLACKBOARD)
             .component(em_material)
             .spawn(scene);
+        scene.entities.attach::<()>(ball, cube).unwrap();
 
         /*scene
             .add_object(Point3::new(0.2, 0.0, 0.0), shape(0.1))
@@ -1163,35 +1249,15 @@ impl<'a> CameraMut<'a> {
     }
 }
 
-#[derive(Debug, Default)]
-struct EntityWindows {
-    // note: a hashset would generally be faster for checking if a window is already open, but for
-    // the small amount we expect, `Vec` should be unbeatable.
-    //
-    // note: this stores `Option`s, so that we can directly hand them out to the
-    // `EntityProperrtiesWindow` and then we just retain anything not `None`.
-    entities: Vec<Option<hecs::Entity>>,
+#[derive(Clone, Copy, Debug)]
+pub struct EntityWindow {
+    pub despawn_button: bool,
 }
 
-impl EntityWindows {
-    pub fn open(&mut self, entity: hecs::Entity) {
-        if self.entities.iter().all(|open| {
-            open.expect("All entity references for windows should be valid at this point") != entity
-        }) {
-            self.entities.push(Some(entity));
+impl Default for EntityWindow {
+    fn default() -> Self {
+        Self {
+            despawn_button: true,
         }
-    }
-
-    pub fn show(&mut self, ctx: &egui::Context, scene: &mut Scene) {
-        for entity in &mut self.entities {
-            EntityPropertiesWindow::new(
-                egui::Id::new("entity_properties").with(*entity),
-                scene,
-                entity,
-            )
-            .deletable()
-            .show(ctx, scene_ui::default_title, scene_ui::debug(true));
-        }
-        self.entities.retain(Option::is_some);
     }
 }

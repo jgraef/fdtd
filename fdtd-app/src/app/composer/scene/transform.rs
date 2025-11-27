@@ -19,17 +19,11 @@ use crate::app::composer::{
     scene::ui::ComponentUiHeading,
 };
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
 pub struct Transform {
     /// Rotation followed by translation that transforms points from the
     /// object's local frame to the global frame.
     pub transform: Isometry3<f32>,
-}
-
-impl Default for Transform {
-    fn default() -> Self {
-        Self::identity()
-    }
 }
 
 impl Transform {
@@ -129,11 +123,30 @@ impl From<UnitQuaternion<f32>> for Transform {
 
 impl ComponentUiHeading for Transform {
     fn heading(&self) -> impl Into<egui::RichText> {
-        "Transform"
+        "Transform (Local)"
     }
 }
 
 impl PropertiesUi for Transform {
+    type Config = Isometry3UiConfig;
+
+    fn properties_ui(&mut self, ui: &mut egui::Ui, config: &Self::Config) -> egui::Response {
+        self.transform.properties_ui(ui, config)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
+pub struct GlobalTransform {
+    pub transform: Isometry3<f32>,
+}
+
+impl ComponentUiHeading for GlobalTransform {
+    fn heading(&self) -> impl Into<egui::RichText> {
+        "Transform (Global)"
+    }
+}
+
+impl PropertiesUi for GlobalTransform {
     type Config = Isometry3UiConfig;
 
     fn properties_ui(&mut self, ui: &mut egui::Ui, config: &Self::Config) -> egui::Response {

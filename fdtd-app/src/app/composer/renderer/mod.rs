@@ -435,6 +435,10 @@ impl Renderer {
         &self.wgpu_context
     }
 
+    pub fn config(&self) -> &RendererConfig {
+        &self.renderer_config
+    }
+
     pub fn resource_creator(&self) -> RenderResourceCreator {
         RenderResourceCreator::from_renderer(self)
     }

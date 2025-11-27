@@ -11,7 +11,6 @@ use bytemuck::{
     Pod,
     Zeroable,
 };
-use egui::Id;
 use palette::{
     LinSrgba,
     Srgb,
@@ -190,18 +189,21 @@ impl PropertiesUi for Material {
 
         let response = egui::Frame::new()
             .show(ui, |ui| {
-                let id = ui.id().with("material_preset");
+                let id: egui::Id = ui.id().with("material_preset");
 
                 #[derive(Clone, Copy, Default, PartialEq, Eq)]
                 struct SelectedPreset(Option<usize>);
-                let mut selected_preset =
-                    ui.data(|data| data.get_temp::<SelectedPreset>(id).unwrap_or_default());
+                let selection_id = id.with("selection");
+                let mut selected_preset = ui.data(|data| {
+                    data.get_temp::<SelectedPreset>(selection_id)
+                        .unwrap_or_default()
+                });
                 let selected_before = selected_preset;
 
                 ui.horizontal(|ui| {
                     ui.label("Presets");
 
-                    egui::ComboBox::from_id_salt(id)
+                    egui::ComboBox::from_id_salt(id.with("combo_box"))
                         .selected_text(
                             selected_preset
                                 .0
@@ -220,7 +222,7 @@ impl PropertiesUi for Material {
                 });
 
                 if selected_before != selected_preset {
-                    ui.data_mut(|ui| ui.insert_temp(Id::NULL, selected_preset));
+                    ui.data_mut(|ui| ui.insert_temp(selection_id, selected_preset));
                     if let Some(i) = selected_preset.0 {
                         *self = (*presets::ALL[i]).into();
                     }
@@ -246,6 +248,13 @@ impl PropertiesUi for Material {
                     "Roughness",
                     &mut changes,
                     &mut self.roughness,
+                    &NumericPropertyUiConfig::Slider { range: 0.0..=1.0 },
+                );
+                label_and_value_with_config(
+                    ui,
+                    "Ambient Occlusion",
+                    &mut changes,
+                    &mut self.ambient_occlusion,
                     &NumericPropertyUiConfig::Slider { range: 0.0..=1.0 },
                 );
                 label_and_value(ui, "Transparent", &mut changes, &mut self.transparent);

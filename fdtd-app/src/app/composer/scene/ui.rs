@@ -1,8 +1,10 @@
 pub use std::any::type_name;
 
+use hecs_hierarchy::Hierarchy;
 pub use show_all::show_all as debug;
 
 use crate::app::composer::{
+    EntityWindow,
     properties::PropertiesUi,
     scene::{
         Changed,
@@ -15,13 +17,13 @@ use crate::app::composer::{
 #[derive(derive_more::Debug)]
 pub struct EntityPropertiesWindow<'a> {
     scene: &'a mut Scene,
-    entity: &'a mut Option<hecs::Entity>,
+    entity: hecs::Entity,
     id: egui::Id,
     deletable: bool,
 }
 
 impl<'a> EntityPropertiesWindow<'a> {
-    pub fn new(id: egui::Id, scene: &'a mut Scene, entity: &'a mut Option<hecs::Entity>) -> Self {
+    pub fn new(id: egui::Id, scene: &'a mut Scene, entity: hecs::Entity) -> Self {
         Self {
             scene,
             entity,
@@ -30,8 +32,8 @@ impl<'a> EntityPropertiesWindow<'a> {
         }
     }
 
-    pub fn deletable(mut self) -> Self {
-        self.deletable = true;
+    pub fn deletable(mut self, deletable: bool) -> Self {
+        self.deletable = deletable;
         self
     }
 
@@ -41,14 +43,7 @@ impl<'a> EntityPropertiesWindow<'a> {
         title: impl FnOnce(hecs::EntityRef<'_>) -> egui::WidgetText,
         add_contents: impl FnOnce(&mut egui::Ui, hecs::EntityRef<'_>, &mut hecs::CommandBuffer) -> R,
     ) -> Option<egui::InnerResponse<Option<R>>> {
-        let entity = (*self.entity)?;
-
-        let Ok(entity_ref) = self.scene.entities.entity(entity)
-        else {
-            // entity deleted?
-            *self.entity = None;
-            return None;
-        };
+        let entity_ref = self.scene.entities.entity(self.entity).ok()?;
 
         let mut is_open = true;
         let mut delete_requested = false;
@@ -59,56 +54,52 @@ impl<'a> EntityPropertiesWindow<'a> {
             .collapsible(true)
             .open(&mut is_open)
             .show(ctx, |ui| {
-                if self.deletable {
-                    // note: would be nice if this was in the window title bar
-                    if ui.small_button("Despawn Entity").clicked() {
-                        delete_requested = true;
+                ui.horizontal(|ui| {
+                    if let Ok(parent) = self.scene.entities.parent::<()>(self.entity)
+                        && ui.small_button(format!("Parent: {parent:?}")).clicked()
+                    {
+                        self.scene
+                            .command_buffer
+                            .insert_one(parent, EntityWindow::default());
                     }
-                }
+
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
+                        if ui
+                            .add_enabled(self.deletable, egui::Button::new("Despawn").small())
+                            .clicked()
+                        {
+                            delete_requested = true;
+                        }
+
+                        //let selectable = entity_ref.satisfies::<&Selectable>();
+                        let selectable = false; // todo
+                        if ui
+                            .add_enabled(selectable, egui::Button::new("Select").small())
+                            .clicked()
+                        {
+                            // todo: need to be able to create a SelectionMut. we
+                            // have the scene, and we could store the default
+                            // outline in egui data
+                            tracing::debug!("todo");
+                        }
+                    });
+                });
+                ui.separator();
 
                 add_contents(ui, entity_ref, &mut self.scene.command_buffer)
             });
 
         if delete_requested {
-            self.scene.command_buffer.despawn(entity);
+            self.scene.command_buffer.despawn(self.entity);
         }
 
-        self.scene.apply_deferred();
-
         if !is_open {
-            *self.entity = None;
+            self.scene
+                .command_buffer
+                .remove_one::<EntityWindow>(self.entity);
         }
 
         response
-    }
-
-    pub fn show_query<Q, R>(
-        &mut self,
-        ctx: &egui::Context,
-        title: impl FnOnce(hecs::EntityRef<'_>) -> egui::WidgetText,
-        add_contents: impl FnOnce(&mut egui::Ui, Q::Item<'_>, &mut hecs::CommandBuffer) -> R,
-    ) -> Option<egui::InnerResponse<Option<R>>>
-    where
-        Q: hecs::Query,
-    {
-        self.show(ctx, title, |ui, entity_ref, command_buffer| {
-            let mut query = entity_ref.query::<Q>();
-            if let Some(query) = query.get() {
-                Some(add_contents(ui, query, command_buffer))
-            }
-            else {
-                // todo: does this work?
-                ui.colored_label(egui::Color32::RED, "Error: Entity doesn't match query");
-                ui.close();
-                None
-            }
-        })
-        .map(|inner_response| {
-            egui::InnerResponse {
-                inner: inner_response.inner.flatten(),
-                response: inner_response.response,
-            }
-        })
     }
 }
 
@@ -227,7 +218,10 @@ mod show_all {
             material::Material,
         },
         scene::{
-            transform::Transform,
+            transform::{
+                GlobalTransform,
+                Transform,
+            },
             ui::{
                 ComponentUi,
                 ComponentUiHeading,
@@ -296,6 +290,7 @@ mod show_all {
         }
 
         show_component!(Transform, Changed);
+        show_component!(GlobalTransform);
         show_component!(Material, Changed);
         show_component!(PointLight);
         show_component!(AmbientLight);

@@ -39,18 +39,17 @@ impl ComposerState {
             .allow_multi_selection(true)
             .allow_drag_and_drop(false)
             .indent_hint_style(IndentHintStyle::Line)
-            .override_indent(Some(2.0))
+            .override_indent(Some(10.0))
             .show_state(ui, &mut self.object_tree.tree_state, |builder| {
                 builder.dir(ObjectTreeId::Root, "Scene");
-
                 let mut labels = self.scene.entities.view::<Option<&Label>>();
-
                 let mut visitor = Visitor {
                     world: &self.scene.entities,
                     builder,
                     labels: &mut labels,
                 };
                 visitor.visit_roots();
+                builder.close_dir();
             });
 
         // whether something was selected in the tree view

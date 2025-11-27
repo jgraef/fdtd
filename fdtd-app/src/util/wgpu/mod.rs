@@ -3,6 +3,10 @@ pub mod buffer;
 use std::{
     ops::Deref,
     sync::Arc,
+    time::{
+        Duration,
+        Instant,
+    },
 };
 
 use nalgebra::Vector2;
@@ -204,4 +208,51 @@ where
         );
         view.copy_from_slice(samples.samples);
     }
+}
+
+pub fn get_wgpu_device_info(device: &wgpu::Device, ctx: &egui::Context) -> Arc<DeviceInfo> {
+    #[derive(Clone)]
+    struct Container {
+        device_info: Arc<DeviceInfo>,
+        expiry: Instant,
+    }
+
+    let mut report_buf = ctx.data(|data| data.get_temp::<Container>(egui::Id::NULL));
+    let now = Instant::now();
+
+    if let Some(report) = &report_buf
+        && report.expiry < now
+    {
+        report_buf = None;
+    }
+
+    if let Some(report) = report_buf {
+        report.device_info
+    }
+    else {
+        let allocator_report = device.generate_allocator_report();
+        //let internal_counters = device.get_internal_counters();
+
+        let device_info = Arc::new(DeviceInfo {
+            allocator_report,
+            //internal_counters,
+        });
+
+        ctx.data_mut(|data| {
+            data.insert_temp(
+                egui::Id::NULL,
+                Container {
+                    device_info: device_info.clone(),
+                    expiry: now + Duration::from_secs(1),
+                },
+            );
+        });
+
+        device_info
+    }
+}
+
+pub struct DeviceInfo {
+    pub allocator_report: Option<wgpu::AllocatorReport>,
+    //pub internal_counters: wgpu::InternalCounters,
 }

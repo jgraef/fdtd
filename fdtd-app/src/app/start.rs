@@ -33,6 +33,7 @@ pub struct WgpuContext {
     pub adapter: wgpu::Adapter,
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
+    pub adapter_info: Arc<wgpu::AdapterInfo>,
     pub staging_pool: StagingPool,
 }
 
@@ -164,6 +165,7 @@ pub(super) fn run_app(args: Args) -> Result<(), Error> {
                 adapter: render_state.adapter.clone(),
                 device: render_state.device.clone(),
                 queue: render_state.queue.clone(),
+                adapter_info: Arc::new(render_state.adapter.get_info()),
                 staging_pool: StagingPool::new(
                     wgpu::BufferSize::new(0x1000).unwrap(),
                     "staging pool",
