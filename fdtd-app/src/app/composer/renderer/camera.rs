@@ -52,7 +52,10 @@ use crate::{
             ui::ComponentUiHeading,
         },
     },
-    util::wgpu::buffer::WriteStaging,
+    util::wgpu::buffer::{
+        StagingBufferProvider,
+        WriteStagingTransaction,
+    },
 };
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
@@ -196,13 +199,15 @@ impl CameraResources {
         Self { buffer, bind_group }
     }
 
-    pub fn update(
+    pub fn update<P>(
         &mut self,
         device: &wgpu::Device,
-        write_staging: &mut WriteStaging,
+        write_staging: &mut WriteStagingTransaction<P>,
         camera_data: &CameraData,
         updated_instance_buffer: Option<(&wgpu::BindGroupLayout, &wgpu::Buffer)>,
-    ) {
+    ) where
+        P: StagingBufferProvider,
+    {
         write_staging
             .write_buffer_from_slice(self.buffer.slice(..), bytemuck::bytes_of(camera_data));
 
@@ -412,14 +417,16 @@ pub struct CameraRenderInfo {
     pub num_outlines: usize,
 }
 
-pub(super) fn update_cameras(
+pub(super) fn update_cameras<P>(
     scene: &mut Scene,
     device: &wgpu::Device,
-    write_staging: &mut WriteStaging,
+    write_staging: &mut WriteStagingTransaction<P>,
     camera_bind_group_layout: &wgpu::BindGroupLayout,
     instance_buffer: &wgpu::Buffer,
     instance_buffer_reallocated: bool,
-) {
+) where
+    P: StagingBufferProvider,
+{
     // update cameras whose viewports changed
     for (entity, (camera_projection, viewport)) in scene
         .entities

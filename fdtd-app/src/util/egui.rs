@@ -12,7 +12,10 @@ use std::{
 
 use parking_lot::Mutex;
 
-use crate::util::FormatPath;
+use crate::{
+    app::start::WgpuContext,
+    util::FormatPath,
+};
 
 /// iOS-style toggle switch:
 ///
@@ -137,6 +140,7 @@ impl EguiUtilUiExt for egui::Ui {
 
 pub trait EguiUtilContextExt {
     fn repaint_trigger(&self) -> RepaintTrigger;
+    fn wgpu_context(&self) -> WgpuContext;
 }
 
 impl EguiUtilContextExt for egui::Context {
@@ -146,6 +150,11 @@ impl EguiUtilContextExt for egui::Context {
             egui: self.clone(),
             viewport: self.viewport_id(),
         }
+    }
+
+    fn wgpu_context(&self) -> WgpuContext {
+        self.data(|data| data.get_temp(egui::Id::NULL))
+            .expect("no wgpu context available")
     }
 }
 

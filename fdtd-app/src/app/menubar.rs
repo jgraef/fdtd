@@ -183,7 +183,9 @@ impl<'a> MenuBar<'a> {
                 self.app.show_about = true;
             }
             if ui.button("Debug").clicked() {
-                self.app.show_debug = true;
+                // this needs improvement, but we want the open state be persisted
+                let debug_open_id = egui::Id::new("debug_open");
+                ui.data_mut(|data| data.insert_persisted(debug_open_id, true));
             }
         });
     }

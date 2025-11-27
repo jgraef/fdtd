@@ -4,10 +4,14 @@ mod typed;
 
 pub use self::{
     staged::*,
-    staging::{
+    staging::write::{
+        OneShotStaging,
+        StagingBufferProvider,
+        StagingPool,
+        StagingPoolInfo,
         TextureSourceLayout,
-        WriteStaging,
-        write_belt::WriteStagingBelt,
+        WriteStagingBelt,
+        WriteStagingTransaction,
     },
     typed::*,
 };

@@ -13,16 +13,19 @@ use egui_wgpu::{
     WgpuSetupCreateNew,
 };
 
-use crate::app::{
-    App,
-    args::Args,
-    clipboard::EguiClipboardPlugin,
-    composer::renderer::{
-        EguiWgpuRenderer,
-        RendererConfig,
+use crate::{
+    app::{
+        App,
+        args::Args,
+        clipboard::EguiClipboardPlugin,
+        composer::renderer::{
+            EguiWgpuRenderer,
+            RendererConfig,
+        },
+        config::AppConfig,
+        files::AppFiles,
     },
-    config::AppConfig,
-    files::AppFiles,
+    util::wgpu::buffer::StagingPool,
 };
 
 #[derive(Clone, Debug)]
@@ -30,6 +33,7 @@ pub struct WgpuContext {
     pub adapter: wgpu::Adapter,
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
+    pub staging_pool: StagingPool,
 }
 
 #[derive(Clone, Debug)]
@@ -160,9 +164,11 @@ pub(super) fn run_app(args: Args) -> Result<(), Error> {
                 adapter: render_state.adapter.clone(),
                 device: render_state.device.clone(),
                 queue: render_state.queue.clone(),
+                staging_pool: StagingPool::new(
+                    wgpu::BufferSize::new(0x1000).unwrap(),
+                    "staging pool",
+                ),
             };
-
-            let egui_wgpu_renderer = render_state.renderer.clone().into();
 
             // store wgpu context in egui context
             cc.egui_ctx.data_mut(|data| {
@@ -179,7 +185,7 @@ pub(super) fn run_app(args: Args) -> Result<(), Error> {
                 config,
                 args,
                 renderer_config,
-                egui_wgpu_renderer,
+                egui_wgpu_renderer: render_state.renderer.clone().into(),
             };
 
             Ok(Box::new(App::new(create_app_context)))

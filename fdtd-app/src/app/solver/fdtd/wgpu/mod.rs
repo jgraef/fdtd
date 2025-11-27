@@ -57,10 +57,10 @@ use crate::{
         normalize_point_bounds,
         wgpu::buffer::{
             StagedTypedArrayBuffer,
+            StagingPool,
             TypedArrayBuffer,
             TypedArrayBufferReadView,
-            WriteStaging,
-            WriteStagingBelt,
+            WriteStagingTransaction,
         },
     },
 };
@@ -74,15 +74,16 @@ pub struct FdtdWgpuBackend {
     bind_group_layout: wgpu::BindGroupLayout,
     pipeline_layout: wgpu::PipelineLayout,
     projection: ProjectionPipeline,
+    staging_pool: StagingPool,
 }
 
 impl FdtdWgpuBackend {
-    pub fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
+    pub fn new(device: wgpu::Device, queue: wgpu::Queue, staging_pool: StagingPool) -> Self {
         let limits = ComputeLimits::from_limits(&device.limits());
 
         let shader_module = device.create_shader_module(wgpu::include_wgsl!("update.wgsl"));
 
-        let bind_group_layout = BINDINGS.bind_group_layout(device);
+        let bind_group_layout = BINDINGS.bind_group_layout(&device);
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("fdtd"),
@@ -90,16 +91,17 @@ impl FdtdWgpuBackend {
             push_constant_ranges: &[],
         });
 
-        let projection = ProjectionPipeline::new(device);
+        let projection = ProjectionPipeline::new(&device);
 
         Self {
-            device: device.clone(),
-            queue: queue.clone(),
+            device,
+            queue,
             limits,
             shader_module,
             bind_group_layout,
             pipeline_layout,
             projection,
+            staging_pool,
         }
     }
 
@@ -279,11 +281,6 @@ pub struct FdtdWgpuSolverState {
     field_buffers: SwapBuffer<FieldBuffers>,
     source_buffer: StagedTypedArrayBuffer<SourceData>,
     update_bind_groups: SwapBuffer<wgpu::BindGroup>,
-
-    // note: we can't share a staging belt between multiple states or even instances, because the
-    // recalls will race. thus it needs to be in the state for now
-    staging_belt: WriteStagingBelt,
-
     tick: usize,
     time: f64,
 }
@@ -318,14 +315,10 @@ impl FdtdWgpuSolverState {
         let update_bind_groups =
             BINDINGS.bind_group(instance, &field_buffers, source_buffer.buffer.buffer().expect("source buffer should have a gpu buffer allocated because it is initialized with an non-zero initial capacity"));
 
-        let staging_belt =
-            WriteStagingBelt::new(wgpu::BufferSize::new(0x1000).unwrap(), "fdtd/staging");
-
         Self {
             field_buffers,
             source_buffer,
             update_bind_groups,
-            staging_belt,
             tick: 0,
             time: 0.0,
         }
@@ -392,8 +385,11 @@ impl<'a> UpdatePass for FdtdWgpuUpdatePass<'a> {
                     label: Some("fdtd/update"),
                 });
 
-        let mut staging = WriteStaging::new(&self.instance.backend.device, &mut command_encoder)
-            .with_belt(&mut self.state.staging_belt);
+        let mut write_staging = WriteStagingTransaction::new(
+            self.instance.backend.staging_pool.start_write(),
+            &self.instance.backend.device,
+            &mut command_encoder,
+        );
 
         // write source data
         let num_sources = self.state.source_buffer.host_staging.len();
@@ -402,7 +398,7 @@ impl<'a> UpdatePass for FdtdWgpuUpdatePass<'a> {
                 self.state.update_bind_groups =
                     BINDINGS.bind_group(self.instance, &self.state.field_buffers, new_buffer)
             },
-            &mut staging,
+            &mut write_staging,
         );
 
         // update time
@@ -413,12 +409,12 @@ impl<'a> UpdatePass for FdtdWgpuUpdatePass<'a> {
             self.state.time,
             num_sources,
         );
-        staging.write_buffer_from_slice(
+        write_staging.write_buffer_from_slice(
             self.instance.config_buffer.slice(..),
             bytemuck::bytes_of(&config_data),
         );
 
-        staging.finish();
+        drop(write_staging);
 
         // compute pass
         {

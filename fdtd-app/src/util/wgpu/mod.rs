@@ -13,8 +13,9 @@ use wgpu::util::DeviceExt;
 use crate::util::{
     ImageSizeExt,
     wgpu::buffer::{
+        StagingBufferProvider,
         TextureSourceLayout,
-        WriteStaging,
+        WriteStagingTransaction,
     },
 };
 
@@ -118,14 +119,25 @@ pub fn texture_descriptor<'a>(
 }
 
 pub trait WriteImageToTextureExt {
-    fn write_to_texture(&self, texture: &wgpu::Texture, write_staging: &mut WriteStaging);
+    fn write_to_texture<P>(
+        &self,
+        texture: &wgpu::Texture,
+        write_staging: &mut WriteStagingTransaction<P>,
+    ) where
+        P: StagingBufferProvider;
 }
 
 impl<Container> WriteImageToTextureExt for image::ImageBuffer<image::Rgba<u8>, Container>
 where
     Container: AsRef<[u8]> + Deref<Target = [u8]>,
 {
-    fn write_to_texture(&self, texture: &wgpu::Texture, write_staging: &mut WriteStaging) {
+    fn write_to_texture<P>(
+        &self,
+        texture: &wgpu::Texture,
+        write_staging: &mut WriteStagingTransaction<P>,
+    ) where
+        P: StagingBufferProvider,
+    {
         // todo: see https://docs.rs/wgpu/latest/wgpu/struct.Queue.html#performance-considerations-2
         //
         // note: the 256 bytes per row alignment doesn't apply for Queue::write_texture:

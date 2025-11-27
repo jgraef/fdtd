@@ -100,8 +100,8 @@ use crate::{
         WriteImageToTextureExt,
         buffer::{
             StagedTypedArrayBuffer,
-            WriteStaging,
-            WriteStagingBelt,
+            StagingBufferProvider,
+            WriteStagingTransaction,
         },
         create_texture_from_color,
         create_texture_view_from_texture,
@@ -208,8 +208,6 @@ pub struct Renderer {
     /// are e.g. handed out to
     /// [`TextureSender`s](texture_channel::TextureSender).
     command_queue: CommandQueue,
-
-    write_staging_belt: WriteStagingBelt,
 
     info: RendererInfo,
 }
@@ -413,12 +411,6 @@ impl Renderer {
 
         let fallbacks = Fallbacks::new(&context.wgpu_context.device, &context.wgpu_context.queue);
 
-        // 1 MB chunks
-        let write_staging_belt = WriteStagingBelt::new(
-            wgpu::BufferSize::new(0x100000).unwrap(),
-            "render/staging/write/chunk",
-        );
-
         Self {
             wgpu_context: context.wgpu_context.clone(),
             egui_wgpu_renderer: context.egui_wgpu_renderer.clone(),
@@ -435,9 +427,12 @@ impl Renderer {
             draw_command_buffer: Default::default(),
             fallbacks,
             command_queue: CommandQueue::new(512),
-            write_staging_belt,
             info: Default::default(),
         }
+    }
+
+    pub fn wgpu_context(&self) -> &WgpuContext {
+        &self.wgpu_context
     }
 
     pub fn resource_creator(&self) -> RenderResourceCreator {
@@ -466,8 +461,11 @@ impl Renderer {
                     label: Some("render/prepare_world"),
                 });
 
-        let mut write_staging = WriteStaging::new(&self.wgpu_context.device, &mut command_encoder)
-            .with_belt(&mut self.write_staging_belt);
+        let mut write_staging = WriteStagingTransaction::new(
+            self.wgpu_context.staging_pool.start_write(),
+            &self.wgpu_context.device,
+            &mut command_encoder,
+        );
 
         // handle command queue
         handle_commands(&mut self.command_queue.receiver, &mut write_staging, scene);
@@ -507,8 +505,8 @@ impl Renderer {
         );
 
         // finish all staged writes
-        self.info.prepare_world_staged_bytes = write_staging.active_chunk_sizes().sum::<u64>();
-        write_staging.finish();
+        self.info.prepare_world_staged_bytes = write_staging.total_staged();
+        drop(write_staging);
         self.wgpu_context.queue.submit([command_encoder.finish()]);
 
         // apply deferred scene commands
@@ -572,16 +570,18 @@ impl Renderer {
         ))
     }
 
-    pub fn info(&self) -> &RendererInfo {
-        &self.info
+    pub fn info(&self) -> RendererInfo {
+        self.info
     }
 }
 
-fn handle_commands(
+fn handle_commands<P>(
     command_receiver: &mut CommandReceiver,
-    write_staging: &mut WriteStaging,
+    write_staging: &mut WriteStagingTransaction<P>,
     scene: &mut Scene,
-) {
+) where
+    P: StagingBufferProvider,
+{
     // todo: don't take the queue, but pass the WriteStaging
     //
     // note: for now we handle everything on the same thread, having &mut access to
@@ -604,12 +604,15 @@ fn handle_commands(
     }
 }
 
-fn update_instance_buffer_and_draw_command(
+fn update_instance_buffer_and_draw_command<P>(
     world: &mut hecs::World,
     instance_buffer: &mut StagedTypedArrayBuffer<InstanceData>,
     draw_command_buffer: &mut DrawCommandBuffer,
-    write_staging: &mut WriteStaging,
-) -> bool {
+    write_staging: &mut WriteStagingTransaction<P>,
+) -> bool
+where
+    P: StagingBufferProvider,
+{
     // for now every draw call will only draw one instance, but we could do
     // instancing for real later.
     let mut first_instance = 0;

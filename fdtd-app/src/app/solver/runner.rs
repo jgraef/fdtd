@@ -86,7 +86,11 @@ impl SolverRunner {
         repaint_trigger: RepaintTrigger,
     ) -> Self {
         Self {
-            fdtd_wgpu: FdtdWgpuBackend::new(&wgpu_context.device, &wgpu_context.queue),
+            fdtd_wgpu: FdtdWgpuBackend::new(
+                wgpu_context.device.clone(),
+                wgpu_context.queue.clone(),
+                wgpu_context.staging_pool.clone(),
+            ),
             render_resource_creator: render_resource_creator.clone(),
             repaint_trigger,
         }
@@ -344,8 +348,8 @@ fn spawn_solver<Instance>(
 {
     let _join_handle = std::thread::spawn(move || {
         let time_start = Instant::now();
-        //let step_duration = Some(Duration::from_millis(10));
-        let step_duration: Option<Duration> = None;
+        let step_duration = Some(Duration::from_millis(10));
+        //let step_duration: Option<Duration> = None;
         let observation_duration = Some(Duration::from_millis(1000 / 25));
         let mut time_last_observation: Option<Instant> = None;
 
@@ -495,7 +499,7 @@ impl<P> Observers<P> {
                             material::LoadAlbedoTexture::new(receiver).with_transparency(false),
                             material::Material::from_albedo(Srgba::WHITE)
                                 .with_metalness(0.0)
-                                .with_roughness(0.0),
+                                .with_roughness(1.0),
                         ),
                     );
 

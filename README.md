@@ -6,8 +6,6 @@ This app is work-in-progress. It's intended to model electromagnetic behavior. I
 
  - staging belt:
   - read (gpu to host)
-  - make WriteStaging a trait implemented by StagingBelt and a OneTimeStaging
-  - SharedStagingBelt: staging belts that share a common pool of free chunks
  - limit how often a running solver projects into textures. done, but needs to be in config somewhere
  - make observers selectable in scene and tree view. the tree view should have a separate category for it. put something into the tree view (and context menus) to show/hide entities. speaking of context menus. i think they're not implemented for the tree view.
  - PRs for `egui_ltreeview`

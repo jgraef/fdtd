@@ -121,7 +121,7 @@ impl App {
             || Box::new(Simulation::cpu_single_threaded(&config)) as Box<dyn ErasedSimulation>;
 
         let simulation = if args.wgpu {
-            Box::new(Simulation::wgpu(&config, &device, &queue)) as Box<dyn ErasedSimulation>
+            Box::new(Simulation::wgpu(&config, device, queue)) as Box<dyn ErasedSimulation>
         }
         else if let Some(num_threads) = args.threads {
             #[cfg(not(feature = "rayon"))]
@@ -296,8 +296,8 @@ where
 }
 
 impl Simulation<FdtdWgpuSolverInstance> {
-    pub fn wgpu(config: &FdtdSolverConfig, device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
-        let backend = FdtdWgpuBackend::new(device, queue);
+    pub fn wgpu(config: &FdtdSolverConfig, device: wgpu::Device, queue: wgpu::Queue) -> Self {
+        let backend = FdtdWgpuBackend::new(device, queue, Default::default());
         Self::new(&backend, config, "wgpu")
     }
 }

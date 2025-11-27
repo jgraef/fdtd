@@ -41,7 +41,6 @@ pub struct App {
     composer: Composer,
     file_dialog: FileDialog,
     show_about: bool,
-    show_debug: bool,
 }
 
 impl App {
@@ -91,7 +90,6 @@ impl App {
             composer,
             file_dialog,
             show_about: false,
-            show_debug: false,
         }
     }
 
@@ -163,11 +161,16 @@ impl eframe::App for App {
                 // wgpu info?)
             });
 
+        let debug_open_id = egui::Id::new("debug_open");
+        let mut debug_open = ctx
+            .data_mut(|data| data.get_persisted(debug_open_id))
+            .unwrap_or_default();
+        let debug_open_before = debug_open;
         egui::Window::new("Debug Info")
             .movable(true)
             .default_size([300.0, 300.0])
             .max_size([f32::INFINITY, f32::INFINITY])
-            .open(&mut self.show_debug)
+            .open(&mut debug_open)
             .show(ctx, |ui| {
                 egui::ScrollArea::vertical()
                     .id_salt("debug_panel")
@@ -190,6 +193,9 @@ impl eframe::App for App {
                     });
                 ui.take_available_space();
             });
+        if debug_open != debug_open_before {
+            ctx.data_mut(|data| data.insert_persisted(debug_open_id, debug_open))
+        }
 
         self.file_dialog.update(ctx);
         if let Some(path) = self.file_dialog.take_picked() {

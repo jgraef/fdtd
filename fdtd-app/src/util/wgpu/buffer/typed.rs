@@ -15,7 +15,10 @@ use bytemuck::Pod;
 use crate::util::{
     normalize_index_bounds,
     oneshot,
-    wgpu::buffer::staging::WriteStaging,
+    wgpu::buffer::{
+        StagingBufferProvider,
+        WriteStagingTransaction,
+    },
 };
 
 // note: this is intentionally not Clone
@@ -209,11 +212,14 @@ where
             })
     }
 
-    pub fn write_view<'buffer, 'staging>(
+    pub fn write_view<'buffer, 'staging, P>(
         &'buffer mut self,
         range: impl RangeBounds<usize>,
-        staging: &mut WriteStaging<'staging>,
-    ) -> TypedArrayBufferWriteView<'buffer, 'staging, T> {
+        staging: &mut WriteStagingTransaction<'staging, P>,
+    ) -> TypedArrayBufferWriteView<'buffer, 'staging, T>
+    where
+        P: StagingBufferProvider,
+    {
         self.inner
             .as_mut()
             .and_then(|inner| {
@@ -304,12 +310,15 @@ where
         }
     }
 
-    pub fn write_all(
+    pub fn write_all<P>(
         &mut self,
         data: &[T],
         mut on_reallocate: impl FnMut(&wgpu::Buffer),
-        staging: &mut WriteStaging,
-    ) -> bool {
+        staging: &mut WriteStagingTransaction<P>,
+    ) -> bool
+    where
+        P: StagingBufferProvider,
+    {
         let did_reallocate = self.reallocate_for_size(
             data.len(),
             Some(
@@ -513,11 +522,14 @@ pub struct TypedArrayBufferWriteView<'buffer, 'staging, T> {
 }
 
 impl<'buffer, 'staging, T> TypedArrayBufferWriteView<'buffer, 'staging, T> {
-    fn new(
+    fn new<P>(
         index_range: Range<usize>,
         inner: &'buffer TypedArrayBufferInner,
-        staging: &mut WriteStaging<'staging>,
-    ) -> Self {
+        staging: &mut WriteStagingTransaction<'staging, P>,
+    ) -> Self
+    where
+        P: StagingBufferProvider,
+    {
         let alignment =
             StagingBufferAlignment::from_unaligned_buffer_range_typed::<T>(index_range.clone());
 

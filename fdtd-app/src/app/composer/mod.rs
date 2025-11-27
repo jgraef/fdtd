@@ -268,15 +268,30 @@ impl Composer {
     pub fn show_debug(&mut self, ui: &mut egui::Ui) {
         ui.collapsing("Renderer", |ui| {
             let renderer_info = self.renderer.info();
+            let staging_belt_info = self.renderer.wgpu_context().staging_pool.info();
 
             ui.label(format!(
                 "Prepare world time: {:?}",
                 renderer_info.prepare_world_time
             ));
-            ui.label(format!(
-                "Staged last frame: {}",
-                format_size(renderer_info.prepare_world_staged_bytes)
-            ));
+
+            ui.label("Staging belt:");
+            ui.indent(Id::NULL, |ui| {
+                ui.label(format!(
+                    "Bytes last frame: {}",
+                    renderer_info.prepare_world_staged_bytes
+                ));
+                ui.label(format!(
+                    "In-flight chunks: {}",
+                    staging_belt_info.in_flight_count
+                ));
+                ui.label(format!("Free chunks: {}", staging_belt_info.free_count));
+                ui.label(format!(
+                    "Total allocations: {} chunks, {}",
+                    staging_belt_info.total_allocation_count,
+                    format_size(staging_belt_info.total_allocation_bytes)
+                ));
+            });
 
             if let Some(state) = &mut self.state {
                 ui.separator();
