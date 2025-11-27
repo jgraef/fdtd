@@ -695,6 +695,4 @@ pub(super) fn update_mesh_bind_groups(
         tracing::debug!(?label, "updating mesh bind group");
         update_mesh_bind_group(entity, mesh, albedo_texture, material_texture, label);
     }
-
-    scene.apply_deferred();
 }

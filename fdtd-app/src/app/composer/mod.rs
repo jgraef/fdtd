@@ -127,6 +127,7 @@ use crate::{
         PhysicalConstants,
         material::Material,
     },
+    util::format_size,
 };
 
 /// Scene composer widget.
@@ -254,6 +255,19 @@ impl Composer {
     }
 
     pub fn show_debug(&mut self, ui: &mut egui::Ui) {
+        ui.collapsing("Renderer", |ui| {
+            let renderer_info = self.renderer.info();
+
+            ui.label(format!(
+                "Prepare world time: {:?}",
+                renderer_info.prepare_world_time
+            ));
+            ui.label(format!(
+                "Staged last frame: {}",
+                format_size(renderer_info.prepare_world_staged_bytes)
+            ));
+        });
+
         if let Some(state) = &mut self.state {
             ui.collapsing("Undo Buffer", |ui| {
                 ui.label("Undo:");

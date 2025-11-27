@@ -55,10 +55,11 @@ use crate::{
     },
     util::{
         normalize_point_bounds,
-        wgpu::{
+        wgpu::buffer::{
             StagedTypedArrayBuffer,
             TypedArrayBuffer,
             TypedArrayBufferReadView,
+            WriteStaging,
         },
     },
 };
@@ -176,7 +177,7 @@ impl FdtdWgpuSolverInstance {
             });
 
         let material_buffer = TypedArrayBuffer::from_fn(
-            &backend.device,
+            backend.device.clone(),
             "fdtd/material",
             num_cells,
             wgpu::BufferUsages::STORAGE,
@@ -288,7 +289,7 @@ impl FdtdWgpuSolverState {
             SwapBuffer::from_fn(|_| {
                 let buffer = |label| {
                     TypedArrayBuffer::from_fn(
-                        &instance.backend.device,
+                        instance.backend.device.clone(),
                         label,
                         instance.num_cells,
                         wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
@@ -303,7 +304,7 @@ impl FdtdWgpuSolverState {
         };
 
         let source_buffer = StagedTypedArrayBuffer::with_capacity(
-            &instance.backend.device,
+            instance.backend.device.clone(),
             "fdtd/sources",
             wgpu::BufferUsages::STORAGE,
             32,
@@ -341,7 +342,7 @@ pub struct FdtdWgpuUpdatePass<'a> {
 impl<'a> FdtdWgpuUpdatePass<'a> {
     fn new(instance: &'a FdtdWgpuSolverInstance, state: &'a mut FdtdWgpuSolverState) -> Self {
         // initialize source buffer
-        assert!(state.source_buffer.staging.is_empty());
+        assert!(state.source_buffer.host_staging.is_empty());
         state.source_buffer.push(SourceData::default());
 
         let swap_buffer_index = SwapBufferIndex::from_tick(state.tick + 1);
@@ -373,14 +374,26 @@ impl<'a> UpdatePassForcing<Point3<usize>> for FdtdWgpuUpdatePass<'a> {
 
 impl<'a> UpdatePass for FdtdWgpuUpdatePass<'a> {
     fn finish(self) {
+        let mut command_encoder =
+            self.instance
+                .backend
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("fdtd/update"),
+                });
+
+        let mut staging = WriteStaging::new(&self.instance.backend.device, &mut command_encoder);
+        //.with_belt(todo!());
+
         // write source data
-        let num_sources = self.state.source_buffer.staging.len();
-        self.state
-            .source_buffer
-            .flush(&self.instance.backend.queue, |new_buffer| {
+        let num_sources = self.state.source_buffer.host_staging.len();
+        self.state.source_buffer.flush(
+            |new_buffer| {
                 self.state.update_bind_groups =
                     BINDINGS.bind_group(self.instance, &self.state.field_buffers, new_buffer)
-            });
+            },
+            &mut staging,
+        );
 
         // update time
         // todo: would be nice if we could combine this with the command encoder
@@ -390,19 +403,12 @@ impl<'a> UpdatePass for FdtdWgpuUpdatePass<'a> {
             self.state.time,
             num_sources,
         );
-        self.instance.backend.queue.write_buffer(
-            &self.instance.config_buffer,
-            0,
+        staging.write_buffer_from_slice(
+            self.instance.config_buffer.slice(..),
             bytemuck::bytes_of(&config_data),
         );
 
-        let mut command_encoder =
-            self.instance
-                .backend
-                .device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("fdtd/update"),
-                });
+        staging.finish();
 
         // compute pass
         {

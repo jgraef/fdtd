@@ -27,26 +27,29 @@ use serde::{
 };
 use wgpu::util::DeviceExt;
 
-use crate::app::composer::{
-    properties::{
-        PropertiesUi,
-        TrackChanges,
-        label_and_value,
-    },
-    renderer::{
-        ClearColor,
-        draw_commands::DrawCommandEnablePipelineFlags,
-        light::{
-            AmbientLight,
-            PointLight,
+use crate::{
+    app::composer::{
+        properties::{
+            PropertiesUi,
+            TrackChanges,
+            label_and_value,
+        },
+        renderer::{
+            ClearColor,
+            draw_commands::DrawCommandEnablePipelineFlags,
+            light::{
+                AmbientLight,
+                PointLight,
+            },
+        },
+        scene::{
+            Changed,
+            Scene,
+            transform::Transform,
+            ui::ComponentUiHeading,
         },
     },
-    scene::{
-        Changed,
-        Scene,
-        transform::Transform,
-        ui::ComponentUiHeading,
-    },
+    util::wgpu::buffer::WriteStaging,
 };
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
@@ -193,11 +196,13 @@ impl CameraResources {
     pub fn update(
         &mut self,
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        write_staging: &mut WriteStaging,
         camera_data: &CameraData,
         updated_instance_buffer: Option<(&wgpu::BindGroupLayout, &wgpu::Buffer)>,
     ) {
-        queue.write_buffer(&self.buffer, 0, bytemuck::bytes_of(camera_data));
+        write_staging
+            .write_buffer_from_slice(self.buffer.slice(..), bytemuck::bytes_of(camera_data));
+
         if let Some((camera_bind_group_layout, instance_buffer)) = updated_instance_buffer {
             self.bind_group = create_camera_bind_group(
                 device,
@@ -399,7 +404,7 @@ impl PropertiesUi for CameraConfig {
 pub(super) fn update_cameras(
     scene: &mut Scene,
     device: &wgpu::Device,
-    queue: &wgpu::Queue,
+    write_staging: &mut WriteStaging,
     camera_bind_group_layout: &wgpu::BindGroupLayout,
     instance_buffer: &wgpu::Buffer,
     instance_buffer_reallocated: bool,
@@ -477,9 +482,6 @@ pub(super) fn update_cameras(
         scene.command_buffer.remove_one::<CameraResources>(entity);
     }
 
-    // apply commands
-    scene.apply_deferred();
-
     // update camera buffers
     let updated_instance_buffer =
         instance_buffer_reallocated.then_some((camera_bind_group_layout, instance_buffer));
@@ -511,6 +513,6 @@ pub(super) fn update_cameras(
             point_light,
             camera_config,
         );
-        camera_resources.update(device, queue, &camera_data, updated_instance_buffer);
+        camera_resources.update(device, write_staging, &camera_data, updated_instance_buffer);
     }
 }

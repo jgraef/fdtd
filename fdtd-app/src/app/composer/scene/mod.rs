@@ -144,6 +144,7 @@ impl Scene {
     /// E.g. this updates the internal octtree used for spatial queries
     pub fn prepare(&mut self) {
         self.apply_deferred();
+
         self.spatial_queries
             .update(&mut self.entities, &mut self.command_buffer);
 

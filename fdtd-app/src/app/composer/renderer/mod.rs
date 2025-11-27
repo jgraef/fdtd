@@ -12,6 +12,10 @@ pub mod texture_channel;
 use std::{
     num::NonZero,
     sync::Arc,
+    time::{
+        Duration,
+        Instant,
+    },
 };
 
 use bitflags::bitflags;
@@ -37,6 +41,8 @@ use crate::{
                 PropertiesUi,
                 TrackChanges,
                 label_and_value,
+                label_and_value_with_config,
+                std::NumericPropertyUiConfig,
             },
             renderer::{
                 camera::{
@@ -46,6 +52,7 @@ use crate::{
                 command::{
                     Command,
                     CommandQueue,
+                    CommandReceiver,
                 },
                 draw_commands::{
                     DrawCommand,
@@ -90,8 +97,12 @@ use crate::{
         },
     },
     util::wgpu::{
-        StagedTypedArrayBuffer,
         WriteImageToTextureExt,
+        buffer::{
+            StagedTypedArrayBuffer,
+            WriteStaging,
+            WriteStagingBelt,
+        },
         create_texture_from_color,
         create_texture_view_from_texture,
     },
@@ -197,6 +208,10 @@ pub struct Renderer {
     /// are e.g. handed out to
     /// [`TextureSender`s](texture_channel::TextureSender).
     command_queue: CommandQueue,
+
+    write_staging_belt: WriteStagingBelt,
+
+    info: RendererInfo,
 }
 
 impl Renderer {
@@ -336,7 +351,7 @@ impl Renderer {
                 camera_bind_group_layout: &camera_bind_group_layout,
                 mesh_bind_group_layout: &mesh_bind_group_layout,
                 shader_module: &mesh_shader_module,
-                depth_state: DepthState::new(true, wgpu::CompareFunction::Less),
+                depth_state: DepthState::new(false, wgpu::CompareFunction::Less),
                 stencil_state: wgpu::StencilState::new(Some(Stencil::OUTLINE), None),
                 topology: wgpu::PrimitiveTopology::TriangleList,
                 vertex_shader_entry_point: "vs_main_solid",
@@ -389,7 +404,7 @@ impl Renderer {
         );
 
         let instance_buffer = StagedTypedArrayBuffer::with_capacity(
-            &context.wgpu_context.device,
+            context.wgpu_context.device.clone(),
             "instance buffer",
             wgpu::BufferUsages::STORAGE,
             128,
@@ -397,6 +412,12 @@ impl Renderer {
         assert!(instance_buffer.buffer.is_allocated());
 
         let fallbacks = Fallbacks::new(&context.wgpu_context.device, &context.wgpu_context.queue);
+
+        // 1 MB chunks
+        let write_staging_belt = WriteStagingBelt::new(
+            wgpu::BufferSize::new(0x100000).unwrap(),
+            "render/staging/write/chunk",
+        );
 
         Self {
             wgpu_context: context.wgpu_context.clone(),
@@ -414,6 +435,8 @@ impl Renderer {
             draw_command_buffer: Default::default(),
             fallbacks,
             command_queue: CommandQueue::new(512),
+            write_staging_belt,
+            info: Default::default(),
         }
     }
 
@@ -434,8 +457,20 @@ impl Renderer {
     /// `Arc<Vec<_>>`, so they're cheap to clone (which is done in
     /// [`Self::prepare_frame`]).
     pub fn prepare_world(&mut self, scene: &mut Scene) {
+        let time_start = Instant::now();
+
+        let mut command_encoder =
+            self.wgpu_context
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("render/prepare_world"),
+                });
+
+        let mut write_staging = WriteStaging::new(&self.wgpu_context.device, &mut command_encoder)
+            .with_belt(&mut self.write_staging_belt);
+
         // handle command queue
-        self.handle_commands();
+        handle_commands(&mut self.command_queue.receiver, &mut write_staging);
 
         // generate meshes (for rendering) for objects that don't have them yet.
         mesh::update_mesh_bind_groups(
@@ -450,82 +485,36 @@ impl Renderer {
         // commands to render their scenes from different cameras.
         // the draw commands are stored in an `Arc<Vec<_>>`, so they can be easily sent
         // via paint callbacks.
-        let instance_buffer_reallocated =
-            self.update_instance_buffer_and_draw_command(&mut scene.entities);
+        let instance_buffer_reallocated = update_instance_buffer_and_draw_command(
+            &mut scene.entities,
+            &mut self.instance_buffer,
+            &mut self.draw_command_buffer,
+            &mut write_staging,
+        );
 
         // update cameras
+        //
+        // note: this is done after the instance buffer has been filled, because we'll
+        // know if it was reallocated. the instance buffer is in the camera bind group,
+        // and that will need to be recreated in this case.
         camera::update_cameras(
             scene,
             &self.wgpu_context.device,
-            &self.wgpu_context.queue,
+            &mut write_staging,
             &self.camera_bind_group_layout,
             self.instance_buffer.buffer.buffer().unwrap(),
             instance_buffer_reallocated,
         );
-    }
 
-    fn update_instance_buffer_and_draw_command(&mut self, world: &mut hecs::World) -> bool {
-        // for now every draw call will only draw one instance, but we could do
-        // instancing for real later.
-        let mut first_instance = 0;
-        let mut instances = || {
-            let instances = first_instance..(first_instance + 1);
-            first_instance += 1;
-            instances
-        };
+        // finish all staged writes
+        self.info.prepare_world_staged_bytes = write_staging.active_chunk_sizes().sum::<u64>();
+        write_staging.finish();
+        self.wgpu_context.queue.submit([command_encoder.finish()]);
 
-        // this is the second time I have a bug with this. keep this assert!
-        assert!(
-            self.instance_buffer.staging.is_empty(),
-            "instance scratch buffer hasn't been cleared yet"
-        );
+        // apply deferred scene commands
+        scene.apply_deferred();
 
-        // prepare the actual draw commands
-        let mut draw_command_builder = self.draw_command_buffer.builder();
-
-        // draw meshes (opaque, transparent, wireframe, outlines)
-        for (
-            _,
-            (transform, mesh, mesh_bind_group, material, albedo_texture, material_texture, outline),
-        ) in world
-            .query_mut::<(
-                &Transform,
-                &Mesh,
-                &MeshBindGroup,
-                Option<&Material>,
-                Option<&AlbedoTexture>,
-                Option<&MaterialTexture>,
-                Option<&Outline>,
-            )>()
-            .without::<&Hidden>()
-        {
-            // write per-instance data into a buffer
-            self.instance_buffer.push(InstanceData::new_mesh(
-                transform,
-                mesh,
-                material,
-                albedo_texture,
-                material_texture,
-                outline,
-            ));
-
-            let transparent = material
-                .is_some_and(|material| material.transparent)
-                .then(|| transform.position());
-
-            // prepare draw commands
-            draw_command_builder.draw_mesh(
-                instances(),
-                mesh,
-                mesh_bind_group,
-                outline.is_some(),
-                transparent,
-            );
-        }
-
-        // send instance data to gpu
-        self.instance_buffer
-            .flush(&self.wgpu_context.queue, |_buffer| {})
+        self.info.prepare_world_time = time_start.elapsed();
     }
 
     /// Prepares rendering a frame for a specific view.
@@ -582,21 +571,95 @@ impl Renderer {
         ))
     }
 
-    fn handle_commands(&mut self) {
-        // note: for now we handle everything on the same thread, having &mut access to
-        // the whole renderer. but many commands we would better handle in a separate
-        // thread (e.g. ones that only require access to device/queue).
+    pub fn info(&self) -> &RendererInfo {
+        &self.info
+    }
+}
 
-        for command in self.command_queue.receiver.drain() {
-            match command {
-                Command::CopyImageToTexture(command) => {
-                    command.handle(|image, texture| {
-                        image.write_to_texture(&self.wgpu_context.queue, texture);
-                    });
-                }
+fn handle_commands(command_receiver: &mut CommandReceiver, write_staging: &mut WriteStaging) {
+    // todo: don't take the queue, but pass the WriteStaging
+    //
+    // note: for now we handle everything on the same thread, having &mut access to
+    // the whole renderer. but many commands we would better handle in a separate
+    // thread (e.g. ones that only require access to device/queue).
+
+    for command in command_receiver.drain() {
+        match command {
+            Command::CopyImageToTexture(command) => {
+                command.handle(|image, texture| {
+                    image.write_to_texture(texture, write_staging);
+                });
             }
         }
     }
+}
+
+fn update_instance_buffer_and_draw_command(
+    world: &mut hecs::World,
+    instance_buffer: &mut StagedTypedArrayBuffer<InstanceData>,
+    draw_command_buffer: &mut DrawCommandBuffer,
+    write_staging: &mut WriteStaging,
+) -> bool {
+    // for now every draw call will only draw one instance, but we could do
+    // instancing for real later.
+    let mut first_instance = 0;
+    let mut instances = || {
+        let instances = first_instance..(first_instance + 1);
+        first_instance += 1;
+        instances
+    };
+
+    // this is the second time I have a bug with this. keep this assert!
+    assert!(
+        instance_buffer.host_staging.is_empty(),
+        "instance scratch buffer hasn't been cleared yet"
+    );
+
+    // prepare the actual draw commands
+    let mut draw_command_builder = draw_command_buffer.builder();
+
+    // draw meshes (opaque, transparent, wireframe, outlines)
+    for (
+        _,
+        (transform, mesh, mesh_bind_group, material, albedo_texture, material_texture, outline),
+    ) in world
+        .query_mut::<(
+            &Transform,
+            &Mesh,
+            &MeshBindGroup,
+            Option<&Material>,
+            Option<&AlbedoTexture>,
+            Option<&MaterialTexture>,
+            Option<&Outline>,
+        )>()
+        .without::<&Hidden>()
+    {
+        // write per-instance data into a buffer
+        instance_buffer.push(InstanceData::new_mesh(
+            transform,
+            mesh,
+            material,
+            albedo_texture,
+            material_texture,
+            outline,
+        ));
+
+        let transparent = material
+            .is_some_and(|material| material.transparent)
+            .then(|| transform.position());
+
+        // prepare draw commands
+        draw_command_builder.draw_mesh(
+            instances(),
+            mesh,
+            mesh_bind_group,
+            outline.is_some(),
+            transparent,
+        );
+    }
+
+    // send instance data to gpu
+    instance_buffer.flush(|_buffer| {}, write_staging)
 }
 
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
@@ -699,7 +762,13 @@ impl PropertiesUi for Outline {
         let response = egui::Frame::new()
             .show(ui, |ui| {
                 label_and_value(ui, "Color", &mut changes, &mut self.color);
-                label_and_value(ui, "Thickness", &mut changes, &mut self.thickness);
+                label_and_value_with_config(
+                    ui,
+                    "Thickness",
+                    &mut changes,
+                    &mut self.thickness,
+                    &NumericPropertyUiConfig::Slider { range: 0.0..=10.0 },
+                );
             })
             .response;
 
@@ -798,4 +867,10 @@ impl Fallbacks {
             vertex_buffer,
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct RendererInfo {
+    pub prepare_world_staged_bytes: u64,
+    pub prepare_world_time: Duration,
 }

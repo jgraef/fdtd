@@ -1,5 +1,6 @@
 pub mod arena;
 pub mod egui;
+pub mod oneshot;
 pub mod palette;
 pub mod serde;
 pub mod wgpu;
