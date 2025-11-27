@@ -60,6 +60,7 @@ use crate::{
             TypedArrayBuffer,
             TypedArrayBufferReadView,
             WriteStaging,
+            WriteStagingBelt,
         },
     },
 };
@@ -278,6 +279,11 @@ pub struct FdtdWgpuSolverState {
     field_buffers: SwapBuffer<FieldBuffers>,
     source_buffer: StagedTypedArrayBuffer<SourceData>,
     update_bind_groups: SwapBuffer<wgpu::BindGroup>,
+
+    // note: we can't share a staging belt between multiple states or even instances, because the
+    // recalls will race. thus it needs to be in the state for now
+    staging_belt: WriteStagingBelt,
+
     tick: usize,
     time: f64,
 }
@@ -312,10 +318,14 @@ impl FdtdWgpuSolverState {
         let update_bind_groups =
             BINDINGS.bind_group(instance, &field_buffers, source_buffer.buffer.buffer().expect("source buffer should have a gpu buffer allocated because it is initialized with an non-zero initial capacity"));
 
+        let staging_belt =
+            WriteStagingBelt::new(wgpu::BufferSize::new(0x1000).unwrap(), "fdtd/staging");
+
         Self {
             field_buffers,
             source_buffer,
             update_bind_groups,
+            staging_belt,
             tick: 0,
             time: 0.0,
         }
@@ -382,8 +392,8 @@ impl<'a> UpdatePass for FdtdWgpuUpdatePass<'a> {
                     label: Some("fdtd/update"),
                 });
 
-        let mut staging = WriteStaging::new(&self.instance.backend.device, &mut command_encoder);
-        //.with_belt(todo!());
+        let mut staging = WriteStaging::new(&self.instance.backend.device, &mut command_encoder)
+            .with_belt(&mut self.state.staging_belt);
 
         // write source data
         let num_sources = self.state.source_buffer.host_staging.len();
