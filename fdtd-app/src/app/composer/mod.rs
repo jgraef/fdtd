@@ -27,6 +27,14 @@ use nalgebra::{
     Vector2,
     Vector3,
 };
+use palette::{
+    Srgba,
+    WithAlpha,
+};
+use parry3d::shape::{
+    Ball,
+    Cuboid,
+};
 use serde::{
     Deserialize,
     Serialize,
@@ -109,7 +117,10 @@ use crate::{
                 StopCondition,
                 Volume,
             },
-            fdtd,
+            fdtd::{
+                self,
+                pml::GradedPml,
+            },
             observer::{
                 Observer,
                 test_color_map,
@@ -137,9 +148,12 @@ use crate::{
         PhysicalConstants,
         material::Material,
     },
-    util::egui::{
-        EguiUtilContextExt,
-        EguiUtilUiExt,
+    util::{
+        egui::{
+            EguiUtilContextExt,
+            EguiUtilUiExt,
+        },
+        palette::ColorExt,
     },
 };
 
@@ -817,8 +831,10 @@ impl PopulateScene for ExampleScene {
     type Error = Infallible;
 
     fn populate_scene(&self, scene: &mut Scene) -> Result<(), Self::Error> {
-        let cube = |size| parry3d::shape::Cuboid::new(Vector3::repeat(size));
-        let ball = |size| parry3d::shape::Ball::new(size);
+        // device
+
+        let cube = |size| Cuboid::new(Vector3::repeat(size));
+        let ball = |size| Ball::new(size);
 
         let em_material = crate::physics::material::Material {
             relative_permittivity: 3.9,
@@ -838,35 +854,37 @@ impl PopulateScene for ExampleScene {
             .spawn(scene);
         scene.entities.attach::<()>(ball, cube).unwrap();
 
-        /*scene
-            .add_object(Point3::new(0.2, 0.0, 0.0), shape(0.1))
-            .material(palette::named::BLUE)
-            .add(em_material);
+        // pml
 
-        scene
-            .add_object(Point3::new(0.0, -0.2, 0.0), shape(0.1))
-            .material(palette::named::LIME)
-            .add(em_material);
+        {
+            let cuboid = Cuboid::new(Vector3::new(0.05, 0.5, 0.5));
+            let transform = LocalTransform::from(Point3::new(-0.45, 0.0, 0.0));
+            let normal = Vector3::x_axis();
+            let pml = GradedPml {
+                m: 4.0,
+                m_a: 3.0,
+                sigma_max: 2.5,
+                kappa_max: 2.5,
+                a_max: 0.1,
+                normal,
+            };
+            scene.entities.spawn((
+                Label::new_static("PML"),
+                pml,
+                transform,
+                Collider::from(cuboid),
+                ShowInTree,
+                material::Wireframe::new(palette::named::PURPLE.into_format().with_alpha(1.0)),
+                LoadMesh::from_shape(cuboid, ()),
+            ));
+        }
 
-        scene
-            .add_object(Point3::new(0.0, 0.2, 0.0), shape(0.1))
-            .material(palette::named::YELLOW)
-            .add(em_material);
-
-        scene
-            .add_object(Point3::new(-0.02, -0.02, 0.2), shape(0.05))
-            .material(palette::named::MAGENTA)
-            .add(em_material);
-
-        scene
-            .add_object(Point3::new(0.02, 0.02, -0.2), shape(0.05))
-            .material(palette::named::CYAN)
-            .add(em_material);*/
+        // observer
 
         let half_extents = Vector2::repeat(0.5);
         let quad = Quad::new(half_extents);
         scene.entities.spawn((
-            Label::new_static("Test Observer"),
+            Label::new_static("Observer"),
             Observer {
                 write_to_gif: None,
                 display_as_texture: true,
@@ -882,6 +900,8 @@ impl PopulateScene for ExampleScene {
             ShowInTree,
             LoadMesh::from_shape(quad, QuadMeshConfig { back_face: true }),
         ));
+
+        // source
 
         scene.entities.spawn((
             Source::from(

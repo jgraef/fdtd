@@ -39,7 +39,7 @@ use crate::{
         },
         renderer::{
             ClearColor,
-            draw_commands::DrawCommandEnablePipelineFlags,
+            draw_commands::DrawCommandFlags,
             light::{
                 AmbientLight,
                 PointLight,
@@ -327,36 +327,21 @@ pub struct CameraConfig {
     pub show_mesh_opaque: bool,
     pub show_mesh_transparent: bool,
     pub show_wireframe: bool,
+    pub show_debug_wireframe: bool,
     pub show_outline: bool,
     pub tone_map: bool,
 }
 
 impl CameraConfig {
-    pub fn apply_to_pipeline_enable_flags(
-        &self,
-        pipeline_enable_flags: &mut DrawCommandEnablePipelineFlags,
-    ) {
-        // note: if we didn't set them individually like this, turning transparent
-        // meshes off, would turn the mesh flag off, rendering no meshes at all. but we
-        // also don't want to assume we're starting from an empty bitflags.
-        pipeline_enable_flags.set(
-            DrawCommandEnablePipelineFlags::OPAQUE,
-            self.show_mesh_opaque,
-        );
-        pipeline_enable_flags.set(
-            DrawCommandEnablePipelineFlags::TRANSPARENT,
+    pub fn apply_to_draw_command_flags(&self, flags: &mut DrawCommandFlags) {
+        flags.set(DrawCommandFlags::MESH_OPAQUE, self.show_mesh_opaque);
+        flags.set(
+            DrawCommandFlags::MESH_TRANSPARENT,
             self.show_mesh_transparent,
         );
-        pipeline_enable_flags.set(
-            DrawCommandEnablePipelineFlags::MESH,
-            self.show_mesh_opaque || self.show_mesh_transparent,
-        );
-
-        pipeline_enable_flags.set(
-            DrawCommandEnablePipelineFlags::WIREFRAME,
-            self.show_wireframe,
-        );
-        pipeline_enable_flags.set(DrawCommandEnablePipelineFlags::OUTLINE, self.show_outline);
+        flags.set(DrawCommandFlags::WIREFRAME, self.show_wireframe);
+        flags.set(DrawCommandFlags::DEBUG_WIREFRAME, self.show_debug_wireframe);
+        flags.set(DrawCommandFlags::OUTLINE, self.show_outline);
     }
 }
 
@@ -365,7 +350,8 @@ impl Default for CameraConfig {
         Self {
             show_mesh_opaque: true,
             show_mesh_transparent: true,
-            show_wireframe: false,
+            show_wireframe: true,
+            show_debug_wireframe: false,
             show_outline: true,
             tone_map: true,
         }
@@ -388,18 +374,24 @@ impl PropertiesUi for CameraConfig {
             .show(ui, |ui: &mut egui::Ui| {
                 label_and_value(
                     ui,
-                    "Show Mesh (Opaque)",
+                    "Mesh (Opaque)",
                     &mut changes,
                     &mut self.show_mesh_opaque,
                 );
                 label_and_value(
                     ui,
-                    "Show Mesh (Transparent)",
+                    "Mesh (Transparent)",
                     &mut changes,
                     &mut self.show_mesh_transparent,
                 );
-                label_and_value(ui, "Show Wireframe", &mut changes, &mut self.show_wireframe);
-                label_and_value(ui, "Show Outline", &mut changes, &mut self.show_outline);
+                label_and_value(ui, "Wireframe", &mut changes, &mut self.show_wireframe);
+                label_and_value(
+                    ui,
+                    "Debug Wireframe",
+                    &mut changes,
+                    &mut self.show_debug_wireframe,
+                );
+                label_and_value(ui, "Outline", &mut changes, &mut self.show_outline);
                 label_and_value(ui, "Tone Map", &mut changes, &mut self.tone_map);
             })
             .response;

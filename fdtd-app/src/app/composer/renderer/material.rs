@@ -55,20 +55,15 @@ pub mod presets {
 
     use palette::{
         Srgb,
-        Srgba,
         WithAlpha,
     };
     pub use pbr_presets::*;
 
-    use crate::{
-        app::composer::renderer::material::Material,
-        util::palette::ColorExt as _,
-    };
+    use crate::app::composer::renderer::material::Material;
 
     impl From<MaterialPreset> for Material {
         fn from(value: MaterialPreset) -> Self {
             Material {
-                wireframe: Srgba::BLACK,
                 albedo: Srgb::from_linear(value.albedo).with_alpha(1.0),
                 metalness: value.metalness,
                 roughness: value.roughness,
@@ -101,9 +96,6 @@ pub mod presets {
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
 pub struct Material {
     #[serde(with = "crate::util::serde::palette")]
-    pub wireframe: Srgba,
-
-    #[serde(with = "crate::util::serde::palette")]
     pub albedo: Srgba,
 
     pub metalness: f32,
@@ -125,7 +117,6 @@ impl Material {
         let albedo: Srgba = color.into();
         let transparent = albedo.alpha < 1.0;
         Self {
-            wireframe: Srgba::BLACK,
             albedo,
             metalness: 0.0,
             roughness: 0.0,
@@ -245,7 +236,6 @@ impl PropertiesUi for Material {
                     }
                 }
 
-                label_and_value(ui, "Wireframe", &mut changes, &mut self.wireframe);
                 if self.transparent {
                     label_and_value(ui, "Albedo", &mut changes, &mut self.albedo);
                 }
@@ -290,6 +280,42 @@ impl PropertiesUi for Material {
             .response;
 
         changes.propagated(response)
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct Wireframe {
+    pub color: Srgba,
+}
+
+impl Wireframe {
+    pub fn new<C>(color: C) -> Self
+    where
+        Srgba: From<C>,
+    {
+        Self {
+            color: color.into(),
+        }
+    }
+}
+
+impl Default for Wireframe {
+    fn default() -> Self {
+        Self::new(Srgba::BLACK)
+    }
+}
+
+impl ComponentUiHeading for Wireframe {
+    fn heading(&self) -> impl Into<egui::RichText> {
+        "Wireframe"
+    }
+}
+
+impl PropertiesUi for Wireframe {
+    type Config = ();
+
+    fn properties_ui(&mut self, ui: &mut egui::Ui, _config: &Self::Config) -> egui::Response {
+        self.color.properties_ui(ui, &Default::default())
     }
 }
 
@@ -343,6 +369,7 @@ pub(super) struct MaterialData {
 impl MaterialData {
     pub fn new(
         material: Option<&Material>,
+        wireframe: Option<&Wireframe>,
         albedo_texture: Option<&AlbedoTexture>,
         material_texture: Option<&MaterialTexture>,
     ) -> Self {
@@ -368,7 +395,6 @@ impl MaterialData {
         }
 
         if let Some(material) = material {
-            data.wireframe = material.wireframe.into_linear();
             data.albedo = material.albedo.into_linear();
             data.alpha_threshold = material.alpha_threshold;
             if material.transparent {
@@ -380,6 +406,10 @@ impl MaterialData {
             if material.tone_map {
                 data.flags |= MaterialFlags::TONE_MAP.bits();
             }
+        }
+
+        if let Some(wireframe) = wireframe {
+            data.wireframe = wireframe.color.into_linear();
         }
 
         if let Some(material_texture) = material_texture {

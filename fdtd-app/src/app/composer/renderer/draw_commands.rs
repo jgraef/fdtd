@@ -3,7 +3,6 @@ use std::{
     ops::{
         Deref,
         DerefMut,
-        Index,
         Range,
     },
     sync::Arc,
@@ -54,31 +53,27 @@ impl DrawCommandBuffer {
         renderer: &Renderer,
         camera_bind_group: wgpu::BindGroup,
         camera_position: Point3<f32>,
-        options: DrawCommandOptions,
+        flags: DrawCommandFlags,
         camera_entity: hecs::Entity,
     ) -> DrawCommand {
         DrawCommand {
             camera_bind_group,
-            clear_pipeline: options
-                .pipeline_enable_flags
-                .contains(DrawCommandEnablePipelineFlags::CLEAR)
+            clear_pipeline: flags
+                .contains(DrawCommandFlags::CLEAR)
                 .then(|| renderer.clear_pipeline.pipeline.clone()),
             camera_position,
-            mesh_opaque_pipeline: options
-                .pipeline_enable_flags
-                .contains(DrawCommandEnablePipelineFlags::MESH_OPAQUE)
+            flags,
+            mesh_opaque_pipeline: flags
+                .contains(DrawCommandFlags::MESH_OPAQUE)
                 .then(|| renderer.mesh_opaque_pipeline.pipeline.clone()),
-            mesh_transparent_pipeline: options
-                .pipeline_enable_flags
-                .contains(DrawCommandEnablePipelineFlags::MESH_TRANSPARENT)
+            mesh_transparent_pipeline: flags
+                .contains(DrawCommandFlags::MESH_TRANSPARENT)
                 .then(|| renderer.mesh_transparent_pipeline.pipeline.clone()),
-            wireframe_pipeline: options
-                .pipeline_enable_flags
-                .contains(DrawCommandEnablePipelineFlags::WIREFRAME)
+            wireframe_pipeline: flags
+                .intersects(DrawCommandFlags::WIREFRAME | DrawCommandFlags::DEBUG_WIREFRAME)
                 .then(|| renderer.wireframe_pipeline.pipeline.clone()),
-            outline_pipeline: options
-                .pipeline_enable_flags
-                .contains(DrawCommandEnablePipelineFlags::OUTLINE)
+            outline_pipeline: flags
+                .contains(DrawCommandFlags::OUTLINE)
                 .then(|| renderer.outline_pipeline.pipeline.clone()),
             buffer: self.buffer.get(),
             camera_entity,
@@ -87,28 +82,15 @@ impl DrawCommandBuffer {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default)]
-pub struct DrawCommandOptions {
-    pub pipeline_enable_flags: DrawCommandEnablePipelineFlags,
-}
-
 bitflags! {
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-    pub struct DrawCommandEnablePipelineFlags: u32 {
-        const CLEAR            = 0b0000_0001;
-        const MESH             = 0b0000_0010;
-        const OPAQUE           = 0b0000_0100;
-        const TRANSPARENT      = 0b0000_1000;
-        const MESH_OPAQUE      = 0b0000_0110;
-        const MESH_TRANSPARENT = 0b0000_1010;
-        const WIREFRAME        = 0b0001_0000;
-        const OUTLINE          = 0b0010_0000;
-    }
-}
-
-impl Default for DrawCommandEnablePipelineFlags {
-    fn default() -> Self {
-        Self::all()
+    pub struct DrawCommandFlags: u32 {
+        const CLEAR            = 0x0000_0001;
+        const MESH_OPAQUE      = 0x0000_0002;
+        const MESH_TRANSPARENT = 0x0000_0004;
+        const WIREFRAME        = 0x0000_0008;
+        const OUTLINE          = 0x0000_0010;
+        const DEBUG_WIREFRAME  = 0x0000_0020;
     }
 }
 
@@ -123,72 +105,79 @@ impl<'a> DrawCommandBuilder<'a> {
         instances: Range<u32>,
         mesh: &Mesh,
         mesh_bind_group: &MeshBindGroup,
-        outline: bool,
         transparent: Option<Point3<f32>>,
     ) {
-        let mut stencil_reference = Stencil::empty();
-
-        if outline {
-            stencil_reference |= Stencil::OUTLINE;
-            let draw_mesh_index = self.buffer.draw_mesh_index(transparent.is_some());
-            self.buffer
-                .draw_outlines
-                .push(DrawOutline { draw_mesh_index });
-        }
-
         let draw_mesh = DrawMesh {
             instances,
             indices: mesh.indices.clone(),
             mesh_bind_group: mesh_bind_group.bind_group.clone(),
-            stencil_reference,
+            stencil_reference: Stencil::empty(),
+            depth_reference: transparent.unwrap_or_default(),
         };
 
-        if let Some(depth_reference) = transparent {
-            self.buffer
-                .draw_meshes_transparent
-                .push(DrawMeshTransparent {
-                    draw_mesh,
-                    depth_reference,
-                });
+        if transparent.is_some() {
+            self.buffer.draw_meshes_transparent.push(draw_mesh);
         }
         else {
             self.buffer.draw_meshes_opaque.push(draw_mesh);
         }
+    }
+
+    pub fn draw_outline(
+        &mut self,
+        instances: Range<u32>,
+        mesh: &Mesh,
+        mesh_bind_group: &MeshBindGroup,
+    ) {
+        self.buffer.draw_outlines.push(DrawMesh {
+            instances,
+            indices: mesh.indices.clone(),
+            mesh_bind_group: mesh_bind_group.bind_group.clone(),
+            stencil_reference: Stencil::OUTLINE,
+            depth_reference: Default::default(),
+        })
+    }
+
+    pub fn draw_wireframe(
+        &mut self,
+        instances: Range<u32>,
+        mesh: &Mesh,
+        mesh_bind_group: &MeshBindGroup,
+    ) {
+        self.buffer.draw_wireframes.push(DrawMesh {
+            instances,
+            indices: mesh.indices.clone(),
+            mesh_bind_group: mesh_bind_group.bind_group.clone(),
+            stencil_reference: Stencil::empty(),
+            depth_reference: Default::default(),
+        })
     }
 }
 
 #[derive(Debug, Default)]
 struct DrawCommandBuilderBuffer {
     draw_meshes_opaque: Vec<DrawMesh>,
-    draw_meshes_transparent: Vec<DrawMeshTransparent>,
-    draw_outlines: Vec<DrawOutline>,
+    draw_meshes_transparent: Vec<DrawMesh>,
+    draw_outlines: Vec<DrawMesh>,
+    draw_wireframes: Vec<DrawMesh>,
 }
 
 impl DrawCommandBuilderBuffer {
     fn clear(&mut self) {
-        self.draw_meshes_opaque.clear();
-        self.draw_meshes_transparent.clear();
-        self.draw_outlines.clear();
-    }
+        // note: we on purpose deconstruct here, so that we get a compiler error if we
+        // forget something.
 
-    fn draw_mesh_index(&self, transparent: bool) -> DrawMeshIndex {
-        if transparent {
-            DrawMeshIndex::Transparent(self.draw_meshes_transparent.len())
-        }
-        else {
-            DrawMeshIndex::Opaque(self.draw_meshes_opaque.len())
-        }
-    }
-}
+        let Self {
+            draw_meshes_opaque,
+            draw_meshes_transparent,
+            draw_outlines,
+            draw_wireframes,
+        } = self;
 
-impl Index<DrawMeshIndex> for DrawCommandBuilderBuffer {
-    type Output = DrawMesh;
-
-    fn index(&self, index: DrawMeshIndex) -> &Self::Output {
-        match index {
-            DrawMeshIndex::Opaque(index) => &self.draw_meshes_opaque[index],
-            DrawMeshIndex::Transparent(index) => &self.draw_meshes_transparent[index].draw_mesh,
-        }
+        draw_meshes_opaque.clear();
+        draw_meshes_transparent.clear();
+        draw_outlines.clear();
+        draw_wireframes.clear();
     }
 }
 
@@ -205,34 +194,19 @@ struct DrawMesh {
 
     /// the stencil reference to set before the draw call is issued.
     stencil_reference: Stencil,
-}
 
-#[derive(Debug)]
-struct DrawMeshTransparent {
-    draw_mesh: DrawMesh,
+    // depth reference used for transparent drawing
     depth_reference: Point3<f32>,
-}
-
-#[derive(Clone, Copy, Debug)]
-enum DrawMeshIndex {
-    Opaque(usize),
-    Transparent(usize),
-}
-
-#[derive(Clone, Copy, Debug)]
-struct DrawOutline {
-    // just point to the DrawMesh command
-    draw_mesh_index: DrawMeshIndex,
 }
 
 #[derive(Debug)]
 pub struct DrawCommand {
     camera_bind_group: wgpu::BindGroup,
     camera_position: Point3<f32>,
+    flags: DrawCommandFlags,
 
+    // pipelines
     clear_pipeline: Option<wgpu::RenderPipeline>,
-
-    // draw meshes
     mesh_opaque_pipeline: Option<wgpu::RenderPipeline>,
     mesh_transparent_pipeline: Option<wgpu::RenderPipeline>,
     wireframe_pipeline: Option<wgpu::RenderPipeline>,
@@ -284,7 +258,7 @@ impl DrawCommand {
                 .map(|draw_mesh| {
                     let distance_to_camera =
                         (draw_mesh.depth_reference - self.camera_position).norm_squared();
-                    (&draw_mesh.draw_mesh, distance_to_camera)
+                    (draw_mesh, distance_to_camera)
                 })
                 .collect::<Vec<_>>();
             draw_meshes_transparent_sorted.sort_unstable_by(|(_, a), (_, b)| {
@@ -301,19 +275,40 @@ impl DrawCommand {
         }
 
         // wireframe mesh
-        if let Some(wireframe_pipeline) = &self.wireframe_pipeline
-            && !self.buffer.draw_meshes_opaque.is_empty()
-        {
-            render_pass.draw_meshes_with_pipeline(
-                wireframe_pipeline,
-                &self.buffer.draw_meshes_opaque,
-                |Range { start, end }| {
-                    Range {
-                        start: 2 * start,
-                        end: 2 * end,
-                    }
-                },
-            );
+        if let Some(wireframe_pipeline) = &self.wireframe_pipeline {
+            let map_indices = |Range { start, end }| {
+                Range {
+                    start: 2 * start,
+                    end: 2 * end,
+                }
+            };
+
+            if self.flags.contains(DrawCommandFlags::DEBUG_WIREFRAME) {
+                if !self.buffer.draw_meshes_opaque.is_empty() {
+                    render_pass.draw_meshes_with_pipeline(
+                        wireframe_pipeline,
+                        &self.buffer.draw_meshes_opaque,
+                        map_indices,
+                    );
+                }
+                if !self.buffer.draw_meshes_transparent.is_empty() {
+                    render_pass.draw_meshes_with_pipeline(
+                        wireframe_pipeline,
+                        &self.buffer.draw_meshes_transparent,
+                        map_indices,
+                    );
+                }
+            }
+
+            if !self.buffer.draw_wireframes.is_empty()
+                && self.flags.contains(DrawCommandFlags::WIREFRAME)
+            {
+                render_pass.draw_meshes_with_pipeline(
+                    wireframe_pipeline,
+                    &self.buffer.draw_wireframes,
+                    map_indices,
+                );
+            }
         }
 
         // selection outline
@@ -322,10 +317,7 @@ impl DrawCommand {
         {
             render_pass.draw_meshes_with_pipeline(
                 outline_pipeline,
-                self.buffer
-                    .draw_outlines
-                    .iter()
-                    .map(|draw_outline| &self.buffer[draw_outline.draw_mesh_index]),
+                self.buffer.draw_outlines.iter(),
                 identity,
             );
         }
@@ -427,22 +419,5 @@ impl<'a> Deref for RenderPass<'a> {
 impl<'a> DerefMut for RenderPass<'a> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut *self.inner
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::app::composer::renderer::draw_commands::DrawCommandEnablePipelineFlags;
-
-    #[test]
-    fn test_bitflags() {
-        assert_eq!(
-            DrawCommandEnablePipelineFlags::MESH_OPAQUE,
-            DrawCommandEnablePipelineFlags::MESH | DrawCommandEnablePipelineFlags::OPAQUE
-        );
-        assert_eq!(
-            DrawCommandEnablePipelineFlags::MESH_TRANSPARENT,
-            DrawCommandEnablePipelineFlags::MESH | DrawCommandEnablePipelineFlags::TRANSPARENT
-        );
     }
 }

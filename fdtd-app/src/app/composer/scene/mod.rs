@@ -1,3 +1,4 @@
+pub mod buffer;
 pub mod serialize;
 pub mod spatial;
 pub mod transform;

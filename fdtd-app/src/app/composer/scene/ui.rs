@@ -219,7 +219,10 @@ mod show_all {
                 AmbientLight,
                 PointLight,
             },
-            material::Material,
+            material::{
+                Material,
+                Wireframe,
+            },
         },
         scene::{
             transform::{
@@ -296,6 +299,7 @@ mod show_all {
         show_component!(LocalTransform, Changed);
         show_component!(GlobalTransform);
         show_component!(Material, Changed);
+        show_component!(Wireframe, Changed);
         show_component!(PointLight);
         show_component!(AmbientLight);
         show_component!(Outline);
@@ -303,6 +307,7 @@ mod show_all {
         show_component!(Selectable);
         show_component!(Selected);
         show_component!(Aabb);
+
         // this then shows a checkbox to enable the despawn button lol
         //show_component!(EntityWindow);
     }

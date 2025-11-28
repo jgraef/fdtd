@@ -58,14 +58,14 @@ use crate::{
                 draw_commands::{
                     DrawCommand,
                     DrawCommandBuffer,
-                    DrawCommandEnablePipelineFlags,
-                    DrawCommandOptions,
+                    DrawCommandFlags,
                 },
                 material::{
                     AlbedoTexture,
                     Material,
                     MaterialData,
                     MaterialTexture,
+                    Wireframe,
                 },
                 mesh::{
                     Mesh,
@@ -87,6 +87,8 @@ use crate::{
                 resource::RenderResourceCreator,
             },
             scene::{
+                EntityDebugLabel,
+                Label,
                 Scene,
                 transform::GlobalTransform,
                 ui::ComponentUiHeading,
@@ -491,6 +493,7 @@ impl Renderer {
         // via paint callbacks.
         let instance_buffer_reallocated = update_instance_buffer_and_draw_command(
             &mut scene.entities,
+            &mut scene.command_buffer,
             &mut self.instance_buffer,
             &mut self.draw_command_buffer,
             &mut write_staging,
@@ -559,19 +562,17 @@ impl Renderer {
         // default to all, then apply configuration, so by default stuff will render and
         // we don't have to debug for 15 minutes to find that we don't enable the
         // pipeline
-        let mut pipeline_enable_flags = DrawCommandEnablePipelineFlags::all();
-        pipeline_enable_flags.set(DrawCommandEnablePipelineFlags::CLEAR, has_clear_color);
+        let mut draw_command_flags = DrawCommandFlags::all();
+        draw_command_flags.set(DrawCommandFlags::CLEAR, has_clear_color);
         if let Some(camera_config) = camera_config {
-            camera_config.apply_to_pipeline_enable_flags(&mut pipeline_enable_flags);
+            camera_config.apply_to_draw_command_flags(&mut draw_command_flags);
         }
 
         Some(self.draw_command_buffer.finish(
             self,
             camera_resources.bind_group.clone(),
             camera_transform.position(),
-            DrawCommandOptions {
-                pipeline_enable_flags,
-            },
+            draw_command_flags,
             camera_entity.entity(),
         ))
     }
@@ -612,6 +613,7 @@ fn handle_commands<P>(
 
 fn update_instance_buffer_and_draw_command<P>(
     world: &mut hecs::World,
+    command_buffer: &mut hecs::CommandBuffer,
     instance_buffer: &mut StagedTypedArrayBuffer<InstanceData>,
     draw_command_buffer: &mut DrawCommandBuffer,
     write_staging: &mut WriteStagingTransaction<P>,
@@ -622,7 +624,7 @@ where
     // for now every draw call will only draw one instance, but we could do
     // instancing for real later.
     let mut first_instance = 0;
-    let mut instances = || {
+    let mut next_instances = || {
         let instances = first_instance..(first_instance + 1);
         first_instance += 1;
         instances
@@ -639,42 +641,75 @@ where
 
     // draw meshes (opaque, transparent, wireframe, outlines)
     for (
-        _,
-        (transform, mesh, mesh_bind_group, material, albedo_texture, material_texture, outline),
+        entity,
+        (
+            label,
+            transform,
+            mesh,
+            mesh_bind_group,
+            material,
+            wireframe,
+            albedo_texture,
+            material_texture,
+            outline,
+        ),
     ) in world
         .query_mut::<(
+            Option<&Label>,
             &GlobalTransform,
             &Mesh,
             &MeshBindGroup,
             Option<&Material>,
+            Option<&Wireframe>,
             Option<&AlbedoTexture>,
             Option<&MaterialTexture>,
             Option<&Outline>,
         )>()
         .without::<&Hidden>()
     {
+        let has_material =
+            material.is_some() || albedo_texture.is_some() || material_texture.is_some();
+        let has_wireframe = wireframe.is_some();
+
+        if !has_material && !has_wireframe {
+            let label = EntityDebugLabel {
+                entity,
+                label: label.cloned(),
+                invalid: false,
+            };
+            tracing::warn!(entity = %label, "Entity with mesh, but without any materials or wiremesh. Attaching `Hidden` to it to prevent further render attempts");
+            command_buffer.insert_one(entity, Hidden);
+            continue;
+        }
+
         // write per-instance data into a buffer
         instance_buffer.push(InstanceData::new_mesh(
             transform,
             mesh,
             material,
+            wireframe,
             albedo_texture,
             material_texture,
             outline,
         ));
 
-        let transparent = material
-            .is_some_and(|material| material.transparent)
-            .then(|| transform.position());
+        let instances = next_instances();
 
-        // prepare draw commands
-        draw_command_builder.draw_mesh(
-            instances(),
-            mesh,
-            mesh_bind_group,
-            outline.is_some(),
-            transparent,
-        );
+        if has_material {
+            // if it is transparent we need to remember its position to later sort by
+            // distance from camera.
+            let transparent = material
+                .is_some_and(|material| material.transparent)
+                .then(|| transform.position());
+
+            draw_command_builder.draw_mesh(instances.clone(), mesh, mesh_bind_group, transparent);
+        }
+        if outline.is_some() {
+            draw_command_builder.draw_outline(instances.clone(), mesh, mesh_bind_group);
+        }
+        if has_wireframe {
+            draw_command_builder.draw_wireframe(instances.clone(), mesh, mesh_bind_group);
+        }
     }
 
     // send instance data to gpu
@@ -699,6 +734,7 @@ impl InstanceData {
         transform: &GlobalTransform,
         mesh: &Mesh,
         material: Option<&Material>,
+        wireframe: Option<&Wireframe>,
         albedo_texture: Option<&AlbedoTexture>,
         material_texture: Option<&MaterialTexture>,
         outline: Option<&Outline>,
@@ -724,7 +760,7 @@ impl InstanceData {
             base_vertex: mesh.base_vertex,
             outline_thickness,
             outline_color,
-            material: MaterialData::new(material, albedo_texture, material_texture),
+            material: MaterialData::new(material, wireframe, albedo_texture, material_texture),
         }
     }
 }
@@ -734,18 +770,6 @@ bitflags! {
     #[repr(C)]
     struct InstanceFlags: u32 {
         // unused currently, but surely will be useful in the future again.
-
-        //const REVERSE_WINDING     = 0b0000_0001;
-
-        // todo: these are not used currently. since we only render one
-        // instance at a time currently, we could just not emit a draw call
-        // if one of these is disabled.
-        // if we were to render multiple instances at a time, we can use this
-        // flag in the vertex shader to skip anything that it shouldn't render.
-        //const SHOW_SOLID          = 0b0000_0010;
-        //const SHOW_WIREFRAME      = 0b0000_0100;
-        //const SHOW_OUTLINE        = 0b0000_1000;
-
     }
 }
 
