@@ -48,13 +48,9 @@ impl<T> Lattice<T> {
             v.write(init(i, point));
         }
 
-        //strider.iter(..).for_each(|(index, point)| {
-        //    data[index].write(init(&point));
-        //});
-
         let data = unsafe {
-            // SAFETY: assuming strider.iter() iterates over all points, this initializes
-            // all data todo: write tests for strider.iter()
+            // SAFETY: we interated over the whole data slice and wrote a value at every
+            // index
             data.assume_init()
         };
 

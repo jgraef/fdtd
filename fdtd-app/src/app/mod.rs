@@ -18,20 +18,23 @@ use color_eyre::eyre::{
 use egui_file_dialog::FileDialog;
 use image::RgbaImage;
 
-use crate::app::{
-    composer::Composer,
-    config::AppConfig,
-    error_dialog::{
-        ErrorDialog,
-        ResultExt,
-        show_error_dialog,
+use crate::{
+    app::{
+        composer::Composer,
+        config::AppConfig,
+        error_dialog::{
+            ErrorDialog,
+            ResultExt,
+            show_error_dialog,
+        },
+        files::AppFiles,
+        menubar::{
+            MenuBar,
+            RecentlyOpenedFiles,
+        },
+        start::CreateAppContext,
     },
-    files::AppFiles,
-    menubar::{
-        MenuBar,
-        RecentlyOpenedFiles,
-    },
-    start::CreateAppContext,
+    build_info::BUILD_INFO,
 };
 
 #[derive(Debug)]
@@ -176,6 +179,32 @@ impl eframe::App for App {
                     .id_salt("debug_panel")
                     .show(ui, |ui| {
                         egui::ScrollArea::both().show(ui, |ui| {
+                            ui.collapsing("Build", |ui| {
+                                ui.small("Target:");
+                                ui.monospace(BUILD_INFO.target);
+                                ui.small("Opt Level:");
+                                ui.monospace(BUILD_INFO.opt_level);
+                                ui.small("Debug:");
+                                ui.monospace(BUILD_INFO.debug);
+                                ui.small("Profile:");
+                                ui.monospace(BUILD_INFO.profile);
+                                if let Some(branch) = BUILD_INFO.git_branch {
+                                    ui.small("Branch:");
+                                    ui.hyperlink_to(
+                                        egui::WidgetText::from(branch).monospace(),
+                                        GithubUrls::PACKAGE.branch(branch),
+                                    );
+                                }
+
+                                if let Some(commit) = BUILD_INFO.git_commit {
+                                    ui.small("Commit:");
+                                    ui.hyperlink_to(
+                                        egui::WidgetText::from(commit).monospace(),
+                                        GithubUrls::PACKAGE.commit(commit),
+                                    );
+                                }
+                            });
+
                             ui.collapsing("Settings", |ui| {
                                 ctx.settings_ui(ui);
                             });
@@ -262,5 +291,13 @@ impl GithubUrls {
 
     pub fn release_notes(&self) -> String {
         format!("{}/releases", self.repository)
+    }
+
+    pub fn commit(&self, hash: &str) -> String {
+        format!("{}/commit/{hash}", self.repository)
+    }
+
+    pub fn branch(&self, branch: &str) -> String {
+        format!("{}/tree/{branch}", self.repository)
     }
 }

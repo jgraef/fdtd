@@ -106,12 +106,19 @@ impl<'a> DrawCommandBuilder<'a> {
         mesh: &Mesh,
         mesh_bind_group: &MeshBindGroup,
         transparent: Option<Point3<f32>>,
+        outlined: bool,
     ) {
+        let mut stencil_reference = Stencil::empty();
+
+        if outlined {
+            stencil_reference.insert(Stencil::OUTLINE);
+        }
+
         let draw_mesh = DrawMesh {
             instances,
             indices: mesh.indices.clone(),
             mesh_bind_group: mesh_bind_group.bind_group.clone(),
-            stencil_reference: Stencil::empty(),
+            stencil_reference,
             depth_reference: transparent.unwrap_or_default(),
         };
 
@@ -301,7 +308,9 @@ impl DrawCommand {
             }
 
             if !self.buffer.draw_wireframes.is_empty()
-                && self.flags.contains(DrawCommandFlags::WIREFRAME)
+                && self
+                    .flags
+                    .intersects(DrawCommandFlags::WIREFRAME | DrawCommandFlags::DEBUG_WIREFRAME)
             {
                 render_pass.draw_meshes_with_pipeline(
                     wireframe_pipeline,

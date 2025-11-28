@@ -213,6 +213,7 @@ mod show_all {
         Selected,
         properties::PropertiesUi,
         renderer::{
+            ClearColor,
             Outline,
             camera::CameraConfig,
             light::{
@@ -298,14 +299,19 @@ mod show_all {
 
         show_component!(LocalTransform, Changed);
         show_component!(GlobalTransform);
+
         show_component!(Material, Changed);
         show_component!(Wireframe, Changed);
+        show_component!(Outline);
+
         show_component!(PointLight);
         show_component!(AmbientLight);
-        show_component!(Outline);
         show_component!(CameraConfig);
+        show_component!(ClearColor);
+
         show_component!(Selectable);
         show_component!(Selected);
+
         show_component!(Aabb);
 
         // this then shows a checkbox to enable the despawn button lol

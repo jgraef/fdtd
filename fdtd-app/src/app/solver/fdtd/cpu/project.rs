@@ -169,12 +169,18 @@ impl<'a, Threading> FdtdCpuProjectionPass<'a, Threading> {
 
         // todo: par_iter depending on `Threading`
         image.enumerate_pixels_mut().for_each(|(x, y, pixel)| {
-            let uv = Vector2::new(x, y)
+            // map image pixel to [0, 1]^2
+            let mut uv = Vector2::new(x, y)
                 .cast::<f32>()
                 .component_div(&image_size_scaling);
 
+            // images have y-axis flipped relative to our coordinate system
+            uv.y = 1.0 - uv.y;
+
+            // project point
             let projected_point = parameters.projection * Vector4::new(uv.x, uv.y, 0.0, 1.0);
 
+            // map point to lattice coordinates
             let lattice_point = Point3::from(
                 projected_point
                     .xyz()

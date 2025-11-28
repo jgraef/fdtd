@@ -236,13 +236,7 @@ impl PropertiesUi for Material {
                     }
                 }
 
-                if self.transparent {
-                    label_and_value(ui, "Albedo", &mut changes, &mut self.albedo);
-                }
-                else {
-                    label_and_value(ui, "Albedo", &mut changes, &mut self.albedo.color);
-                }
-
+                label_and_value(ui, "Albedo", &mut changes, &mut self.albedo);
                 label_and_value_with_config(
                     ui,
                     "Metallic",
@@ -265,6 +259,13 @@ impl PropertiesUi for Material {
                     &NumericPropertyUiConfig::Slider { range: 0.0..=1.0 },
                 );
                 label_and_value(ui, "Transparent", &mut changes, &mut self.transparent);
+                label_and_value_with_config(
+                    ui,
+                    "Alpha Threshold",
+                    &mut changes,
+                    &mut self.alpha_threshold,
+                    &NumericPropertyUiConfig::Slider { range: 0.0..=1.0 },
+                );
                 label_and_value(ui, "Shading", &mut changes, &mut self.shading);
                 label_and_value(ui, "Tone Map", &mut changes, &mut self.tone_map);
 

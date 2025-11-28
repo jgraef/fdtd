@@ -48,6 +48,7 @@ use crate::{
                 },
                 util::jacobian,
             },
+            pml::PmlCoefficients,
             strider::Strider,
             util::{
                 SwapBuffer,
@@ -237,6 +238,7 @@ pub struct FdtdCpuSolverInstance<Threading = SingleThreaded> {
     physical_constants: PhysicalConstants,
     update_coefficients: Lattice<UpdateCoefficients>,
     boundary_conditions: [AnyBoundaryCondition; 3],
+    pml: Option<PmlInstance>,
     threading: Threading,
 }
 
@@ -247,9 +249,22 @@ impl<Threading> FdtdCpuSolverInstance<Threading> {
         threading: Threading,
     ) -> Self {
         let strider = config.strider();
+
+        let mut pml = None;
+
         let update_coefficients = Lattice::from_fn(&strider, |_index, point| {
             point
                 .map(|point| {
+                    if let Some(pml_coefficients) = domain_description.pml(&point) {
+                        let pml_instance = pml.get_or_insert_with(|| PmlInstance::new(&strider));
+                        let pml_index = pml_instance.coefficients.len();
+                        pml_instance.coefficients.push(pml_coefficients);
+                        *pml_instance
+                            .indirection
+                            .get_point_mut(&strider, &point)
+                            .unwrap() = pml_index;
+                    }
+
                     UpdateCoefficients::new(
                         &config.resolution,
                         &config.physical_constants,
@@ -267,6 +282,7 @@ impl<Threading> FdtdCpuSolverInstance<Threading> {
             physical_constants: config.physical_constants,
             update_coefficients,
             boundary_conditions,
+            pml,
             threading,
         }
     }
@@ -283,7 +299,7 @@ where
         Self: 'a;
 
     fn create_state(&self) -> Self::State {
-        FdtdCpuSolverState::new(&self.strider)
+        FdtdCpuSolverState::new(&self.strider, self.pml.as_ref())
     }
 
     fn begin_update<'a>(&'a self, state: &'a mut Self::State) -> FdtdCpuUpdatePass<'a, Threading> {
@@ -311,17 +327,21 @@ pub struct FdtdCpuSolverState {
     e_field: SwapBuffer<Lattice<Vector3<f64>>>,
     source_field: Lattice<usize>,
     source_buffer: Vec<(usize, SourceValues)>,
+    pml: PmlState,
     tick: usize,
     time: f64,
 }
 
 impl FdtdCpuSolverState {
-    fn new(strider: &Strider) -> Self {
+    fn new(strider: &Strider, pml_instance: Option<&PmlInstance>) -> Self {
+        let pml = pml_instance.map_or_else(Default::default, PmlState::new);
+
         Self {
             h_field: SwapBuffer::from_fn(|_| Lattice::from_default(strider)),
             e_field: SwapBuffer::from_fn(|_| Lattice::from_default(strider)),
             source_field: Lattice::from_default(strider),
             source_buffer: vec![],
+            pml,
             tick: 0,
             time: 0.0,
         }
@@ -647,4 +667,36 @@ impl<'a> Iterator for CpuFieldRegionIterMut<'a> {
 impl<'a> ExactSizeIterator for CpuFieldRegionIterMut<'a> where
     LatticeIter<'a, Vector3<f64>>: ExactSizeIterator
 {
+}
+
+#[derive(Clone, Debug)]
+struct PmlInstance {
+    indirection: Lattice<usize>,
+    coefficients: Vec<PmlCoefficients>,
+}
+
+impl PmlInstance {
+    pub fn new(strider: &Strider) -> Self {
+        // note: the 0th value is for all non-pml cells
+        Self {
+            indirection: Lattice::from_default(strider),
+            coefficients: vec![Default::default()],
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+struct PmlState {
+    psi_h: SwapBuffer<Vec<Vector3<f64>>>,
+    psi_e: SwapBuffer<Vec<Vector3<f64>>>,
+}
+
+impl PmlState {
+    fn new(instance: &PmlInstance) -> Self {
+        let num_cells = instance.coefficients.len();
+        Self {
+            psi_h: SwapBuffer::from_fn(|_| vec![Vector3::zeros(); num_cells]),
+            psi_e: SwapBuffer::from_fn(|_| vec![Vector3::zeros(); num_cells]),
+        }
+    }
 }

@@ -73,11 +73,11 @@ pub struct View3dConfig {
     #[serde(default = "default_fovy")]
     pub fovy: f32,
 
-    #[serde(default)]
-    pub ambient_light: Option<AmbientLight>,
+    #[serde(default = "default_ambient_light")]
+    pub ambient_light: AmbientLight,
 
-    #[serde(default)]
-    pub point_light: Option<PointLight>,
+    #[serde(default = "default_point_light")]
+    pub point_light: PointLight,
 
     #[serde(default = "default_to_true")]
     pub tone_map: bool,
@@ -88,11 +88,19 @@ impl Default for View3dConfig {
         Self {
             background_color: default_background_color(),
             fovy: default_fovy(),
-            ambient_light: None,
-            point_light: None,
+            ambient_light: default_ambient_light(),
+            point_light: default_point_light(),
             tone_map: true,
         }
     }
+}
+
+fn default_ambient_light() -> AmbientLight {
+    AmbientLight::white_light(0.5)
+}
+
+fn default_point_light() -> PointLight {
+    PointLight::white_light(1.0)
 }
 
 fn default_background_color() -> Srgb {

@@ -2,6 +2,7 @@
 #![allow(clippy::explicit_counter_loop)]
 
 pub mod app;
+pub mod build_info;
 pub mod fdtd;
 pub mod feec;
 pub mod file_formats;

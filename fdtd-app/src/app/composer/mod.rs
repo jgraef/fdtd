@@ -27,10 +27,7 @@ use nalgebra::{
     Vector2,
     Vector3,
 };
-use palette::{
-    Srgba,
-    WithAlpha,
-};
+use palette::WithAlpha;
 use parry3d::shape::{
     Ball,
     Cuboid,
@@ -55,10 +52,6 @@ use crate::{
                     CameraConfig,
                     CameraProjection,
                     CameraRenderInfo,
-                },
-                light::{
-                    AmbientLight,
-                    PointLight,
                 },
                 material,
                 mesh::{
@@ -148,12 +141,9 @@ use crate::{
         PhysicalConstants,
         material::Material,
     },
-    util::{
-        egui::{
-            EguiUtilContextExt,
-            EguiUtilUiExt,
-        },
-        palette::ColorExt,
+    util::egui::{
+        EguiUtilContextExt,
+        EguiUtilUiExt,
     },
 };
 
@@ -434,12 +424,8 @@ impl ComposerState {
                 tone_map: false,
                 ..Default::default()
             },
-            view_config
-                .ambient_light
-                .unwrap_or_else(|| AmbientLight::white_light(0.5)),
-            view_config
-                .point_light
-                .unwrap_or_else(|| PointLight::white_light(0.5)),
+            view_config.ambient_light,
+            view_config.point_light,
             Label::new_static("camera"),
         ));
 

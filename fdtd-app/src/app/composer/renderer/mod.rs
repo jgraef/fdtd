@@ -135,6 +135,20 @@ impl From<Srgb<u8>> for ClearColor {
     }
 }
 
+impl ComponentUiHeading for ClearColor {
+    fn heading(&self) -> impl Into<egui::RichText> {
+        "Clear Color"
+    }
+}
+
+impl PropertiesUi for ClearColor {
+    type Config = ();
+
+    fn properties_ui(&mut self, ui: &mut egui::Ui, _config: &Self::Config) -> egui::Response {
+        self.clear_color.properties_ui(ui, &())
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct RendererConfig {
     pub target_texture_format: wgpu::TextureFormat,
@@ -702,7 +716,13 @@ where
                 .is_some_and(|material| material.transparent)
                 .then(|| transform.position());
 
-            draw_command_builder.draw_mesh(instances.clone(), mesh, mesh_bind_group, transparent);
+            draw_command_builder.draw_mesh(
+                instances.clone(),
+                mesh,
+                mesh_bind_group,
+                transparent,
+                outline.is_some(),
+            );
         }
         if outline.is_some() {
             draw_command_builder.draw_outline(instances.clone(), mesh, mesh_bind_group);
