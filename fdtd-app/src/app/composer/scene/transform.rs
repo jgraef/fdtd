@@ -127,7 +127,7 @@ impl From<UnitQuaternion<f32>> for LocalTransform {
 
 impl ComponentUiHeading for LocalTransform {
     fn heading(&self) -> impl Into<egui::RichText> {
-        "LocalTransform (Local)"
+        "Transform (Local)"
     }
 }
 

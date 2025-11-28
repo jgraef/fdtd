@@ -2,6 +2,7 @@ use std::f32::consts::TAU;
 
 use nalgebra::{
     Isometry3,
+    Point3,
     Translation3,
     UnitQuaternion,
     Vector3,
@@ -149,5 +150,13 @@ impl From<UnitQuaternion<f32>> for EulerAngles {
 impl From<EulerAngles> for UnitQuaternion<f32> {
     fn from(value: EulerAngles) -> Self {
         Self::from_euler_angles(value.roll, value.pitch, value.yaw)
+    }
+}
+
+impl PropertiesUi for Point3<f32> {
+    type Config = Vector3UiConfig;
+
+    fn properties_ui(&mut self, ui: &mut egui::Ui, config: &Self::Config) -> egui::Response {
+        self.coords.properties_ui(ui, config)
     }
 }

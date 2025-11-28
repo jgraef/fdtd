@@ -1,6 +1,6 @@
 mod boundary_condition;
 pub mod cpu;
-mod pml;
+pub mod pml;
 mod strider;
 mod util;
 pub mod wgpu;

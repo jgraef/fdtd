@@ -14,7 +14,10 @@ use std::{
 use nalgebra::Vector3;
 
 use crate::{
-    app::solver::source::SourceValues,
+    app::solver::{
+        fdtd::pml::PmlCoefficients,
+        source::SourceValues,
+    },
     physics::material::Material,
 };
 
@@ -56,6 +59,11 @@ pub trait SolverBackend<Config, Point> {
 // allocate buffers.
 pub trait DomainDescription<P> {
     fn material(&self, point: &P) -> Material;
+
+    fn pml(&self, point: &P) -> Option<PmlCoefficients> {
+        let _ = point;
+        None
+    }
 }
 
 /// todo: needs methods for converting from/to solver coordinates

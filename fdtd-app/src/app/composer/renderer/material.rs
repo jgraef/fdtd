@@ -75,6 +75,8 @@ pub mod presets {
                 ambient_occlusion: 1.0,
                 transparent: false,
                 alpha_threshold: 0.0,
+                shading: true,
+                tone_map: true,
             }
         }
     }
@@ -110,6 +112,9 @@ pub struct Material {
 
     pub transparent: bool,
     pub alpha_threshold: f32,
+
+    pub shading: bool,
+    pub tone_map: bool,
 }
 
 impl Material {
@@ -127,6 +132,8 @@ impl Material {
             ambient_occlusion: 1.0,
             transparent,
             alpha_threshold: 0.0,
+            shading: true,
+            tone_map: true,
         }
     }
 
@@ -147,6 +154,16 @@ impl Material {
 
     pub fn with_transparency(mut self, enable: bool) -> Self {
         self.transparent = enable;
+        self
+    }
+
+    pub fn with_shading(mut self, enable: bool) -> Self {
+        self.shading = enable;
+        self
+    }
+
+    pub fn with_tone_map(mut self, enable: bool) -> Self {
+        self.tone_map = enable;
         self
     }
 }
@@ -258,6 +275,8 @@ impl PropertiesUi for Material {
                     &NumericPropertyUiConfig::Slider { range: 0.0..=1.0 },
                 );
                 label_and_value(ui, "Transparent", &mut changes, &mut self.transparent);
+                label_and_value(ui, "Shading", &mut changes, &mut self.shading);
+                label_and_value(ui, "Tone Map", &mut changes, &mut self.tone_map);
 
                 if changes.changed {
                     // invalidate preset?
@@ -298,9 +317,11 @@ bitflags! {
 }
 
 bitflags! {
-    pub struct MaterialFlags: u32 {
+    struct MaterialFlags: u32 {
         const ALBEDO_TEXTURE      = 0x0000_0001;
         const TRANSPARENT         = 0x0000_0010;
+        const SHADING             = 0x0000_0020;
+        const TONE_MAP            = 0x0000_0040;
     }
 }
 
@@ -352,6 +373,12 @@ impl MaterialData {
             data.alpha_threshold = material.alpha_threshold;
             if material.transparent {
                 data.flags |= MaterialFlags::TRANSPARENT.bits();
+            }
+            if material.shading {
+                data.flags |= MaterialFlags::SHADING.bits();
+            }
+            if material.tone_map {
+                data.flags |= MaterialFlags::TONE_MAP.bits();
             }
         }
 

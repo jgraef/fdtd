@@ -51,6 +51,8 @@ const FLAG_MATERIAL_ROUGHNESS_TEXTURE: u32         = 0x00000004;
 const FLAG_MATERIAL_AMBIENT_OCCLUSION_TEXTURE: u32 = 0x00000008;
 const FLAG_MATERIAL_ANY_ORM: u32                   = 0x0000000e;
 const FLAG_MATERIAL_TRANSPARENT: u32               = 0x00000010;
+const FLAG_MATERIAL_SHADING: u32                   = 0x00000020;
+const FLAG_MATERIAL_TONE_MAP: u32                  = 0x00000040;
 
 const FLAG_CAMERA_AMBIENT_LIGHT: u32 = 0x01;
 const FLAG_CAMERA_POINT_LIGHT: u32 = 0x02;
@@ -173,6 +175,7 @@ fn fs_main_solid(input: VertexOutputSolid, @builtin(front_facing) front_face: bo
         var metalness = instance.material.metalness;
         var roughness = instance.material.roughness;
         var ambient_occlusion = instance.material.ambient_occlusion;
+        var color: vec3f;
 
         // sample material textures
         if (instance.material.flags & FLAG_MATERIAL_ALBEDO_TEXTURE) != 0 {
@@ -203,54 +206,59 @@ fn fs_main_solid(input: VertexOutputSolid, @builtin(front_facing) front_face: bo
             alpha = 1.0;
         }
 
-        // some light-independent geometry
-        let world_normal = normalize(input.world_normal.xyz);
-        let view_direction = normalize(camera.world_position.xyz - input.world_position.xyz);
-        //let view_direction = normalize(input.world_position.xyz - camera.world_position.xyz);
 
-        // mix between base reflectivity approximation and surface color (F_0)
-        let surface_reflection = mix(vec3(0.04), albedo, metalness);
 
-        // this is needed in `light_radiance` but can be computed once upfront
-        let n_dot_v = max(dot(world_normal, view_direction), 0.0);
-
-        // surfaces with roughness=0 won't show anything with point lights
-        // https://computergraphics.stackexchange.com/a/9126
-        const min_roughness: f32 = 0.001;
-        roughness = max(roughness, min_roughness);
-
-        // debug
-        //alpha = 1.0;
-        //ambient_occlusion = 1.0;
-        //roughness = 0.8;
-        //metalness = 0.5;
-
-        var color: vec3f;
-
-        if (camera.flags & FLAG_CAMERA_AMBIENT_LIGHT) != 0 {
-            color += camera.ambient_light_color.rgb * albedo * ambient_occlusion;
+        if (instance.material.flags & FLAG_MATERIAL_SHADING) == 0 {
+            color = albedo;
         }
+        else {
+            // some light-independent geometry
+            let world_normal = normalize(input.world_normal.xyz);
+            let view_direction = normalize(camera.world_position.xyz - input.world_position.xyz);
+            //let view_direction = normalize(input.world_position.xyz - camera.world_position.xyz);
 
-        // point light attached to camera
-        if (camera.flags & FLAG_CAMERA_POINT_LIGHT) != 0 {
-            color += light_radiance(
-                camera.world_position.xyz,
-                camera.point_light_color.rgb,
-                input.world_position.xyz,
-                world_normal,
-                view_direction,
-                albedo,
-                roughness,
-                metalness,
-                surface_reflection,
-                n_dot_v,
-            );
+            // mix between base reflectivity approximation and surface color (F_0)
+            let surface_reflection = mix(vec3(0.04), albedo, metalness);
+
+            // this is needed in `light_radiance` but can be computed once upfront
+            let n_dot_v = max(dot(world_normal, view_direction), 0.0);
+
+            // surfaces with roughness=0 won't show anything with point lights
+            // https://computergraphics.stackexchange.com/a/9126
+            const min_roughness: f32 = 0.001;
+            roughness = max(roughness, min_roughness);
+
+            // debug
+            //alpha = 1.0;
+            //ambient_occlusion = 1.0;
+            //roughness = 0.8;
+            //metalness = 0.5;
+
+            if (camera.flags & FLAG_CAMERA_AMBIENT_LIGHT) != 0 {
+                color += camera.ambient_light_color.rgb * albedo * ambient_occlusion;
+            }
+
+            // point light attached to camera
+            if (camera.flags & FLAG_CAMERA_POINT_LIGHT) != 0 {
+                color += light_radiance(
+                    camera.world_position.xyz,
+                    camera.point_light_color.rgb,
+                    input.world_position.xyz,
+                    world_normal,
+                    view_direction,
+                    albedo,
+                    roughness,
+                    metalness,
+                    surface_reflection,
+                    n_dot_v,
+                );
+            }
+
+            // todo: add other point lights
         }
-
-        // todo: add other point lights
 
         // tonemap hdr to ldr
-        if (camera.flags & FLAG_CAMERA_TONE_MAP) != 0 {
+        if (camera.flags & FLAG_CAMERA_TONE_MAP) != 0 && (instance.material.flags & FLAG_MATERIAL_TONE_MAP) != 0 {
             color /= color + vec3f(1.0);
         }
 

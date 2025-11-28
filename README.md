@@ -9,8 +9,11 @@ This app is work-in-progress. It's intended to model electromagnetic behavior. I
  - staging belt:
   - read (gpu to host)
  - read-only properties UI
+ - load/save files (whole scene)
  - limit how often a running solver projects into textures. done, but needs to be in config somewhere
- - make observers selectable in scene and tree view. the tree view should have a separate category for it. put something into the tree view (and context menus) to show/hide entities. speaking of context menus. i think they're not implemented for the tree view.
+ - tree view context menu
+ - spatial queries: SpatialQuery trait. Like hecs::Query, but also knows how to find/filter entities from the bvh.
+ - make simulation volume an entity (visible via edges?)
  - PRs for `egui_ltreeview`
  - fdtd: compress material buffer:
   - most points in the lattice contain the same material values

@@ -14,20 +14,25 @@ use parry3d::{
         Aabb,
         BoundingVolume,
     },
-    partitioning as bvh,
+    partitioning::{
+        Bvh,
+        BvhWorkspace,
+    },
     query::Ray,
-};
-use serde::{
-    Deserialize,
-    Serialize,
 };
 
 use crate::{
     app::composer::{
         DebugUi,
+        properties::{
+            PropertiesUi,
+            TrackChanges,
+            label_and_value,
+        },
         scene::{
             Changed,
             transform::GlobalTransform,
+            ui::ComponentUiHeading,
         },
     },
     util::format_size,
@@ -35,24 +40,30 @@ use crate::{
 
 #[derive(derive_more::Debug, Default)]
 pub struct SpatialQueries {
-    bvh: bvh::Bvh,
-    stored_entities: HashMap<u32, hecs::Entity>,
-    next_leaf_index: u32,
+    bvh: Bvh,
+    leaf_index_map: LeafIndexMap,
 
-    #[debug(skip)]
-    bvh_workspace: bvh::BvhWorkspace,
+    #[debug("BvhWorkspace {{ ... }}")]
+    bvh_workspace: BvhWorkspace,
 }
 
 impl SpatialQueries {
-    pub(super) fn remove(&mut self, entity: hecs::Entity, world: &mut hecs::World) {
+    pub(super) fn remove(
+        &mut self,
+        entity: hecs::Entity,
+        world: &mut hecs::World,
+        command_buffer: &mut hecs::CommandBuffer,
+    ) {
         if let Ok(leaf_index) = world.remove_one::<LeafIndex>(entity) {
-            tracing::debug!(?entity, index = leaf_index.index, "removing from octtree");
+            tracing::debug!(
+                ?entity,
+                index = leaf_index.leaf_index,
+                "removing from octtree"
+            );
 
-            // do we need to do this?
-            //let _ = world.remove_one::<BoundingBox>(entity);
-
-            self.bvh.remove(leaf_index.index);
-            self.stored_entities.remove(&leaf_index.index);
+            self.bvh.remove(leaf_index.leaf_index);
+            self.leaf_index_map.remove(leaf_index.leaf_index);
+            command_buffer.remove_one::<Aabb>(entity);
         }
     }
 
@@ -62,15 +73,14 @@ impl SpatialQueries {
         command_buffer: &mut hecs::CommandBuffer,
     ) {
         // update changed entities
-        for (entity, (transform, collider, leaf_index, bounding_box)) in world
-            .query_mut::<(&GlobalTransform, &Collider, &LeafIndex, &mut BoundingBox)>()
+        for (_entity, (transform, collider, leaf_index, aabb)) in world
+            .query_mut::<(&GlobalTransform, &Collider, &LeafIndex, &mut Aabb)>()
             .with::<&Changed<GlobalTransform>>()
         {
-            tracing::debug!(?entity, "transform changed");
+            *aabb = collider.compute_aabb(transform.isometry());
 
-            bounding_box.aabb = collider.compute_aabb(transform.isometry());
             self.bvh
-                .insert_or_update_partially(bounding_box.aabb, leaf_index.index, 0.0);
+                .insert_or_update_partially(*aabb, leaf_index.leaf_index, 0.0);
         }
 
         // remove tracked entities that have no transform or collider anymore
@@ -80,7 +90,7 @@ impl SpatialQueries {
             .without::<hecs::Or<&GlobalTransform, &Collider>>()
         {
             command_buffer.remove_one::<LeafIndex>(entity);
-            command_buffer.remove_one::<BoundingBox>(entity);
+            command_buffer.remove_one::<Aabb>(entity);
         }
 
         // insert colliders that don't have a leaf ID yet
@@ -88,16 +98,14 @@ impl SpatialQueries {
             .query_mut::<(&GlobalTransform, &Collider)>()
             .without::<&LeafIndex>()
         {
-            let index = self.next_leaf_index;
-            self.next_leaf_index += 1;
+            let leaf_index = self.leaf_index_map.insert(entity);
 
-            tracing::debug!(?entity, index, "adding to octtree");
+            tracing::debug!(?entity, leaf_index, "adding to octtree");
 
             let aabb = collider.compute_aabb(transform.isometry());
-            self.bvh.insert_or_update_partially(aabb, index, 0.0);
+            self.bvh.insert_or_update_partially(aabb, leaf_index, 0.0);
 
-            self.stored_entities.insert(index, entity);
-            command_buffer.insert(entity, (LeafIndex { index }, BoundingBox { aabb }));
+            command_buffer.insert(entity, (LeafIndex { leaf_index }, aabb));
         }
 
         // refit bvh
@@ -119,9 +127,9 @@ impl SpatialQueries {
 
         self.bvh
             .cast_ray(ray, max_time_of_impact, |leaf_index, best_hit| {
-                let entity = self.stored_entities.get(&leaf_index)?;
-                if filter(*entity) {
-                    let (transform, collider) = view.get(*entity)?;
+                let entity = self.leaf_index_map.resolve(leaf_index);
+                if filter(entity) {
+                    let (transform, collider) = view.get(entity)?;
                     collider.cast_ray(transform.isometry(), ray, best_hit, true)
                 }
                 else {
@@ -129,7 +137,7 @@ impl SpatialQueries {
                 }
             })
             .map(|(leaf_index, time_of_impact)| {
-                let entity = self.stored_entities[&leaf_index];
+                let entity = self.leaf_index_map.resolve(leaf_index);
                 RayHit {
                     time_of_impact,
                     entity,
@@ -137,7 +145,7 @@ impl SpatialQueries {
             })
     }
 
-    fn intersect_aabb<'a>(&'a self, aabb: Aabb) -> impl Iterator<Item = hecs::Entity> + 'a {
+    pub fn intersect_aabb<'a>(&'a self, aabb: Aabb) -> impl Iterator<Item = hecs::Entity> + 'a {
         // note: this is slightly more convenient than the builtin aabb-intersection
         // query as we can move the aabb into the closure
 
@@ -148,7 +156,7 @@ impl SpatialQueries {
 
         self.bvh
             .leaves(move |node| node.aabb().intersects(&aabb))
-            .filter_map(|leaf_index| self.stored_entities.get(&leaf_index).copied())
+            .map(|leaf_index| self.leaf_index_map.resolve(leaf_index))
     }
 
     pub fn point_query<'a>(
@@ -156,20 +164,17 @@ impl SpatialQueries {
         point: Point3<f32>,
         entities: &'a hecs::World,
     ) -> impl Iterator<Item = hecs::Entity> + 'a {
-        let aabb = Aabb {
-            mins: point,
-            maxs: point,
-        };
-
         let view = entities.view::<(&GlobalTransform, &Collider)>();
 
-        self.intersect_aabb(aabb).filter_map(move |entity| {
-            let (transform, collider) = view.get(entity)?;
-
-            collider
-                .contains_point(transform.isometry(), &point)
-                .then_some(entity)
-        })
+        self.bvh
+            .leaves(move |node| node.aabb().contains_local_point(&point))
+            .filter_map(move |leaf_index| {
+                let entity = self.leaf_index_map.resolve(leaf_index);
+                let (transform, collider) = view.get(entity)?;
+                collider
+                    .contains_point(transform.isometry(), &point)
+                    .then_some(entity)
+            })
     }
 
     /* todo: need a trait for things that can maybe do this
@@ -206,12 +211,33 @@ impl SpatialQueries {
 
 #[derive(Clone, Copy, Debug)]
 struct LeafIndex {
-    index: u32,
+    leaf_index: u32,
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
-pub struct BoundingBox {
-    pub aabb: Aabb,
+#[derive(Clone, Debug, Default)]
+struct LeafIndexMap {
+    entities: HashMap<u32, hecs::Entity>,
+    next_leaf_index: u32,
+}
+
+impl LeafIndexMap {
+    fn insert(&mut self, entity: hecs::Entity) -> u32 {
+        let leaf_index = self.next_leaf_index;
+        self.next_leaf_index += 1;
+        self.entities.insert(leaf_index, entity);
+        leaf_index
+    }
+
+    fn remove(&mut self, leaf_index: u32) -> Option<hecs::Entity> {
+        self.entities.remove(&leaf_index)
+    }
+
+    fn resolve(&self, leaf_index: u32) -> hecs::Entity {
+        *self
+            .entities
+            .get(&leaf_index)
+            .expect("Leaf index not in stored_entities")
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -229,32 +255,68 @@ where
         .reduce(|accumulator, aabb| accumulator.merged(&aabb))
 }
 
-#[derive(Clone, Debug)]
-pub struct Collider(pub Arc<dyn ColliderTraits>);
+#[derive(Clone)]
+pub struct Collider {
+    inner: Arc<dyn AnyCollider>,
+}
 
-impl<S: ColliderTraits> From<S> for Collider {
-    fn from(value: S) -> Self {
-        Self(Arc::new(value))
+impl Debug for Collider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("Collider").field(&*self.inner).finish()
     }
 }
 
 impl Deref for Collider {
-    type Target = dyn ColliderTraits;
+    type Target = dyn AnyCollider;
 
     fn deref(&self) -> &Self::Target {
-        &*self.0
+        &*self.inner
     }
 }
 
-pub trait ColliderTraits:
-    ComputeAabb + RayCast + PointQuery + Debug + Send + Sync + 'static
-{
+impl Collider {
+    pub fn new(value: Arc<dyn AnyCollider>) -> Self {
+        Self { inner: value }
+    }
 }
 
-impl<T> ColliderTraits for T where
-    T: ComputeAabb + RayCast + PointQuery + Debug + Send + Sync + 'static
-{
+impl ComputeAabb for Collider {
+    fn compute_aabb(&self, transform: &Isometry3<f32>) -> Aabb {
+        self.inner.compute_aabb(transform)
+    }
 }
+
+impl RayCast for Collider {
+    fn cast_ray(
+        &self,
+        transform: &Isometry3<f32>,
+        ray: &Ray,
+        max_time_of_impact: f32,
+        solid: bool,
+    ) -> Option<f32> {
+        self.inner
+            .cast_ray(transform, ray, max_time_of_impact, solid)
+    }
+
+    fn supported(&self) -> bool {
+        RayCast::supported(&*self.inner)
+    }
+}
+
+impl PointQuery for Collider {
+    fn contains_point(&self, transform: &Isometry3<f32>, point: &Point3<f32>) -> bool {
+        self.inner.contains_point(transform, point)
+    }
+
+    fn supported(&self) -> bool {
+        PointQuery::supported(&*self.inner)
+    }
+}
+
+pub trait AnyCollider: ComputeAabb + RayCast + PointQuery + Debug + Send + Sync + 'static {}
+
+impl<T> AnyCollider for T where T: ComputeAabb + RayCast + PointQuery + Debug + Send + Sync + 'static
+{}
 
 pub trait ComputeAabb {
     fn compute_aabb(&self, transform: &Isometry3<f32>) -> Aabb;
@@ -266,6 +328,15 @@ where
 {
     fn compute_aabb(&self, transform: &Isometry3<f32>) -> Aabb {
         parry3d::shape::Shape::compute_aabb(self, transform)
+    }
+}
+
+impl<T> From<T> for Collider
+where
+    T: parry3d::shape::Shape + Debug,
+{
+    fn from(value: T) -> Self {
+        Collider::new(Arc::new(value))
     }
 }
 
@@ -324,6 +395,30 @@ impl DebugUi for SpatialQueries {
     }
 }
 
+impl PropertiesUi for Aabb {
+    type Config = ();
+
+    fn properties_ui(&mut self, ui: &mut egui::Ui, config: &Self::Config) -> egui::Response {
+        let _ = config;
+        let mut changes = TrackChanges::default();
+
+        let response = egui::Frame::new()
+            .show(ui, |ui| {
+                label_and_value(ui, "Min", &mut changes, &mut self.mins);
+                label_and_value(ui, "Max", &mut changes, &mut self.maxs);
+            })
+            .response;
+
+        changes.propagated(response)
+    }
+}
+
+impl ComponentUiHeading for Aabb {
+    fn heading(&self) -> impl Into<egui::RichText> {
+        "AABB"
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use parry3d::shape::Ball;
@@ -355,10 +450,7 @@ mod tests {
         octtree.bvh.assert_well_formed();
         let leaves = octtree.bvh.leaves(|_| true).collect::<Vec<_>>();
         assert_eq!(leaves.len(), 1);
-        assert_eq!(
-            octtree.stored_entities.get(&leaves[0]).copied(),
-            Some(entity)
-        );
+        assert_eq!(octtree.leaf_index_map.resolve(leaves[0]), entity);
     }
 
     #[test]
@@ -370,7 +462,7 @@ mod tests {
         let entity = world.spawn(test_bundle());
         octtree.update(&mut world, &mut command_buffer);
 
-        octtree.remove(entity, &mut world);
+        octtree.remove(entity, &mut world, &mut command_buffer);
         octtree.bvh.assert_well_formed(); // ?
 
         world.despawn(entity).unwrap();
@@ -378,6 +470,6 @@ mod tests {
         octtree.update(&mut world, &mut command_buffer);
         octtree.bvh.assert_well_formed();
         assert!(octtree.bvh.is_empty());
-        assert!(octtree.stored_entities.is_empty());
+        assert!(octtree.leaf_index_map.entities.is_empty());
     }
 }

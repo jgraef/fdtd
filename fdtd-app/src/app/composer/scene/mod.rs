@@ -46,9 +46,7 @@ use crate::app::composer::{
     scene::{
         serialize::SerializeEntity,
         spatial::{
-            BoundingBox,
             Collider,
-            ColliderTraits,
             RayHit,
             SpatialQueries,
             merge_aabbs,
@@ -82,9 +80,7 @@ pub struct Scene {
     #[debug("hecs::CommandBuffer {{ ... }}")]
     pub command_buffer: hecs::CommandBuffer,
 
-    // we might need this pub anyway, because it might be required to e.g. borrow the world and
-    // operate on the octtree at the same time.
-    spatial_queries: SpatialQueries,
+    pub spatial_queries: SpatialQueries,
 
     tick: Tick,
 
@@ -106,7 +102,8 @@ impl Default for Scene {
 impl Scene {
     pub fn add_object<S>(&mut self, transform: impl Into<LocalTransform>, shape: S) -> EntityBuilder
     where
-        S: ColliderTraits + ShapeName + Clone + IntoGenerateMesh,
+        S: ShapeName + Clone + IntoGenerateMesh,
+        Collider: From<S>,
         S::Config: Default,
         S::GenerateMesh: Debug + Send + Sync + 'static,
     {
@@ -209,10 +206,10 @@ impl Scene {
         let relative_to_inv = relative_to.inverse();
 
         if approximate_relative_aabbs {
-            let mut query = self.entities.query::<&BoundingBox>();
+            let mut query = self.entities.query::<&Aabb>();
             let aabbs = query
                 .iter()
-                .map(|(_entity, bounding_box)| bounding_box.aabb.transform_by(&relative_to_inv));
+                .map(|(_entity, aabb)| aabb.transform_by(&relative_to_inv));
             merge_aabbs(aabbs)
         }
         else {
@@ -245,7 +242,8 @@ impl Scene {
     }
 
     pub fn delete(&mut self, entity: hecs::Entity) -> Option<hecs::TakenEntity<'_>> {
-        self.spatial_queries.remove(entity, &mut self.entities);
+        self.spatial_queries
+            .remove(entity, &mut self.entities, &mut self.command_buffer);
         self.entities.take(entity).ok()
     }
 
@@ -648,6 +646,7 @@ impl DebugUi for Scene {
     fn show_debug(&self, ui: &mut egui::Ui) {
         ui.label(format!("Tick: {}", self.tick));
         ui.label(format!("Entities: {}", self.entities.len()));
+
         self.spatial_queries.show_debug(ui);
     }
 }

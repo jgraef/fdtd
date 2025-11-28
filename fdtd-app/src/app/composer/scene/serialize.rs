@@ -278,7 +278,6 @@ mod register_global {
         scene::{
             Label,
             serialize::EntitySerializer,
-            spatial::BoundingBox,
             transform::{
                 GlobalTransform,
                 LocalTransform,
@@ -302,7 +301,6 @@ mod register_global {
             Material,
             Label,
             Hidden,
-            BoundingBox,
             ShowInTree,
             Outline,
             Selected,

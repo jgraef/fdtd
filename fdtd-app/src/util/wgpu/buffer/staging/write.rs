@@ -103,6 +103,13 @@ where
         destination: wgpu::TexelCopyTextureInfo,
         size: wgpu::Extent3d,
     ) -> wgpu::BufferViewMut {
+        assert!(
+            source_layout
+                .bytes_per_row
+                .is_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT),
+            "Bytes per row does not respect `COPY_BYTES_PER_ROW_ALIGNMENT`"
+        );
+
         let mut copy_size = wgpu::BufferAddress::from(size.height)
             * wgpu::BufferAddress::from(source_layout.bytes_per_row);
         if size.depth_or_array_layers > 1 {

@@ -223,42 +223,20 @@ where
             image_size, texture_size,
             "provided image size doesn't match texture"
         );
+        assert_eq!(
+            samples.layout.channel_stride, 1,
+            "todo: channel stride not 4"
+        );
+        assert_eq!(samples.layout.width_stride, 4, "todo: width stride not 4");
 
-        let bytes_per_row: u32 = samples.layout.height_stride.try_into().unwrap();
-
-        // this doesn't apply. of course I only read my comment above after implementing
-        // it
-        /*
-        // declare outside of if, so it is still in scope after it
-        let mut padded_buf;
-
-        let (bytes_per_row_padded, data_padded) =
-            if bytes_per_row_unpadded < wgpu::COPY_BYTES_PER_ROW_ALIGNMENT {
-                // we need to pad the image
-
-                let bytes_per_row_padded = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
-                padded_buf = Vec::with_capacity(bytes_per_row_padded as usize * size.y as usize);
-
-                for (y, row) in self.enumerate_rows() {
-                    let row_offset = y as usize * bytes_per_row_padded as usize;
-                    for (x, _y, pixel) in row {
-                        let pixel_offset = row_offset + x as usize * BYTES_PER_PIXEL as usize;
-                        padded_buf[pixel_offset..][..BYTES_PER_PIXEL as usize]
-                            .copy_from_slice(&pixel.0);
-                        //
-                    }
-                }
-
-                (bytes_per_row_padded, &*padded_buf)
-            }
-            else {
-                (bytes_per_row_unpadded, &**self.as_raw())
-            };
-        */
+        const BYTES_PER_PIXEL: usize = 4;
+        let bytes_per_row_unpadded: u32 = samples.layout.width * BYTES_PER_PIXEL as u32;
+        let bytes_per_row_padded =
+            wgpu::util::align_to(bytes_per_row_unpadded, wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
 
         let mut view = write_staging.write_texture(
             TextureSourceLayout {
-                bytes_per_row,
+                bytes_per_row: bytes_per_row_padded,
                 rows_per_image: None,
             },
             wgpu::TexelCopyTextureInfo {
@@ -273,7 +251,16 @@ where
                 depth_or_array_layers: 1,
             },
         );
-        view.copy_from_slice(samples.samples);
+
+        let mut source_offset = 0;
+        let mut destination_offset = 0;
+        let n = bytes_per_row_unpadded as usize;
+
+        for _ in 0..self.height() {
+            view[destination_offset..][..n].copy_from_slice(&samples.samples[source_offset..][..n]);
+            source_offset += samples.layout.height_stride as usize;
+            destination_offset += bytes_per_row_padded as usize;
+        }
     }
 }
 

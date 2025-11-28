@@ -54,6 +54,7 @@ use crate::{
             Label,
             Scene,
             spatial::{
+                Collider,
                 ComputeAabb,
                 PointQuery,
                 RayCast,
@@ -633,6 +634,12 @@ impl PointQuery for Quad {
     fn contains_point(&self, transform: &Isometry3<f32>, point: &Point3<f32>) -> bool {
         let _ = (transform, point);
         false
+    }
+}
+
+impl From<Quad> for Collider {
+    fn from(value: Quad) -> Self {
+        Collider::new(Arc::new(value))
     }
 }
 

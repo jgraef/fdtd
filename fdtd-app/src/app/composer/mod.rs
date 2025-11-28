@@ -274,6 +274,50 @@ impl Composer {
     pub fn show_debug(&mut self, ui: &mut egui::Ui) {
         if let Some(state) = &self.state {
             ui.collapsing("Scene", |ui| {
+                {
+                    // this whole block is just for debugging
+                    state
+                        .selection()
+                        .with_query_iter::<Option<&Label>, _>(|selected| {
+                            let num_selected = selected.len();
+                            if num_selected == 0 {
+                                ui.label("Nothing selected");
+                            }
+                            else {
+                                ui.label("Selected:");
+                                ui.indent(egui::Id::NULL, |ui| {
+                                    for (entity, label) in selected {
+                                        ui.label(EntityDebugLabel {
+                                            entity,
+                                            label: label.cloned(),
+                                            invalid: false,
+                                        });
+                                    }
+                                });
+                            }
+                        });
+
+                    if let Some(entity_under_pointer) = &state.scene_pointer.entity_under_pointer {
+                        ui.label("Hovered");
+                        ui.indent(egui::Id::NULL, |ui| {
+                            ui.label(state.scene.entity_debug_label(entity_under_pointer.entity));
+                            ui.label(format!(
+                                "({:.4}, {:.4}, {:.4})",
+                                entity_under_pointer.point_hovered.x,
+                                entity_under_pointer.point_hovered.y,
+                                entity_under_pointer.point_hovered.z,
+                            ));
+                            ui.label(format!(
+                                "Distance: {}",
+                                entity_under_pointer.distance_from_camera
+                            ));
+                        });
+                    }
+                    else {
+                        ui.label("Nothing hovered");
+                    }
+                }
+
                 state.scene.show_debug(ui);
             });
         }
@@ -365,7 +409,7 @@ impl ComposerState {
         let view_config = &config.views.view_3d;
         let camera_entity = scene.entities.spawn((
             LocalTransform::look_at(
-                &Point3::new(0.0, 0.0, -4.0),
+                &Point3::new(0.0, 0.0, -1.5),
                 &Point3::origin(),
                 &Vector3::y_axis(),
             ),
@@ -514,49 +558,6 @@ impl ComposerState {
 
         // central panel: shows scene views (cameras)
         egui::CentralPanel::default().show(ctx, |ui| {
-            {
-                // this whole block is just for debugging
-                self.selection()
-                    .with_query_iter::<Option<&Label>, _>(|mut selected| {
-                        let num_selected = selected.len();
-                        if num_selected == 0 {
-                            ui.label("Nothing selected");
-                        }
-                        else {
-                            let (entity, label) = selected.next().unwrap();
-
-                            ui.label(format!(
-                                "Selected: {}{}",
-                                EntityDebugLabel {
-                                    entity,
-                                    label: label.cloned(),
-                                    invalid: false
-                                },
-                                if num_selected > 1 {
-                                    format!(" ({} more)", num_selected - 1)
-                                }
-                                else {
-                                    Default::default()
-                                }
-                            ));
-                        }
-                    });
-
-                if let Some(entity_under_pointer) = &self.scene_pointer.entity_under_pointer {
-                    ui.label(format!(
-                        "Hovered: {} at ({}, {}, {}) with {} distance",
-                        self.scene.entity_debug_label(entity_under_pointer.entity),
-                        entity_under_pointer.point_hovered.x,
-                        entity_under_pointer.point_hovered.y,
-                        entity_under_pointer.point_hovered.z,
-                        entity_under_pointer.distance_from_camera
-                    ));
-                }
-                else {
-                    ui.label("Nothing hovered");
-                }
-            }
-
             {
                 // actually render the scene
                 let view_response = ui.add(
@@ -862,15 +863,16 @@ impl PopulateScene for ExampleScene {
             .material(palette::named::CYAN)
             .add(em_material);*/
 
-        let quad = Quad::new(Vector2::new(1.0, 1.0));
+        let half_extents = Vector2::repeat(0.5);
+        let quad = Quad::new(half_extents);
         scene.entities.spawn((
             Label::new_static("Test Observer"),
             Observer {
                 write_to_gif: None,
                 display_as_texture: true,
                 field: FieldComponent::E,
-                color_map: test_color_map(0.5, Vector3::z_axis()),
-                half_extents: Vector2::new(1.0, 1.0),
+                color_map: test_color_map(1.0, Vector3::z_axis()),
+                half_extents,
             },
             material::LoadAlbedoTexture::new("tmp/test_pattern.png"),
             material::Material::from(material::presets::OFFICE_PAPER),

@@ -1,5 +1,6 @@
 use nalgebra::{
     Matrix3,
+    UnitVector3,
     Vector3,
 };
 
@@ -9,36 +10,53 @@ use crate::{
 };
 
 #[derive(Clone, Copy, Debug)]
-pub struct PmlCell {
-    /// psi auxiliary vector fields for cpml
-    /// todo: the diagonal is 0, and this might be symmetric, so we can save
-    /// some space.
-    pub psi_e: Matrix3<f64>,
-    pub psi_h: Matrix3<f64>,
-    pub b: f64,
-    pub c: f64,
+pub struct GradedPml {
+    pub m: f64,
+    pub m_a: f64,
+    pub sigma_max: f64,
+    pub kappa_max: f64,
+    pub a_max: f64,
+    pub normal: UnitVector3<f32>,
 }
 
-impl PmlCell {
+/// Coefficients for pml
+///
+/// See CE p304
+///
+/// These are only non-zero in the PML regions
+#[derive(Clone, Copy, Debug, Default)]
+pub struct PmlCoefficients {
+    pub b: Vector3<f64>,
+    pub c: Vector3<f64>,
+}
+
+impl PmlCoefficients {
     pub fn new(
         resolution: &Resolution,
         physical_constants: &PhysicalConstants,
         sigma: f64,
         kappa: f64,
         a: f64,
+        normal: UnitVector3<f64>,
     ) -> Self {
-        let b = (-(sigma / kappa + a) * resolution.temporal
-            / physical_constants.vacuum_permittivity)
+        // see CE p304
+
+        // 7.102
+        let b = (-((sigma / (physical_constants.vacuum_permittivity * kappa)
+            + a / physical_constants.vacuum_permittivity)
+            * resolution.temporal))
             .exp();
+
+        // 7.99
         let c = sigma * (b - 1.0) / (sigma * kappa + kappa.powi(2) * a);
+
         Self {
-            psi_e: Matrix3::zeros(),
-            psi_h: Matrix3::zeros(),
-            b,
-            c,
+            b: b * normal.into_inner(),
+            c: c * normal.into_inner(),
         }
     }
 
+    /// normal points into the material (depth is its length)
     #[allow(clippy::too_many_arguments)]
     pub fn new_graded(
         resolution: &Resolution,
@@ -49,6 +67,7 @@ impl PmlCell {
         kappa_max: f64,
         a_max: f64,
         depth: f64,
+        normal: UnitVector3<f64>,
     ) -> Self {
         // from: https://www.youtube.com/watch?v=fg6_YFzCXGk&t=3386s
         // m ~ 3-5
@@ -56,20 +75,14 @@ impl PmlCell {
         // sigma_max ~ ???
         // kappa_max ~ 1-5
         // a_max ~ 0.1
+        //
+        // there might be better formulas on p294
         let g1 = depth.powf(m);
         let g2 = (1.0 - depth).powf(m_a);
         let sigma = sigma_max * g1;
         let kappa = 1.0 + (kappa_max - 1.0) * g1;
         let a = a_max * g2;
-        Self::new(resolution, physical_constants, sigma, kappa, a)
-    }
-
-    pub fn psi_e_total(&self) -> Vector3<f64> {
-        psi_total(&self.psi_e)
-    }
-
-    pub fn psi_h_total(&self) -> Vector3<f64> {
-        psi_total(&self.psi_h)
+        Self::new(resolution, physical_constants, sigma, kappa, a, normal)
     }
 }
 

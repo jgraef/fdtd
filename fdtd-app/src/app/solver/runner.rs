@@ -13,7 +13,10 @@ use nalgebra::{
     Vector3,
 };
 use palette::Srgba;
-use parry3d::bounding_volume::Aabb;
+use parry3d::{
+    bounding_volume::Aabb,
+    query::Ray,
+};
 
 use crate::{
     Error,
@@ -26,6 +29,7 @@ use crate::{
             },
             scene::{
                 Scene,
+                spatial::Collider,
                 transform::GlobalTransform,
             },
         },
@@ -50,6 +54,10 @@ use crate::{
                 FdtdSolverConfig,
                 Resolution,
                 cpu::FdtdCpuBackend,
+                pml::{
+                    GradedPml,
+                    PmlCoefficients,
+                },
                 wgpu::FdtdWgpuBackend,
             },
             observer::Observer,
@@ -63,7 +71,10 @@ use crate::{
             source::Source,
         },
     },
-    physics::material::Material,
+    physics::{
+        PhysicalConstants,
+        material::Material,
+    },
     util::{
         egui::RepaintTrigger,
         format_size,
@@ -272,6 +283,8 @@ where
 
     let materials = SceneDomainDescription::new(
         scene,
+        &config.resolution,
+        &config.physical_constants,
         &coordinate_transformations,
         &common_config.default_material,
     );
@@ -394,24 +407,50 @@ fn spawn_solver<Instance>(
 #[derive(derive_more::Debug)]
 struct SceneDomainDescription<'a, 'b> {
     scene: &'a Scene,
+
+    resolution: &'a Resolution,
+    physical_constants: &'a PhysicalConstants,
+
     #[debug("hecs::ViewBorrow {{ ... }}")]
     materials: hecs::ViewBorrow<'a, &'b Material>,
+
+    #[debug("hecs::ViewBorrow {{ ... }}")]
+    pmls: hecs::ViewBorrow<'a, (&'b GradedPml, &'b Collider, &'b Aabb, &'a GlobalTransform)>,
+
     coordinate_transformations: &'a CoordinateTransformations,
+
     default_material: &'a Material,
 }
 
 impl<'a, 'b> SceneDomainDescription<'a, 'b> {
     pub fn new(
         scene: &'a Scene,
+        resolution: &'a Resolution,
+        physical_constants: &'a PhysicalConstants,
         coordinate_transformations: &'a CoordinateTransformations,
         default_material: &'a Material,
     ) -> Self {
         // access to the material properties
-        let materials = scene.entities.view::<&Material>();
+        let mut materials = scene.entities.view::<&Material>();
+        for (entity, material) in materials.iter_mut() {
+            if let Ok(collider) = scene.entities.get::<&Collider>(entity) {
+                tracing::debug!(?entity, ?collider, ?material, "found material");
+            }
+        }
+
+        let mut pmls = scene
+            .entities
+            .view::<(&GradedPml, &Collider, &Aabb, &GlobalTransform)>();
+        for (entity, (pml, collider, _, _)) in pmls.iter_mut() {
+            tracing::debug!(?entity, ?pml, ?collider, "found pml");
+        }
 
         Self {
             scene,
+            resolution,
+            physical_constants,
             materials,
+            pmls,
             coordinate_transformations,
             default_material,
         }
@@ -424,7 +463,7 @@ impl<'a, 'b> DomainDescription<Point3<usize>> for SceneDomainDescription<'a, 'b>
             .coordinate_transformations
             .transform_point_from_solver_to_world(point);
 
-        let mut point_materials = self
+        let mut materials = self
             .scene
             .point_query(&point)
             .filter_map(|entity| self.materials.get(entity))
@@ -432,7 +471,44 @@ impl<'a, 'b> DomainDescription<Point3<usize>> for SceneDomainDescription<'a, 'b>
 
         // for now we'll just use the first material we find.
         // if nothing is found, use the default
-        point_materials.next().unwrap_or(*self.default_material)
+        materials.next().unwrap_or(*self.default_material)
+    }
+
+    fn pml(&self, point: &Point3<usize>) -> Option<PmlCoefficients> {
+        let point = self
+            .coordinate_transformations
+            .transform_point_from_solver_to_world(point);
+
+        let mut pml_coefficients = self
+            .scene
+            .spatial_queries
+            .intersect_aabb(Aabb {
+                mins: point,
+                maxs: point,
+            })
+            .filter_map(|entity| {
+                let (pml, collider, aabb, transform) = self.pmls.get(entity)?;
+
+                let max_depth = nalgebra::distance(&aabb.mins, &aabb.maxs);
+                let ray = Ray::new(point, *pml.normal);
+
+                let depth = collider.cast_ray(transform.isometry(), &ray, max_depth, false)?;
+
+                Some(PmlCoefficients::new_graded(
+                    self.resolution,
+                    self.physical_constants,
+                    pml.m,
+                    pml.m_a,
+                    pml.sigma_max,
+                    pml.kappa_max,
+                    pml.a_max,
+                    depth as f64,
+                    -pml.normal.cast(),
+                ))
+            });
+
+        // for now only one
+        pml_coefficients.next()
     }
 }
 
@@ -497,9 +573,14 @@ impl<P> Observers<P> {
                         entity,
                         (
                             material::LoadAlbedoTexture::new(receiver).with_transparency(false),
-                            material::Material::from_albedo(Srgba::WHITE)
-                                .with_metalness(0.0)
-                                .with_roughness(1.0),
+                            material::Material {
+                                albedo: Srgba::WHITE,
+                                metalness: 0.0,
+                                roughness: 1.0,
+                                shading: false,
+                                tone_map: false,
+                                ..Default::default()
+                            },
                         ),
                     );
 

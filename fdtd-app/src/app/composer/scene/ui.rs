@@ -206,6 +206,8 @@ pub trait ComponentUiHeading {
 }
 
 mod show_all {
+    use parry3d::bounding_volume::Aabb;
+
     use crate::app::composer::{
         Selectable,
         Selected,
@@ -300,6 +302,7 @@ mod show_all {
         show_component!(CameraConfig);
         show_component!(Selectable);
         show_component!(Selected);
+        show_component!(Aabb);
         // this then shows a checkbox to enable the despawn button lol
         //show_component!(EntityWindow);
     }
