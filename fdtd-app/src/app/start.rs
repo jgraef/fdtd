@@ -25,17 +25,8 @@ use crate::{
         config::AppConfig,
         files::AppFiles,
     },
-    util::wgpu::buffer::StagingPool,
+    util::wgpu::WgpuContext,
 };
-
-#[derive(Clone, Debug)]
-pub struct WgpuContext {
-    pub adapter: wgpu::Adapter,
-    pub device: wgpu::Device,
-    pub queue: wgpu::Queue,
-    pub adapter_info: Arc<wgpu::AdapterInfo>,
-    pub staging_pool: StagingPool,
-}
 
 #[derive(Clone, Debug)]
 pub struct CreateAppContext {
@@ -161,16 +152,11 @@ pub(super) fn run_app(args: Args) -> Result<(), Error> {
             tracing::debug!(?renderer_config);
 
             // pass wgpu context to app (e.g. for compute shaders)
-            let wgpu_context = WgpuContext {
-                adapter: render_state.adapter.clone(),
-                device: render_state.device.clone(),
-                queue: render_state.queue.clone(),
-                adapter_info: Arc::new(render_state.adapter.get_info()),
-                staging_pool: StagingPool::new(
-                    wgpu::BufferSize::new(0x1000).unwrap(),
-                    "staging pool",
-                ),
-            };
+            let wgpu_context = WgpuContext::new(
+                render_state.adapter.clone(),
+                render_state.device.clone(),
+                render_state.queue.clone(),
+            );
 
             // store wgpu context in egui context
             cc.egui_ctx.data_mut(|data| {

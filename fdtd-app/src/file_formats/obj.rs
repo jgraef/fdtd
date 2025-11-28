@@ -13,7 +13,7 @@ use crate::app::composer::{
         Label,
         PopulateScene,
         Scene,
-        transform::Transform,
+        transform::LocalTransform,
     },
 };
 
@@ -48,7 +48,7 @@ impl ObjFile {
 
 pub struct PopulateSceneWithObjFile<'a> {
     obj_file: &'a ObjFile,
-    transform: Transform,
+    transform: LocalTransform,
     material: Material,
 }
 

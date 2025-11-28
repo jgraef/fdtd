@@ -22,9 +22,15 @@ use serde::{
     Serialize,
 };
 
-use crate::app::composer::scene::{
-    Changed,
-    transform::Transform,
+use crate::{
+    app::composer::{
+        DebugUi,
+        scene::{
+            Changed,
+            transform::GlobalTransform,
+        },
+    },
+    util::format_size,
 };
 
 #[derive(derive_more::Debug, Default)]
@@ -57,12 +63,12 @@ impl SpatialQueries {
     ) {
         // update changed entities
         for (entity, (transform, collider, leaf_index, bounding_box)) in world
-            .query_mut::<(&Transform, &Collider, &LeafIndex, &mut BoundingBox)>()
-            .with::<&Changed<Transform>>()
+            .query_mut::<(&GlobalTransform, &Collider, &LeafIndex, &mut BoundingBox)>()
+            .with::<&Changed<GlobalTransform>>()
         {
             tracing::debug!(?entity, "transform changed");
 
-            bounding_box.aabb = collider.compute_aabb(&transform.transform);
+            bounding_box.aabb = collider.compute_aabb(transform.isometry());
             self.bvh
                 .insert_or_update_partially(bounding_box.aabb, leaf_index.index, 0.0);
         }
@@ -71,7 +77,7 @@ impl SpatialQueries {
         for (entity, ()) in world
             .query_mut::<()>()
             .with::<&LeafIndex>()
-            .without::<hecs::Or<&Transform, &Collider>>()
+            .without::<hecs::Or<&GlobalTransform, &Collider>>()
         {
             command_buffer.remove_one::<LeafIndex>(entity);
             command_buffer.remove_one::<BoundingBox>(entity);
@@ -79,7 +85,7 @@ impl SpatialQueries {
 
         // insert colliders that don't have a leaf ID yet
         for (entity, (transform, collider)) in world
-            .query_mut::<(&Transform, &Collider)>()
+            .query_mut::<(&GlobalTransform, &Collider)>()
             .without::<&LeafIndex>()
         {
             let index = self.next_leaf_index;
@@ -87,7 +93,7 @@ impl SpatialQueries {
 
             tracing::debug!(?entity, index, "adding to octtree");
 
-            let aabb = collider.compute_aabb(&transform.transform);
+            let aabb = collider.compute_aabb(transform.isometry());
             self.bvh.insert_or_update_partially(aabb, index, 0.0);
 
             self.stored_entities.insert(index, entity);
@@ -109,14 +115,14 @@ impl SpatialQueries {
     ) -> Option<RayHit> {
         let max_time_of_impact = max_time_of_impact.into().unwrap_or(f32::MAX);
 
-        let view = world.view::<(&Transform, &Collider)>();
+        let view = world.view::<(&GlobalTransform, &Collider)>();
 
         self.bvh
             .cast_ray(ray, max_time_of_impact, |leaf_index, best_hit| {
                 let entity = self.stored_entities.get(&leaf_index)?;
                 if filter(*entity) {
                     let (transform, collider) = view.get(*entity)?;
-                    collider.cast_ray(&transform.transform, ray, best_hit, true)
+                    collider.cast_ray(transform.isometry(), ray, best_hit, true)
                 }
                 else {
                     None
@@ -155,13 +161,13 @@ impl SpatialQueries {
             maxs: point,
         };
 
-        let view = entities.view::<(&Transform, &Collider)>();
+        let view = entities.view::<(&GlobalTransform, &Collider)>();
 
         self.intersect_aabb(aabb).filter_map(move |entity| {
             let (transform, collider) = view.get(entity)?;
 
             collider
-                .contains_point(&transform.transform, &point)
+                .contains_point(transform.isometry(), &point)
                 .then_some(entity)
         })
     }
@@ -175,7 +181,7 @@ impl SpatialQueries {
     ) -> impl Iterator<Item = (hecs::Entity, Contact)> {
         let aabb = shape.compute_aabb(transform);
 
-        let view = entities.view::<(&Transform, &Collider)>();
+        let view = entities.view::<(&GlobalTransform, &Collider)>();
 
         self.intersect_aabb(aabb).filter_map(move |entity| {
             let (other_transform, other_shape) = view.get(entity)?;
@@ -309,12 +315,21 @@ where
     }
 }
 
+impl DebugUi for SpatialQueries {
+    fn show_debug(&self, ui: &mut egui::Ui) {
+        ui.label(format!(
+            "Bvh size: {}",
+            format_size(self.bvh.total_memory_size())
+        ));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use parry3d::shape::Ball;
 
     use crate::app::composer::scene::{
-        Transform,
+        GlobalTransform,
         spatial::{
             Collider,
             SpatialQueries,
@@ -322,7 +337,10 @@ mod tests {
     };
 
     fn test_bundle() -> impl hecs::DynamicBundle {
-        (Collider::from(Ball::new(1.0)), Transform::identity())
+        (
+            Collider::from(Ball::new(1.0)),
+            GlobalTransform::new_test(Default::default()),
+        )
     }
 
     #[test]

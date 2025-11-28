@@ -19,6 +19,7 @@ use std::{
 };
 
 use nalgebra::{
+    Isometry3,
     Point3,
     Vector2,
 };
@@ -32,6 +33,7 @@ use serde::{
 };
 
 use crate::app::composer::{
+    DebugUi,
     Selectable,
     renderer::{
         grid::GridPlane,
@@ -51,7 +53,11 @@ use crate::app::composer::{
             SpatialQueries,
             merge_aabbs,
         },
-        transform::Transform,
+        transform::{
+            GlobalTransform,
+            LocalTransform,
+            TransformHierarchyUpdater,
+        },
     },
     tree::ShowInTree,
 };
@@ -61,14 +67,10 @@ use crate::app::composer::{
 /// - The `add_*` methods could be bundles. But I don't think bundles support
 ///   optional components. We could make our own trait that inserts an entity
 ///   (which would be identical to `PopulateScene`).
-#[derive(derive_more::Debug, Default)]
+#[derive(derive_more::Debug)]
 pub struct Scene {
     #[debug("hecs::World {{ ... }}")]
     pub entities: hecs::World,
-
-    // we might need this pub anyway, because it might be required to e.g. borrow the world and
-    // operate on the octtree at the same time.
-    spatial_queries: SpatialQueries,
 
     /// General-purpose command buffer.
     ///
@@ -79,10 +81,30 @@ pub struct Scene {
     /// the changes become visible. Otherwise it's run in [`Self::prepare`].
     #[debug("hecs::CommandBuffer {{ ... }}")]
     pub command_buffer: hecs::CommandBuffer,
+
+    // we might need this pub anyway, because it might be required to e.g. borrow the world and
+    // operate on the octtree at the same time.
+    spatial_queries: SpatialQueries,
+
+    tick: Tick,
+
+    transform_hierarchy_updater: TransformHierarchyUpdater,
+}
+
+impl Default for Scene {
+    fn default() -> Self {
+        Self {
+            entities: Default::default(),
+            command_buffer: Default::default(),
+            spatial_queries: Default::default(),
+            tick: Tick { tick: 0 },
+            transform_hierarchy_updater: TransformHierarchyUpdater::default(),
+        }
+    }
 }
 
 impl Scene {
-    pub fn add_object<S>(&mut self, transform: impl Into<Transform>, shape: S) -> EntityBuilder
+    pub fn add_object<S>(&mut self, transform: impl Into<LocalTransform>, shape: S) -> EntityBuilder
     where
         S: ColliderTraits + ShapeName + Clone + IntoGenerateMesh,
         S::Config: Default,
@@ -105,7 +127,7 @@ impl Scene {
 
     pub fn add_grid_plane(
         &mut self,
-        transform: impl Into<Transform>,
+        transform: impl Into<LocalTransform>,
         line_spacing: Vector2<f32>,
     ) -> hecs::Entity {
         self.entities.spawn((
@@ -145,6 +167,11 @@ impl Scene {
     pub fn prepare(&mut self) {
         self.apply_deferred();
 
+        self.tick.tick += 1;
+
+        self.transform_hierarchy_updater
+            .update(&mut self.entities, &mut self.command_buffer);
+
         self.spatial_queries
             .update(&mut self.entities, &mut self.command_buffer);
 
@@ -155,9 +182,10 @@ impl Scene {
         for (entity, ()) in self
             .entities
             .query_mut::<()>()
-            .with::<&Changed<Transform>>()
+            .with::<&Changed<GlobalTransform>>()
         {
-            self.command_buffer.remove_one::<Changed<Transform>>(entity);
+            self.command_buffer
+                .remove_one::<Changed<GlobalTransform>>(entity);
         }
         self.apply_deferred();
     }
@@ -175,10 +203,10 @@ impl Scene {
     ///   transforming the pre-computed AABB
     pub fn compute_aabb_relative_to_observer(
         &self,
-        relative_to: &Transform,
+        relative_to: &Isometry3<f32>,
         approximate_relative_aabbs: bool,
     ) -> Option<Aabb> {
-        let relative_to_inv = relative_to.transform.inverse();
+        let relative_to_inv = relative_to.inverse();
 
         if approximate_relative_aabbs {
             let mut query = self.entities.query::<&BoundingBox>();
@@ -188,9 +216,9 @@ impl Scene {
             merge_aabbs(aabbs)
         }
         else {
-            let mut query = self.entities.query::<(&Transform, &Collider)>();
+            let mut query = self.entities.query::<(&GlobalTransform, &Collider)>();
             let aabbs = query.iter().map(|(_entity, (transform, collider))| {
-                let transform = relative_to_inv * transform.transform;
+                let transform = relative_to_inv * transform.isometry();
                 collider.compute_aabb(&transform)
             });
             merge_aabbs(aabbs)
@@ -227,6 +255,35 @@ impl Scene {
 
     pub fn apply_deferred(&mut self) {
         self.command_buffer.run_on(&mut self.entities);
+    }
+
+    pub fn tick(&self) -> Tick {
+        self.tick
+    }
+}
+
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    derive_more::Display,
+)]
+#[display("{tick}")]
+pub struct Tick {
+    tick: u64,
+}
+
+impl Tick {
+    #[cfg(test)]
+    pub fn new_test(tick: u64) -> Self {
+        Self { tick }
     }
 }
 
@@ -374,7 +431,7 @@ impl EntityBuilder {
         self
     }
 
-    pub fn transform(mut self, transform: impl Into<Transform>) -> Self {
+    pub fn transform(mut self, transform: impl Into<LocalTransform>) -> Self {
         self.builder.add(transform.into());
         self
     }
@@ -584,5 +641,13 @@ mod shape_names {
         Cuboid,
         Cylinder,
         Quad,
+    }
+}
+
+impl DebugUi for Scene {
+    fn show_debug(&self, ui: &mut egui::Ui) {
+        ui.label(format!("Tick: {}", self.tick));
+        ui.label(format!("Entities: {}", self.entities.len()));
+        self.spatial_queries.show_debug(ui);
     }
 }

@@ -4,20 +4,18 @@ use nalgebra::Vector2;
 use palette::Srgba;
 
 use crate::{
-    app::{
-        composer::renderer::{
-            Renderer,
-            command::CommandSender,
-            material::TextureAndView,
-            texture_channel::{
-                TextureReceiver,
-                UndecidedTextureSender,
-                texture_channel,
-            },
+    app::composer::renderer::{
+        Renderer,
+        command::CommandSender,
+        material::TextureAndView,
+        texture_channel::{
+            TextureReceiver,
+            UndecidedTextureSender,
+            texture_channel,
         },
-        start::WgpuContext,
     },
     util::wgpu::{
+        WgpuContext,
         create_texture,
         create_texture_from_color,
         create_texture_from_image,

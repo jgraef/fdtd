@@ -26,7 +26,7 @@ use crate::{
             },
             scene::{
                 Scene,
-                transform::Transform,
+                transform::GlobalTransform,
             },
         },
         solver::{
@@ -62,13 +62,13 @@ use crate::{
             },
             source::Source,
         },
-        start::WgpuContext,
     },
     physics::material::Material,
     util::{
         egui::RepaintTrigger,
         format_size,
         palette::ColorExt,
+        wgpu::WgpuContext,
     },
 };
 
@@ -550,7 +550,7 @@ impl Sources {
     ) -> Self {
         let sources = scene
             .entities
-            .query_mut::<(&Transform, &Source)>()
+            .query_mut::<(&GlobalTransform, &Source)>()
             .into_iter()
             .flat_map(|(_entity, (transform, source))| {
                 let world_point = transform.position();

@@ -48,7 +48,7 @@ use crate::{
         scene::{
             Changed,
             Scene,
-            transform::Transform,
+            transform::GlobalTransform,
             ui::ComponentUiHeading,
         },
     },
@@ -260,13 +260,13 @@ pub(super) struct CameraData {
 impl CameraData {
     pub fn new(
         camera_projection: &CameraProjection,
-        camera_transform: &Transform,
+        camera_transform: &GlobalTransform,
         clear_color: Option<&ClearColor>,
         ambient_light: Option<&AmbientLight>,
         point_light: Option<&PointLight>,
         camera_config: Option<&CameraConfig>,
     ) -> Self {
-        let transform = camera_transform.transform.inverse().to_homogeneous();
+        let transform = camera_transform.isometry().inverse().to_homogeneous();
 
         let mut projection = camera_projection.projection.to_homogeneous();
         // nalgebra assumes we're using a right-handed world coordinate system and a
@@ -274,8 +274,7 @@ impl CameraData {
         projection[(2, 2)] *= -1.0;
         projection[(3, 2)] = 1.0;
 
-        let world_position =
-            Point3::from(camera_transform.transform.translation.vector).to_homogeneous();
+        let world_position = camera_transform.position().to_homogeneous();
 
         let mut flags = CameraFlags::empty();
         if ambient_light.is_some() {
@@ -452,7 +451,7 @@ pub(super) fn update_cameras<P>(
         .entities
         .query_mut::<(
             &CameraProjection,
-            &Transform,
+            &GlobalTransform,
             Option<&ClearColor>,
             Option<&AmbientLight>,
             Option<&PointLight>,
@@ -491,7 +490,7 @@ pub(super) fn update_cameras<P>(
         .entities
         .query_mut::<()>()
         .with::<&CameraResources>()
-        .without::<hecs::Or<&Transform, &CameraProjection>>()
+        .without::<hecs::Or<&GlobalTransform, &CameraProjection>>()
     {
         tracing::warn!(
             ?entity,
@@ -517,7 +516,7 @@ pub(super) fn update_cameras<P>(
     ) in scene.entities.query_mut::<(
         &mut CameraResources,
         &CameraProjection,
-        &Transform,
+        &GlobalTransform,
         Option<&ClearColor>,
         Option<&AmbientLight>,
         Option<&PointLight>,

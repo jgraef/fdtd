@@ -1,6 +1,9 @@
 use std::collections::VecDeque;
 
-use crate::app::composer::scene::Scene;
+use crate::app::composer::{
+    DebugUi,
+    scene::Scene,
+};
 
 #[derive(derive_more::Debug)]
 pub struct UndoBuffer {
@@ -111,4 +114,29 @@ pub enum RedoAction {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct HadesId {
     entity: hecs::Entity,
+}
+
+impl DebugUi for UndoBuffer {
+    fn show_debug(&self, ui: &mut egui::Ui) {
+        ui.label("Undo:");
+        let mut empty = true;
+        for undo_action in self.undo_actions.iter().take(10) {
+            empty = false;
+            ui.code(format!("{undo_action:?}"));
+        }
+        if empty {
+            ui.label("No undo actions");
+        }
+
+        ui.separator();
+        ui.label("Redo:");
+        let mut empty = true;
+        for redo_action in self.redo_actions.iter().take(10) {
+            empty = false;
+            ui.code(format!("{redo_action:?}"));
+        }
+        if empty {
+            ui.label("No redo actions");
+        }
+    }
 }

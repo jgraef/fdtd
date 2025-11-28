@@ -13,10 +13,7 @@ use serde::{
 
 use crate::{
     app::{
-        composer::scene::{
-            Scene,
-            transform::Transform,
-        },
+        composer::scene::Scene,
         solver::{
             SolverInstance,
             fdtd,
@@ -133,7 +130,7 @@ impl Volume {
             Volume::SceneAabb(scene_aabb_volume) => {
                 scene
                     .compute_aabb_relative_to_observer(
-                        &Transform::from(scene_aabb_volume.rotation),
+                        &Isometry3::from_parts(Default::default(), scene_aabb_volume.rotation),
                         false,
                     )
                     .unwrap_or_else(|| {

@@ -18,7 +18,10 @@ use crate::app::composer::{
     scene::{
         Changed,
         Scene,
-        transform::Transform,
+        transform::{
+            GlobalTransform,
+            LocalTransform,
+        },
     },
 };
 
@@ -105,13 +108,17 @@ impl<'a> SceneView<'a> {
                             if let Ok(camera_transform) = self
                                 .scene
                                 .entities
-                                .query_one_mut::<&mut Transform>(camera_entity)
+                                .query_one_mut::<&mut LocalTransform>(camera_entity)
                             {
                                 camera_transform.translate_local(&Translation3::new(
                                     0.0,
                                     0.0,
                                     camera_translation_speed.z * *delta,
                                 ));
+                                self.scene.command_buffer.insert_one(
+                                    camera_entity,
+                                    Changed::<LocalTransform>::default(),
+                                );
                             }
                         }
                         egui::Event::Zoom(zoom) => {
@@ -174,7 +181,7 @@ impl<'a> SceneView<'a> {
             if let Ok((camera_transform, camera_projection)) =
                 self.scene
                     .entities
-                    .query_one_mut::<(&mut Transform, &CameraProjection)>(camera_entity)
+                    .query_one_mut::<(&mut LocalTransform, &CameraProjection)>(camera_entity)
             {
                 let drag_angle = camera_projection.unproject_screen(&drag_delta().into());
 
@@ -183,13 +190,16 @@ impl<'a> SceneView<'a> {
                     camera_pan_tilt_speed.y * drag_angle.y,
                     &Vector3::y_axis(),
                 );
+                self.scene
+                    .command_buffer
+                    .insert_one(camera_entity, Changed::<LocalTransform>::default());
             }
         }
         else if response.dragged_by(egui::PointerButton::Secondary)
             && let Ok(camera_transform) = self
                 .scene
                 .entities
-                .query_one_mut::<&mut Transform>(camera_entity)
+                .query_one_mut::<&mut LocalTransform>(camera_entity)
         {
             // todo: we need to take the aspect ratio into account when translating
             let drag_delta = drag_delta();
@@ -198,6 +208,9 @@ impl<'a> SceneView<'a> {
                 -camera_translation_speed.y * drag_delta.y,
                 0.0,
             ));
+            self.scene
+                .command_buffer
+                .insert_one(camera_entity, Changed::<LocalTransform>::default());
         }
 
         if let Some(scene_pointer) = &mut self.scene_pointer {
@@ -243,13 +256,13 @@ fn shoot_ray_from_camera(
 ) -> Option<Ray> {
     scene
         .entities
-        .query_one::<(&Transform, &CameraProjection)>(camera_entity)
+        .query_one::<(&GlobalTransform, &CameraProjection)>(camera_entity)
         .ok()
         .and_then(|mut query| {
             query.get().map(|(camera_transform, camera_projection)| {
                 camera_projection
                     .shoot_screen_ray(&pointer_position)
-                    .transform_by(&camera_transform.transform)
+                    .transform_by(camera_transform.isometry())
             })
         })
 }

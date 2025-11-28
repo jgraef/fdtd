@@ -5,7 +5,6 @@ This app is work-in-progress. It's intended to model electromagnetic behavior. I
 # TODO
 
  - hierarchy:
-  - `GlobalTransform`, propagate
   - fix hierarchy when deleting a parent
  - staging belt:
   - read (gpu to host)

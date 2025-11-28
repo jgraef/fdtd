@@ -12,9 +12,9 @@ use std::{
 
 use parking_lot::Mutex;
 
-use crate::{
-    app::start::WgpuContext,
-    util::FormatPath,
+use crate::util::{
+    FormatPath,
+    wgpu::WgpuContext,
 };
 
 /// iOS-style toggle switch:
@@ -130,11 +130,16 @@ fn toggle_ui_compact(ui: &mut egui::Ui, on: &mut bool) -> egui::Response {
 
 pub trait EguiUtilUiExt {
     fn toggle_button(&mut self, on: &mut bool) -> egui::Response;
+    fn noop(&mut self) -> egui::Response;
 }
 
 impl EguiUtilUiExt for egui::Ui {
     fn toggle_button(&mut self, on: &mut bool) -> egui::Response {
         toggle_ui(self, on)
+    }
+
+    fn noop(&mut self) -> egui::Response {
+        self.allocate_response(egui::Vec2::default(), egui::Sense::empty())
     }
 }
 

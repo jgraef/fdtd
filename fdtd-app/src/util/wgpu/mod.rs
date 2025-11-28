@@ -11,35 +11,102 @@ use std::{
 
 use nalgebra::Vector2;
 use palette::Srgba;
-use parking_lot::Mutex;
 use wgpu::util::DeviceExt;
 
-use crate::util::{
-    ImageSizeExt,
-    wgpu::buffer::{
-        StagingBufferProvider,
-        TextureSourceLayout,
-        WriteStagingTransaction,
+use crate::{
+    app::composer::DebugUi,
+    util::{
+        ImageSizeExt,
+        format_size,
+        wgpu::buffer::{
+            StagingBufferProvider,
+            StagingPool,
+            TextureSourceLayout,
+            WriteStagingTransaction,
+        },
     },
 };
 
-#[derive(Clone, Debug, Default)]
-struct AsyncResultBuf {
-    buf: Arc<Mutex<Option<Result<(), wgpu::BufferAsyncError>>>>,
+#[derive(Clone, Debug)]
+pub struct WgpuContext {
+    pub adapter: wgpu::Adapter,
+    pub device: wgpu::Device,
+    pub queue: wgpu::Queue,
+    pub adapter_info: Arc<wgpu::AdapterInfo>,
+    pub staging_pool: StagingPool,
 }
 
-impl AsyncResultBuf {
-    fn callback(&self) -> impl FnOnce(Result<(), wgpu::BufferAsyncError>) + 'static {
-        let buf = self.buf.clone();
-        move |result| {
-            let mut buf = buf.lock();
-            *buf = Some(result);
+impl WgpuContext {
+    pub fn new(adapter: wgpu::Adapter, device: wgpu::Device, queue: wgpu::Queue) -> Self {
+        let adapter_info = Arc::new(adapter.get_info());
+        Self {
+            adapter,
+            device,
+            queue,
+            adapter_info,
+            staging_pool: StagingPool::new(wgpu::BufferSize::new(0x1000).unwrap(), "staging pool"),
         }
     }
+}
 
-    fn unwrap(&self) -> Result<(), wgpu::BufferAsyncError> {
-        let result = self.buf.lock().take();
-        result.expect("map_buffer_on_submit hasn't finished yet")
+impl DebugUi for WgpuContext {
+    fn show_debug(&self, ui: &mut egui::Ui) {
+        let device_info = get_wgpu_device_info(&self.device, ui.ctx());
+        let staging_belt_info = self.staging_pool.info();
+
+        ui.small("Adapter");
+        ui.label(format!(
+            "{} ({:04x}:{:04x})",
+            self.adapter_info.name, self.adapter_info.vendor, self.adapter_info.device
+        ));
+        ui.small("Backend");
+        ui.label(format!("{:?}", self.adapter_info.backend));
+        ui.small("Driver");
+        ui.label(format!(
+            "{} ({})",
+            self.adapter_info.driver, self.adapter_info.driver_info
+        ));
+        ui.small("Device type");
+        ui.label(format!("{:?}", self.adapter_info.device_type));
+
+        if let Some(report) = &device_info.allocator_report {
+            ui.separator();
+
+            ui.label("Allocator report:");
+            ui.indent(egui::Id::NULL, |ui| {
+                ui.label(format!(
+                    "Total allocated: {}",
+                    format_size(report.total_allocated_bytes)
+                ));
+                ui.label(format!(
+                    "Total reserved: {}",
+                    format_size(report.total_reserved_bytes)
+                ));
+                for allocation in &report.allocations {
+                    ui.label(format!(
+                        "{}: {}",
+                        allocation.name,
+                        format_size(allocation.size)
+                    ));
+                }
+            });
+        }
+
+        ui.separator();
+
+        ui.label("Staging belt:");
+        ui.indent(egui::Id::NULL, |ui| {
+            ui.label(format!(
+                "In-flight chunks: {}",
+                staging_belt_info.in_flight_count
+            ));
+            ui.label(format!("Free chunks: {}", staging_belt_info.free_count));
+            ui.label(format!(
+                "Total allocations: {} chunks, {}",
+                staging_belt_info.total_allocation_count,
+                format_size(staging_belt_info.total_allocation_bytes)
+            ));
+        });
     }
 }
 

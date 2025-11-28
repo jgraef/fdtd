@@ -38,6 +38,7 @@ use crate::{
         composer::{
             loader::AssetLoader,
             menubar::ComposerMenuElements,
+            properties::PropertiesUi,
             renderer::{
                 ClearColor,
                 Outline,
@@ -59,6 +60,7 @@ use crate::{
                 },
             },
             scene::{
+                Changed,
                 EntityDebugLabel,
                 Label,
                 PopulateScene,
@@ -66,9 +68,13 @@ use crate::{
                 Spawn,
                 serialize::DeserializeEntity,
                 spatial::Collider,
-                transform::Transform,
+                transform::{
+                    GlobalTransform,
+                    LocalTransform,
+                },
                 ui::{
                     self as scene_ui,
+                    ComponentUiHeading,
                     EntityPropertiesWindow,
                 },
                 undo::{
@@ -131,10 +137,9 @@ use crate::{
         PhysicalConstants,
         material::Material,
     },
-    util::{
-        egui::EguiUtilContextExt,
-        format_size,
-        wgpu::get_wgpu_device_info,
+    util::egui::{
+        EguiUtilContextExt,
+        EguiUtilUiExt,
     },
 };
 
@@ -267,92 +272,18 @@ impl Composer {
     }
 
     pub fn show_debug(&mut self, ui: &mut egui::Ui) {
-        let renderer_info = self.renderer.info();
-        let renderer_config = self.renderer.config();
-        let wgpu_context = self.renderer.wgpu_context();
-        let staging_belt_info = wgpu_context.staging_pool.info();
-        let device_info = get_wgpu_device_info(&wgpu_context.device, ui.ctx());
+        if let Some(state) = &self.state {
+            ui.collapsing("Scene", |ui| {
+                state.scene.show_debug(ui);
+            });
+        }
 
         ui.collapsing("wgpu", |ui| {
-            ui.small("Adapter");
-            ui.label(format!(
-                "{} ({:04x}:{:04x})",
-                wgpu_context.adapter_info.name,
-                wgpu_context.adapter_info.vendor,
-                wgpu_context.adapter_info.device
-            ));
-            ui.small("Backend");
-            ui.label(format!("{:?}", wgpu_context.adapter_info.backend));
-            ui.small("Driver");
-            ui.label(format!(
-                "{} ({})",
-                wgpu_context.adapter_info.driver, wgpu_context.adapter_info.driver_info
-            ));
-            ui.small("Device type");
-            ui.label(format!("{:?}", wgpu_context.adapter_info.device_type));
-
-            if let Some(report) = &device_info.allocator_report {
-                ui.separator();
-
-                ui.label("Allocator report:");
-                ui.indent(egui::Id::NULL, |ui| {
-                    ui.label(format!(
-                        "Total allocated: {}",
-                        format_size(report.total_allocated_bytes)
-                    ));
-                    ui.label(format!(
-                        "Total reserved: {}",
-                        format_size(report.total_reserved_bytes)
-                    ));
-                    for allocation in &report.allocations {
-                        ui.label(format!(
-                            "{}: {}",
-                            allocation.name,
-                            format_size(allocation.size)
-                        ));
-                    }
-                });
-            }
-
-            ui.separator();
-
-            ui.label("Staging belt:");
-            ui.indent(egui::Id::NULL, |ui| {
-                ui.label(format!(
-                    "Bytes last frame: {}",
-                    format_size(renderer_info.prepare_world_staged_bytes),
-                ));
-                ui.label(format!(
-                    "In-flight chunks: {}",
-                    staging_belt_info.in_flight_count
-                ));
-                ui.label(format!("Free chunks: {}", staging_belt_info.free_count));
-                ui.label(format!(
-                    "Total allocations: {} chunks, {}",
-                    staging_belt_info.total_allocation_count,
-                    format_size(staging_belt_info.total_allocation_bytes)
-                ));
-            });
+            self.renderer.wgpu_context().show_debug(ui);
         });
 
         ui.collapsing("Renderer", |ui| {
-            ui.label(format!(
-                "Prepare world time: {:?}",
-                renderer_info.prepare_world_time
-            ));
-
-            ui.label(format!(
-                "Surface texture: {:?}",
-                renderer_config.target_texture_format
-            ));
-            ui.label(format!(
-                "Depth texture: {:?}",
-                renderer_config.depth_texture_format
-            ));
-            ui.label(format!(
-                "Multisampling: {:?}",
-                renderer_config.multisample_count
-            ));
+            self.renderer.show_debug(ui);
 
             if let Some(state) = &mut self.state {
                 ui.separator();
@@ -371,26 +302,7 @@ impl Composer {
 
         if let Some(state) = &mut self.state {
             ui.collapsing("Undo Buffer", |ui| {
-                ui.label("Undo:");
-                let mut empty = true;
-                for undo_action in state.undo_buffer.iter_undo().take(10) {
-                    empty = false;
-                    ui.code(format!("{undo_action:?}"));
-                }
-                if empty {
-                    ui.label("No undo actions");
-                }
-
-                ui.separator();
-                ui.label("Redo:");
-                let mut empty = true;
-                for redo_action in state.undo_buffer.iter_redo().take(10) {
-                    empty = false;
-                    ui.code(format!("{redo_action:?}"));
-                }
-                if empty {
-                    ui.label("No redo actions");
-                }
+                state.undo_buffer.show_debug(ui);
             });
         }
     }
@@ -452,7 +364,7 @@ impl ComposerState {
         // populated by it.
         let view_config = &config.views.view_3d;
         let camera_entity = scene.entities.spawn((
-            Transform::look_at(
+            LocalTransform::look_at(
                 &Point3::new(0.0, 0.0, -4.0),
                 &Point3::origin(),
                 &Vector3::y_axis(),
@@ -466,7 +378,7 @@ impl ComposerState {
             },
             view_config
                 .ambient_light
-                .unwrap_or_else(|| AmbientLight::white_light(0.1)),
+                .unwrap_or_else(|| AmbientLight::white_light(0.5)),
             view_config
                 .point_light
                 .unwrap_or_else(|| PointLight::white_light(0.5)),
@@ -919,7 +831,7 @@ impl PopulateScene for ExampleScene {
             .spawn(scene);
 
         let ball = scene
-            .add_object(Point3::new(0.2, 0.0, 0.0), ball(0.1))
+            .add_object(Point3::new(0.4, 0.0, 0.0), ball(0.1))
             .material(material::presets::BLACKBOARD)
             .component(em_material)
             .spawn(scene);
@@ -962,7 +874,7 @@ impl PopulateScene for ExampleScene {
             },
             material::LoadAlbedoTexture::new("tmp/test_pattern.png"),
             material::Material::from(material::presets::OFFICE_PAPER),
-            Transform::identity(),
+            LocalTransform::identity(),
             Collider::from(quad),
             Selectable,
             ShowInTree,
@@ -974,7 +886,7 @@ impl PopulateScene for ExampleScene {
                 GaussianPulse::new(0.05, 0.01)
                     .with_amplitudes(Vector3::z() * 1000.0, Vector3::zeros()),
             ),
-            Transform::identity(),
+            LocalTransform::identity(),
         ));
 
         Ok(())
@@ -984,6 +896,21 @@ impl PopulateScene for ExampleScene {
 /// Tag for entities that are selected.
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
 pub struct Selected;
+
+impl PropertiesUi for Selected {
+    type Config = ();
+
+    fn properties_ui(&mut self, ui: &mut egui::Ui, config: &Self::Config) -> egui::Response {
+        let _ = config;
+        ui.noop()
+    }
+}
+
+impl ComponentUiHeading for Selected {
+    fn heading(&self) -> impl Into<egui::RichText> {
+        "Selected"
+    }
+}
 
 #[derive(Serialize, Deserialize)]
 enum SceneClipboard<E> {
@@ -1127,6 +1054,21 @@ impl<'a> Drop for SelectionMut<'a> {
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
 pub struct Selectable;
 
+impl PropertiesUi for Selectable {
+    type Config = ();
+
+    fn properties_ui(&mut self, ui: &mut egui::Ui, config: &Self::Config) -> egui::Response {
+        let _ = config;
+        ui.noop()
+    }
+}
+
+impl ComponentUiHeading for Selectable {
+    fn heading(&self) -> impl Into<egui::RichText> {
+        "Selectable"
+    }
+}
+
 #[derive(derive_more::Debug)]
 pub struct CameraMut<'a> {
     scene: &'a mut Scene,
@@ -1147,7 +1089,7 @@ impl<'a> CameraMut<'a> {
         let Ok((camera_transform, camera_projection)) = self
             .scene
             .entities
-            .query_one_mut::<(&Transform, &CameraProjection)>(self.camera_entity)
+            .query_one_mut::<(&GlobalTransform, &CameraProjection)>(self.camera_entity)
             .map(|(t, p)| (*t, *p))
         else {
             return;
@@ -1156,7 +1098,7 @@ impl<'a> CameraMut<'a> {
         // compute scene AABB relative to camera
         let Some(scene_aabb) = self
             .scene
-            .compute_aabb_relative_to_observer(&camera_transform, false)
+            .compute_aabb_relative_to_observer(camera_transform.isometry(), false)
         else {
             return;
         };
@@ -1169,9 +1111,13 @@ impl<'a> CameraMut<'a> {
         let camera_transform = self
             .scene
             .entities
-            .query_one_mut::<&mut Transform>(self.camera_entity)
+            .query_one_mut::<&mut LocalTransform>(self.camera_entity)
             .expect("camera should still exist");
         camera_transform.translate_local(&Translation3::from(translation));
+
+        self.scene
+            .command_buffer
+            .insert_one(self.camera_entity, Changed::<LocalTransform>::default());
     }
 
     /// Fit the camera to the scene looking along a specified axis.
@@ -1190,7 +1136,7 @@ impl<'a> CameraMut<'a> {
         let Ok((camera_transform, camera_projection)) =
             self.scene
                 .entities
-                .query_one_mut::<(&mut Transform, &CameraProjection)>(self.camera_entity)
+                .query_one_mut::<(&mut LocalTransform, &CameraProjection)>(self.camera_entity)
         else {
             return;
         };
@@ -1203,39 +1149,50 @@ impl<'a> CameraMut<'a> {
 
         let distance = camera_projection.distance_to_fit_aabb_into_fov(&scene_aabb, margin);
 
-        let mut transform = Transform::from(Isometry3::from_parts(
+        let mut new_local = LocalTransform::from(Isometry3::from_parts(
             Translation3::from(scene_aabb.center().coords),
             rotation,
         ));
-        transform.translate_local(&Translation3::from(-Vector3::z() * distance));
+        new_local.translate_local(&Translation3::from(-Vector3::z() * distance));
 
-        *camera_transform = transform;
+        // FIXME: this doesn't work anymore if the camera has a parent
+        *camera_transform = new_local;
+
+        self.scene
+            .command_buffer
+            .insert_one(self.camera_entity, Changed::<LocalTransform>::default());
     }
 
     pub fn point_to_scene_center(&mut self) {
         let scene_center = self.scene.aabb().center();
 
-        if let Ok(camera_transform) = self
+        let Ok(camera_transform) = self
             .scene
             .entities
-            .query_one_mut::<&mut Transform>(self.camera_entity)
-        {
-            let eye = camera_transform.position();
+            .query_one_mut::<&mut LocalTransform>(self.camera_entity)
+        else {
+            return;
+        };
 
-            // normally up is always +Y
-            let mut up = Vector3::y();
+        let eye = camera_transform.position();
 
-            // but we need to take into account when we're directly above the scene center
-            const COLLINEAR_THRESHOLD: f32 = 0.01f32.to_radians();
-            if (eye - scene_center).cross(&up).norm_squared() < COLLINEAR_THRESHOLD {
-                // we would be looking straight up or down, so keep the up vector from the
-                // camera
-                up = camera_transform.transform.rotation.transform_vector(&up);
-                tracing::debug!(?eye, ?scene_center, ?up, "looking straight up or down");
-            }
+        // normally up is always +Y
+        let mut up = Vector3::y();
 
-            *camera_transform = Transform::look_at(&eye, &scene_center, &up);
+        // but we need to take into account when we're directly above the scene center
+        const COLLINEAR_THRESHOLD: f32 = 0.01f32.to_radians();
+        if (eye - scene_center).cross(&up).norm_squared() < COLLINEAR_THRESHOLD {
+            // we would be looking straight up or down, so keep the up vector from the
+            // camera
+            up = camera_transform.isometry.rotation.transform_vector(&up);
+            tracing::debug!(?eye, ?scene_center, ?up, "looking straight up or down");
         }
+
+        *camera_transform = LocalTransform::look_at(&eye, &scene_center, &up);
+
+        self.scene
+            .command_buffer
+            .insert_one(self.camera_entity, Changed::<LocalTransform>::default());
     }
 
     pub fn query<Q>(&mut self) -> Option<Q::Item<'_>>
@@ -1260,4 +1217,8 @@ impl Default for EntityWindow {
             despawn_button: true,
         }
     }
+}
+
+pub trait DebugUi {
+    fn show_debug(&self, ui: &mut egui::Ui);
 }

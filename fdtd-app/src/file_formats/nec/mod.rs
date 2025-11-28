@@ -28,7 +28,7 @@ use crate::{
             PopulateScene,
             Scene,
             Spawn,
-            transform::Transform,
+            transform::LocalTransform,
         },
     },
     file_formats::nec::{
@@ -65,7 +65,7 @@ impl<'a> PopulateScene for PopulateWithNec<'a> {
                             WireSegmentDimensions::Flat { length, radius } => {
                                 let shape = Cylinder::new(0.5 * length, radius);
 
-                                let transform = Transform::new(
+                                let transform = LocalTransform::new(
                                     // get the translation by applying the origin point + length
                                     // along the wire to the transform
                                     Translation3::from(

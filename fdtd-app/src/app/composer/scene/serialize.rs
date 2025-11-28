@@ -279,7 +279,10 @@ mod register_global {
             Label,
             serialize::EntitySerializer,
             spatial::BoundingBox,
-            transform::Transform,
+            transform::{
+                GlobalTransform,
+                LocalTransform,
+            },
         },
         tree::ShowInTree,
     };
@@ -294,7 +297,8 @@ mod register_global {
         }
 
         register! {
-            Transform,
+            LocalTransform,
+            GlobalTransform,
             Material,
             Label,
             Hidden,

@@ -207,6 +207,8 @@ pub trait ComponentUiHeading {
 
 mod show_all {
     use crate::app::composer::{
+        Selectable,
+        Selected,
         properties::PropertiesUi,
         renderer::{
             Outline,
@@ -220,7 +222,7 @@ mod show_all {
         scene::{
             transform::{
                 GlobalTransform,
-                Transform,
+                LocalTransform,
             },
             ui::{
                 ComponentUi,
@@ -289,12 +291,16 @@ mod show_all {
             };
         }
 
-        show_component!(Transform, Changed);
+        show_component!(LocalTransform, Changed);
         show_component!(GlobalTransform);
         show_component!(Material, Changed);
         show_component!(PointLight);
         show_component!(AmbientLight);
         show_component!(Outline);
         show_component!(CameraConfig);
+        show_component!(Selectable);
+        show_component!(Selected);
+        // this then shows a checkbox to enable the despawn button lol
+        //show_component!(EntityWindow);
     }
 }

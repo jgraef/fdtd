@@ -37,6 +37,7 @@ use serde::{
 use crate::{
     app::{
         composer::{
+            DebugUi,
             properties::{
                 PropertiesUi,
                 TrackChanges,
@@ -87,24 +88,25 @@ use crate::{
             },
             scene::{
                 Scene,
-                transform::Transform,
+                transform::GlobalTransform,
                 ui::ComponentUiHeading,
             },
         },
-        start::{
-            CreateAppContext,
-            WgpuContext,
-        },
+        start::CreateAppContext,
     },
-    util::wgpu::{
-        WriteImageToTextureExt,
-        buffer::{
-            StagedTypedArrayBuffer,
-            StagingBufferProvider,
-            WriteStagingTransaction,
+    util::{
+        format_size,
+        wgpu::{
+            WgpuContext,
+            WriteImageToTextureExt,
+            buffer::{
+                StagedTypedArrayBuffer,
+                StagingBufferProvider,
+                WriteStagingTransaction,
+            },
+            create_texture_from_color,
+            create_texture_view_from_texture,
         },
-        create_texture_from_color,
-        create_texture_view_from_texture,
     },
 };
 
@@ -172,7 +174,7 @@ impl From<Arc<egui::mutex::RwLock<egui_wgpu::Renderer>>> for EguiWgpuRenderer {
 pub struct Renderer {
     wgpu_context: WgpuContext,
     egui_wgpu_renderer: EguiWgpuRenderer,
-    renderer_config: RendererConfig,
+    config: RendererConfig,
 
     camera_bind_group_layout: wgpu::BindGroupLayout,
     mesh_bind_group_layout: wgpu::BindGroupLayout,
@@ -414,7 +416,7 @@ impl Renderer {
         Self {
             wgpu_context: context.wgpu_context.clone(),
             egui_wgpu_renderer: context.egui_wgpu_renderer.clone(),
-            renderer_config: context.renderer_config,
+            config: context.renderer_config,
             camera_bind_group_layout,
             mesh_bind_group_layout,
             mesh_shader_module,
@@ -436,7 +438,7 @@ impl Renderer {
     }
 
     pub fn config(&self) -> &RendererConfig {
-        &self.renderer_config
+        &self.config
     }
 
     pub fn resource_creator(&self) -> RenderResourceCreator {
@@ -549,7 +551,7 @@ impl Renderer {
             &CameraResources,
             Option<&CameraConfig>,
             hecs::Satisfies<&ClearColor>,
-            &Transform,
+            &GlobalTransform,
         )>();
 
         let (camera_resources, camera_config, has_clear_color, camera_transform) = query.get()?;
@@ -641,7 +643,7 @@ where
         (transform, mesh, mesh_bind_group, material, albedo_texture, material_texture, outline),
     ) in world
         .query_mut::<(
-            &Transform,
+            &GlobalTransform,
             &Mesh,
             &MeshBindGroup,
             Option<&Material>,
@@ -694,7 +696,7 @@ struct InstanceData {
 impl InstanceData {
     /// Creates instance data for mesh rendering
     pub fn new_mesh(
-        transform: &Transform,
+        transform: &GlobalTransform,
         mesh: &Mesh,
         material: Option<&Material>,
         albedo_texture: Option<&AlbedoTexture>,
@@ -716,7 +718,7 @@ impl InstanceData {
         });
 
         Self {
-            transform: transform.transform.to_homogeneous(),
+            transform: transform.isometry().to_homogeneous(),
             instance_flags: InstanceFlags::empty(),
             mesh_flags: mesh.flags,
             base_vertex: mesh.base_vertex,
@@ -890,4 +892,30 @@ impl Fallbacks {
 pub struct RendererInfo {
     pub prepare_world_staged_bytes: u64,
     pub prepare_world_time: Duration,
+}
+
+impl DebugUi for Renderer {
+    fn show_debug(&self, ui: &mut egui::Ui) {
+        ui.label(format!(
+            "Bytes last frame: {}",
+            format_size(self.info.prepare_world_staged_bytes),
+        ));
+        ui.label(format!(
+            "Prepare world time: {:?}",
+            self.info.prepare_world_time
+        ));
+
+        ui.label(format!(
+            "Surface texture: {:?}",
+            self.config.target_texture_format
+        ));
+        ui.label(format!(
+            "Depth texture: {:?}",
+            self.config.depth_texture_format
+        ));
+        ui.label(format!(
+            "Multisampling: {:?}",
+            self.config.multisample_count
+        ));
+    }
 }

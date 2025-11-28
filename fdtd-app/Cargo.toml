@@ -13,7 +13,7 @@ chrono = { version = "0.4.42", features = ["serde"] }
 clap = { version = "4.5.50", features = ["derive"] }
 color-eyre = "0.6.5"
 colorgrad = { version = "0.8.0", features = ["preset"] }
-derive_more = { version = "2.0.1", features = ["debug"] }
+derive_more = { version = "2.0.1", features = ["debug", "display"] }
 directories = "6.0.0"
 dotenvy = "0.15.7"
 eframe = { version = "0.33.0", default-features = false, features = [
