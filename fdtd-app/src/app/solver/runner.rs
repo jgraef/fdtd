@@ -12,7 +12,6 @@ use nalgebra::{
     UnitQuaternion,
     Vector3,
 };
-use palette::Srgba;
 use parry3d::{
     bounding_volume::Aabb,
     query::Ray,
@@ -78,7 +77,6 @@ use crate::{
     util::{
         egui::RepaintTrigger,
         format_size,
-        palette::ColorExt,
         wgpu::WgpuContext,
     },
 };
@@ -573,14 +571,7 @@ impl<P> Observers<P> {
                         entity,
                         (
                             material::LoadAlbedoTexture::new(receiver).with_transparency(false),
-                            material::Material {
-                                albedo: Srgba::WHITE,
-                                metalness: 0.0,
-                                roughness: 1.0,
-                                shading: false,
-                                tone_map: false,
-                                ..Default::default()
-                            },
+                            material::Material::default(),
                         ),
                     );
 

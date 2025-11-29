@@ -180,10 +180,9 @@ pub fn texture_descriptor<'a>(
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
-        // not sure, but it looks better without Srgb. The surface egui-wgpu uses is not srgba, but
-        // wouldn't the conversion being taken care of?
-        // format: wgpu::TextureFormat::Rgba8UnormSrgb,
-        format: wgpu::TextureFormat::Rgba8Unorm,
+        // todo: need to be able to pick this. but usually we're working with srgba when
+        // writing/reading a texture
+        format: wgpu::TextureFormat::Rgba8UnormSrgb,
         usage,
         view_formats: &[],
     }

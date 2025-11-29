@@ -260,6 +260,8 @@ pub enum FilePickerConfig {
     Save,
 }
 
+// clippy, this config is not final yet, and soon it won't be derivable anymore.
+#[allow(clippy::derivable_impls)]
 impl Default for FilePickerConfig {
     fn default() -> Self {
         Self::Open

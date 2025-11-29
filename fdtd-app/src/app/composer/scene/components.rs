@@ -1,3 +1,6 @@
+// clippy, it's just this module, i promise!
+#![allow(clippy::type_complexity)]
+
 use std::{
     any::{
         TypeId,
@@ -169,7 +172,7 @@ pub struct RegisteredComponentBuilder<'a> {
 
 impl<'a> AsRef<RegisteredComponent> for RegisteredComponentBuilder<'a> {
     fn as_ref(&self) -> &RegisteredComponent {
-        &self.inner
+        self.inner
     }
 }
 
@@ -197,8 +200,7 @@ impl<'a> RegisteredComponentBuilder<'a> {
                     let mut widget =
                         ComponentWidget::<T>::new(entity.entity(), command_buffer, &mut component);
                     widget.mark_changed = mark_changed;
-                    let heading = egui::RichText::from(display_name);
-                    widget.heading = Some(&heading);
+                    widget.heading = Some(&display_name);
                     // todo: we could either pass this in from the caller, or from a flag stored in
                     // the registered component, or use a tag component to determine this.
                     widget.deletable = true;

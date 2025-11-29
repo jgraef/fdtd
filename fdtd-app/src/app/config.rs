@@ -81,6 +81,9 @@ pub struct View3dConfig {
 
     #[serde(default = "default_to_true")]
     pub tone_map: bool,
+
+    #[serde(default = "default_gamma")]
+    pub gamma: f32,
 }
 
 impl Default for View3dConfig {
@@ -91,16 +94,17 @@ impl Default for View3dConfig {
             ambient_light: default_ambient_light(),
             point_light: default_point_light(),
             tone_map: true,
+            gamma: 2.4,
         }
     }
 }
 
 fn default_ambient_light() -> AmbientLight {
-    AmbientLight::white_light(0.5)
+    AmbientLight::white_light(0.4)
 }
 
 fn default_point_light() -> PointLight {
-    PointLight::white_light(1.0)
+    PointLight::white_light(0.8)
 }
 
 fn default_background_color() -> Srgb {
@@ -109,6 +113,12 @@ fn default_background_color() -> Srgb {
 
 fn default_fovy() -> f32 {
     45.0
+}
+
+fn default_gamma() -> f32 {
+    // note: we need to gamma correct, because the surface texture from egui-wgpu is
+    // linear rgba
+    2.4
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

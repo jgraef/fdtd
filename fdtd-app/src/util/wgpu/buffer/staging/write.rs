@@ -1,9 +1,12 @@
 use std::{
     borrow::Cow,
+    ops::Deref,
     sync::Arc,
 };
 
 use parking_lot::RwLock;
+
+use self::inflight::*;
 
 #[derive(Debug)]
 pub struct WriteStagingTransaction<'a, P>
@@ -371,53 +374,114 @@ impl StagingBufferProvider for WriteStagingBelt {
     }
 
     fn finish(&mut self, command_encoder: &mut wgpu::CommandEncoder) {
-        let active_chunks = std::mem::take(&mut self.active_chunks);
-
-        for chunk in &active_chunks {
-            chunk.buffer.unmap();
-        }
-
-        struct InflightChunks {
-            active_chunks: Vec<Chunk>,
-            pool: StagingPool,
-        }
-
-        impl InflightChunks {
-            fn recall(&mut self) {
-                for mut chunk in self.active_chunks.drain(..) {
-                    let pool = self.pool.clone();
-
-                    chunk
-                        .buffer
-                        .clone()
-                        .slice(..)
-                        .map_async(wgpu::MapMode::Write, move |_| {
-                            chunk.offset = 0;
-
-                            let mut state = pool.inner.state.write();
-                            state.in_flight_count -= 1;
-                            state.free_chunks.push(chunk);
-                        });
-                }
-            }
-        }
-
-        impl Drop for InflightChunks {
-            fn drop(&mut self) {
-                // this is to make sure active buffers are recalled even if the command encoder
-                // is dropped and never submitted
-                self.recall();
-            }
-        }
-
-        let mut inflight = InflightChunks {
-            active_chunks,
-            pool: self.pool.clone(),
-        };
+        let inflight_chunks = self
+            .active_chunks
+            .drain(..)
+            .map(|chunk| {
+                chunk.buffer.unmap();
+                InflightChunk::new(self.pool.clone(), chunk)
+            })
+            .collect::<InflightChunks>();
 
         command_encoder.on_submitted_work_done(move || {
-            inflight.recall();
+            // the command encoder got submitted and is done, we can recall the chunks
+            inflight_chunks.recall();
         });
+    }
+}
+
+/// Helpers to make sure in-flight chunks are always accounted for.
+///
+/// This basically wraps them and handles the case if they're dropped somewhere.
+mod inflight {
+    use super::*;
+
+    // when we recall the chunks and map them, we need to move them individually
+    // into the map_async callback with a pool anyway. so we pair them up
+    // now.
+    pub(super) struct InflightChunk(Option<(StagingPool, Chunk)>);
+
+    // then we give them a Drop impl to make sure they're always accounted for
+    impl Drop for InflightChunk {
+        fn drop(&mut self) {
+            if let Some((pool, chunk)) = self.0.take() {
+                // this chunk got lost somewhere (map_sync dropped it). we'll drop it because we
+                // don't know it's state (whether it's mapped or not). but we want to take it
+                // into account
+                tracing::warn!(?chunk, "inflight chunk dropped");
+                let mut state = pool.inner.state.write();
+                state.in_flight_count -= 1;
+            }
+        }
+    }
+
+    impl Deref for InflightChunk {
+        type Target = Chunk;
+
+        fn deref(&self) -> &Self::Target {
+            // this is always okay, because we only take out the chunk when we take
+            // ownership of this.
+            &self.0.as_ref().unwrap().1
+        }
+    }
+
+    impl InflightChunk {
+        pub fn new(pool: StagingPool, chunk: Chunk) -> Self {
+            Self(Some((pool, chunk)))
+        }
+
+        pub fn into_inner(mut self) -> (StagingPool, Chunk) {
+            self.0.take().unwrap()
+        }
+    }
+
+    // this will hold all the inflight chunks for the on_submitted_work_done
+    // callback. if the user drops the command encoder this will be dropped,
+    // and we can safely recall the chunks
+    pub(super) struct InflightChunks(Vec<InflightChunk>);
+
+    impl FromIterator<InflightChunk> for InflightChunks {
+        fn from_iter<T: IntoIterator<Item = InflightChunk>>(iter: T) -> Self {
+            Self(iter.into_iter().collect())
+        }
+    }
+
+    impl InflightChunks {
+        pub fn recall(mut self) {
+            // we could just drop it, since the drop impl will call the same method, but
+            // this is more explicit.
+            self.recall_impl();
+        }
+
+        fn recall_impl(&mut self) {
+            for chunk in self.0.drain(..) {
+                chunk
+                    .buffer
+                    .clone()
+                    .slice(..)
+                    .map_async(wgpu::MapMode::Write, move |_| {
+                        // take out the chunk from the `InflightChunk`, so it's Drop doesn't do
+                        // anything
+                        let (pool, mut chunk) = chunk.into_inner();
+
+                        // reset chunk
+                        chunk.offset = 0;
+
+                        // take account and put back into free list
+                        let mut state = pool.inner.state.write();
+                        state.in_flight_count -= 1;
+                        state.free_chunks.push(chunk);
+                    });
+            }
+        }
+    }
+
+    impl Drop for InflightChunks {
+        fn drop(&mut self) {
+            // this is to make sure active buffers are recalled even if the command encoder
+            // is dropped and never submitted
+            self.recall_impl();
+        }
     }
 }
 

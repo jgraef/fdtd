@@ -8,7 +8,8 @@ struct Camera {
     ambient_light_color: vec4f,
     point_light_color: vec4f,
     flags: u32,
-    // 12 bytes padding
+    gamma: f32,
+    // 8 bytes padding
 };
 
 struct Instance {
@@ -53,6 +54,7 @@ const FLAG_MATERIAL_ANY_ORM: u32                   = 0x0000000e;
 const FLAG_MATERIAL_TRANSPARENT: u32               = 0x00000010;
 const FLAG_MATERIAL_SHADING: u32                   = 0x00000020;
 const FLAG_MATERIAL_TONE_MAP: u32                  = 0x00000040;
+const FLAG_MATERIAL_GAMMA: u32                     = 0x00000080;
 
 const FLAG_CAMERA_AMBIENT_LIGHT: u32 = 0x01;
 const FLAG_CAMERA_POINT_LIGHT: u32 = 0x02;
@@ -206,8 +208,6 @@ fn fs_main_solid(input: VertexOutputSolid, @builtin(front_facing) front_face: bo
             alpha = 1.0;
         }
 
-
-
         if (instance.material.flags & FLAG_MATERIAL_SHADING) == 0 {
             color = albedo;
         }
@@ -259,11 +259,11 @@ fn fs_main_solid(input: VertexOutputSolid, @builtin(front_facing) front_face: bo
 
         // tonemap hdr to ldr
         if (camera.flags & FLAG_CAMERA_TONE_MAP) != 0 && (instance.material.flags & FLAG_MATERIAL_TONE_MAP) != 0 {
-            // reinhard tone map
-            color /= color + vec3f(1.0);
+            color = aces_tone_map(color);
+        }
 
-            const gamma: f32 = 2.2;
-            color = pow(color, vec3f(1.0 / gamma));
+        if (instance.material.flags & FLAG_MATERIAL_GAMMA) != 0 {
+            color = gamma_correct(color);
         }
 
         output.color = vec4f(color, alpha);
@@ -311,10 +311,7 @@ fn light_radiance(
     let eps = 0.0001;
     let specular = ndf * g * f / (4.0 * n_dot_v * n_dot_l + eps);
 
-    // hack for slightly better looks, but we want to better solution for this.
-    let specular_clamped = clamp(specular, vec3f(0.01), vec3f(1.0));
-
-    return (k_d * albedo / pi + specular_clamped) * radiance * n_dot_l;
+    return (k_d * albedo / pi + specular) * radiance * n_dot_l;
 }
 
 fn throwbridge_reitz_ggx(n_dot_h: f32, a: f32) -> f32 {
@@ -335,6 +332,34 @@ fn geometry_smith(n_dot_v: f32, n_dot_l: f32, k: f32) -> f32 {
 
 fn fresnel_schlick(cos_theta: f32, f_0: vec3f) -> vec3f {
     return f_0 + (vec3f(1.0) - f_0) * pow(1.0 - cos_theta, 5.0);
+}
+
+// Maps HDR values to linear values
+// Based on http://www.oscars.org/science-technology/sci-tech-projects/aces
+fn aces_tone_map(hdr: vec3f) -> vec3f {
+    let m1 = mat3x3(
+        0.59719, 0.07600, 0.02840,
+        0.35458, 0.90834, 0.13383,
+        0.04823, 0.01566, 0.83777,
+    );
+    let m2 = mat3x3(
+        1.60475, -0.10208, -0.00327,
+        -0.53108,  1.10813, -0.07276,
+        -0.07367, -0.00605,  1.07602,
+    );
+    let v = m1 * hdr;
+    let a = v * (v + 0.0245786) - 0.000090537;
+    let b = v * (0.983729 * v + 0.4329510) + 0.238081;
+    return clamp(m2 * (a / b), vec3(0.0), vec3(1.0));
+}
+
+// https://learnopengl.com/Advanced-Lighting/HDR
+fn reinard_tone_map(hdr: vec3f) -> vec3f {
+    return hdr / (hdr + vec3f(1.0));
+}
+
+fn gamma_correct(color: vec3f) -> vec3f {
+    return pow(color, vec3f(1.0 / camera.gamma));
 }
 
 @vertex

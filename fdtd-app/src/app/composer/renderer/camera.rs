@@ -36,6 +36,8 @@ use crate::{
             PropertiesUi,
             TrackChanges,
             label_and_value,
+            label_and_value_with_config,
+            std::NumericPropertyUiConfig,
         },
         renderer::{
             ClearColor,
@@ -254,7 +256,8 @@ pub(super) struct CameraData {
     ambient_light_color: LinSrgba,
     point_light_color: LinSrgba,
     flags: CameraFlags,
-    _padding: [u32; 3],
+    gamma: f32,
+    _padding: [u32; 2],
 }
 
 impl CameraData {
@@ -266,48 +269,45 @@ impl CameraData {
         point_light: Option<&PointLight>,
         camera_config: Option<&CameraConfig>,
     ) -> Self {
-        let transform = camera_transform.isometry().inverse().to_homogeneous();
+        let mut data = Self {
+            transform: camera_transform.isometry().inverse().to_homogeneous(),
+            projection: {
+                let mut projection = camera_projection.projection.to_homogeneous();
+                // nalgebra assumes we're using a right-handed world coordinate system and a
+                // left-handed NDC and thus flips the z-axis. Undo this here.
+                projection[(2, 2)] *= -1.0;
+                projection[(3, 2)] = 1.0;
+                projection
+            },
+            world_position: camera_transform.position().to_homogeneous(),
+            gamma: 1.0,
+            ..Self::zeroed()
+        };
 
-        let mut projection = camera_projection.projection.to_homogeneous();
-        // nalgebra assumes we're using a right-handed world coordinate system and a
-        // left-handed NDC and thus flips the z-axis. Undo this here.
-        projection[(2, 2)] *= -1.0;
-        projection[(3, 2)] = 1.0;
-
-        let world_position = camera_transform.position().to_homogeneous();
-
-        let mut flags = CameraFlags::empty();
-        if ambient_light.is_some() {
-            flags.insert(CameraFlags::AMBIENT_LIGHT);
+        if let Some(ambient_light) = ambient_light {
+            data.flags.insert(CameraFlags::AMBIENT_LIGHT);
+            data.ambient_light_color = ambient_light.color.into_linear().with_alpha(1.0);
         }
-        if point_light.is_some() {
-            flags.insert(CameraFlags::POINT_LIGHT);
+
+        if let Some(point_light) = point_light {
+            data.flags.insert(CameraFlags::POINT_LIGHT);
+            data.point_light_color = point_light.color.into_linear().with_alpha(1.0);
         }
+
+        if let Some(clear_color) = clear_color {
+            data.clear_color = clear_color.clear_color.into_linear().with_alpha(1.0);
+        }
+
         // clippy, i will probably nest other ifs using the camera config
         #[allow(clippy::collapsible_if)]
         if let Some(camera_config) = camera_config {
             if camera_config.tone_map {
-                flags.insert(CameraFlags::TONE_MAP)
+                data.flags.insert(CameraFlags::TONE_MAP)
             }
+            data.gamma = camera_config.gamma;
         }
 
-        Self {
-            transform,
-            projection,
-            world_position,
-            // note: shaders always work with linear colors.
-            clear_color: clear_color
-                .map(|clear_color| clear_color.clear_color.into_linear().with_alpha(1.0))
-                .unwrap_or_default(),
-            ambient_light_color: ambient_light.map_or_else(Default::default, |ambient_light| {
-                ambient_light.color.into_linear().with_alpha(1.0)
-            }),
-            point_light_color: point_light.map_or_else(Default::default, |point_light| {
-                point_light.color.into_linear().with_alpha(1.0)
-            }),
-            flags,
-            _padding: [0; _],
-        }
+        data
     }
 }
 
@@ -330,6 +330,7 @@ pub struct CameraConfig {
     pub show_debug_wireframe: bool,
     pub show_outline: bool,
     pub tone_map: bool,
+    pub gamma: f32,
 }
 
 impl CameraConfig {
@@ -354,6 +355,7 @@ impl Default for CameraConfig {
             show_debug_wireframe: false,
             show_outline: true,
             tone_map: true,
+            gamma: 2.4,
         }
     }
 }
@@ -387,6 +389,13 @@ impl PropertiesUi for CameraConfig {
                 );
                 label_and_value(ui, "Outline", &mut changes, &mut self.show_outline);
                 label_and_value(ui, "Tone Map", &mut changes, &mut self.tone_map);
+                label_and_value_with_config(
+                    ui,
+                    "Gamma",
+                    &mut changes,
+                    &mut self.gamma,
+                    &NumericPropertyUiConfig::Slider { range: 0.0..=4.0 },
+                );
             })
             .response;
 

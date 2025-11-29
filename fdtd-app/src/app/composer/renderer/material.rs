@@ -67,11 +67,7 @@ pub mod presets {
                 albedo: Srgb::from_linear(value.albedo).with_alpha(1.0),
                 metalness: value.metalness,
                 roughness: value.roughness,
-                ambient_occlusion: 1.0,
-                transparent: false,
-                alpha_threshold: 0.0,
-                shading: true,
-                tone_map: true,
+                ..Default::default()
             }
         }
     }
@@ -93,7 +89,7 @@ pub mod presets {
 ///   default to black or white, depending of a texture is used for that
 ///   material (see [`MaterialData::new`]). But this requires some work with the
 ///   serde-integration (we can use the `serde_with` crate).
-#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct Material {
     #[serde(with = "crate::util::serde::palette")]
     pub albedo: Srgba,
@@ -107,6 +103,23 @@ pub struct Material {
 
     pub shading: bool,
     pub tone_map: bool,
+    pub gamma: bool,
+}
+
+impl Default for Material {
+    fn default() -> Self {
+        Self {
+            albedo: Srgba::WHITE,
+            metalness: 0.0,
+            roughness: 1.0,
+            ambient_occlusion: 1.0,
+            transparent: false,
+            alpha_threshold: 0.0,
+            shading: true,
+            tone_map: true,
+            gamma: true,
+        }
+    }
 }
 
 impl Material {
@@ -114,17 +127,11 @@ impl Material {
     where
         Srgba: From<C>,
     {
-        let albedo: Srgba = color.into();
-        let transparent = albedo.alpha < 1.0;
+        let albedo = color.into();
         Self {
             albedo,
-            metalness: 0.0,
-            roughness: 0.0,
-            ambient_occlusion: 1.0,
-            transparent,
-            alpha_threshold: 0.0,
-            shading: true,
-            tone_map: true,
+            transparent: albedo.alpha < 1.0,
+            ..Default::default()
         }
     }
 
@@ -262,6 +269,7 @@ impl PropertiesUi for Material {
                 );
                 label_and_value(ui, "Shading", &mut changes, &mut self.shading);
                 label_and_value(ui, "Tone Map", &mut changes, &mut self.tone_map);
+                label_and_value(ui, "Gamma", &mut changes, &mut self.gamma);
 
                 if changes.changed {
                     // invalidate preset?
@@ -326,21 +334,22 @@ pub struct MaterialTexture {
 }
 
 bitflags! {
-    #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, Pod, Zeroable)]
-    #[repr(C)]
+    #[derive(Clone, Copy, Debug, Default)]
     pub struct MaterialTextureFlags: u32 {
-        const METALLIC          = 0x0000_0002;
-        const ROUGHNESS         = 0x0000_0004;
-        const AMBIENT_OCCLUSION = 0x0000_0008;
+        const METALNESS           = 0x0000_0002;
+        const ROUGHNESS           = 0x0000_0004;
+        const AMBIENT_OCCLUSION   = 0x0000_0008;
     }
 }
 
 bitflags! {
+    #[derive(Clone, Copy, Debug, Default)]
     struct MaterialFlags: u32 {
         const ALBEDO_TEXTURE      = 0x0000_0001;
         const TRANSPARENT         = 0x0000_0010;
         const SHADING             = 0x0000_0020;
         const TONE_MAP            = 0x0000_0040;
+        const GAMMA               = 0x0000_0080;
     }
 }
 
@@ -387,9 +396,14 @@ impl MaterialData {
             data.albedo = LinSrgba::BLACK;
         }
 
+        if let Some(material_texture) = material_texture {
+            data.flags |= material_texture.flags.bits();
+        }
+
         if let Some(material) = material {
             data.albedo = material.albedo.into_linear();
             data.alpha_threshold = material.alpha_threshold;
+
             if material.transparent {
                 data.flags |= MaterialFlags::TRANSPARENT.bits();
             }
@@ -399,41 +413,33 @@ impl MaterialData {
             if material.tone_map {
                 data.flags |= MaterialFlags::TONE_MAP.bits();
             }
+            if material.gamma {
+                data.flags |= MaterialFlags::GAMMA.bits();
+            }
         }
 
         if let Some(wireframe) = wireframe {
             data.wireframe = wireframe.color.into_linear();
         }
 
-        if let Some(material_texture) = material_texture {
-            data.flags |= material_texture.flags.bits();
-        }
-
+        // default values
         macro_rules! material {
-            ($name:ident, $flag:ident, $default:expr) => {
-                data.$name = material.as_ref().map_or_else(
-                    || {
-                        let texture_present =
-                            material_texture.as_ref().map_or(false, |material_texture| {
-                                material_texture.flags.contains(MaterialTextureFlags::$flag)
-                            });
-                        if texture_present {
-                            // if this value is present in the material texture we want it unchanged
-                            1.0
-                        }
-                        else {
-                            // if the texture also doesn't have this, we set a default
-                            $default
-                        }
-                    },
-                    |material| material.$name,
-                );
-            };
+            {$(($name:ident, $flag:ident, $default:expr);)*} => {{
+                if let Some(material) = material {
+                    $(data.$name = material.$name;)*
+                }
+                else {
+                    let texture_flags = material_texture.as_ref().map(|material_texture| material_texture.flags).unwrap_or_default();
+                    $(data.$name = if texture_flags.contains(MaterialTextureFlags::$flag) { 1.0 } else { $default };)*
+                }
+            }};
         }
 
-        material!(metalness, METALLIC, 0.0);
-        material!(roughness, ROUGHNESS, 0.0);
-        material!(ambient_occlusion, AMBIENT_OCCLUSION, 1.0);
+        material! {
+            (metalness, METALNESS, 0.0);
+            (roughness, ROUGHNESS, 0.0);
+            (ambient_occlusion, AMBIENT_OCCLUSION, 1.0);
+        }
 
         data
     }

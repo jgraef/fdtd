@@ -188,9 +188,14 @@ impl Composer {
     /// Creates a new file with an example scene
     pub fn new_file(&mut self, app_config: &AppConfig) {
         let mut state = ComposerState::new(app_config.composer.clone());
+
         ExampleScene
             .populate_scene(&mut state.scene)
             .expect("populating example scene failed");
+
+        //PresetScene.populate_scene(&mut state.scene).expect("populating example scene
+        // failed");
+
         self.state = Some(state);
     }
 
@@ -420,8 +425,8 @@ impl ComposerState {
             ClearColor::from(view_config.background_color),
             CameraProjection::new(view_config.fovy.to_radians()),
             CameraConfig {
-                //tone_map: view_config.tone_map,
-                tone_map: false,
+                tone_map: view_config.tone_map,
+                gamma: view_config.gamma,
                 ..Default::default()
             },
             view_config.ambient_light,
@@ -896,6 +901,36 @@ impl PopulateScene for ExampleScene {
             ),
             LocalTransform::identity(),
         ));
+
+        Ok(())
+    }
+}
+
+pub struct PresetScene;
+
+impl PopulateScene for PresetScene {
+    type Error = Infallible;
+
+    fn populate_scene(&self, scene: &mut Scene) -> Result<(), Self::Error> {
+        let presets = material::presets::ALL;
+
+        let per_line = (presets.len() as f32).sqrt().round() as usize;
+
+        let mut x = 0;
+        let mut y = 0;
+        for preset in presets {
+            scene
+                .add_object(Point3::new(x as f32, y as f32, -5.0), Ball::new(0.25))
+                .material(**preset)
+                .label(preset.name)
+                .spawn(scene);
+
+            x += 1;
+            if x == per_line {
+                x = 0;
+                y += 1;
+            }
+        }
 
         Ok(())
     }
