@@ -119,6 +119,7 @@ use crate::{
             },
             runner::SolverRunner,
             source::{
+                ContinousWave,
                 GaussianPulse,
                 ScalarSourceFunctionExt,
                 Source,
@@ -438,29 +439,6 @@ impl ComposerState {
 
         // some test solver configs
         let solver_configs = {
-            let make_config = |name, parallelization| {
-                SolverConfig {
-                    label: format!("Test FDTD ({name})"),
-                    common: SolverConfigCommon {
-                        volume: Volume::Fixed(FixedVolume {
-                            isometry: Isometry3::identity(),
-                            half_extents: Vector3::new(0.5, 0.5, 0.0),
-                        }),
-                        physical_constants: PhysicalConstants::REDUCED,
-                        default_material: Material::VACUUM,
-                        parallelization,
-                        memory_limit: Some(200_000_000),
-                    },
-                    specifics: SolverConfigSpecifics::Fdtd(SolverConfigFdtd {
-                        resolution: fdtd::Resolution {
-                            spatial: Vector3::repeat(0.01),
-                            temporal: 0.001,
-                        },
-                        stop_condition: StopCondition::Never,
-                    }),
-                }
-            };
-
             vec![
                 make_config("CPU (single-threaded)", None),
                 make_config(
@@ -815,6 +793,35 @@ impl ComposerState {
     }
 }
 
+// note: moved here, because I keep going between the source/observer configs
+// here and the solver config. this way I can edit the test setup here.
+fn make_config(name: &str, parallelization: Option<Parallelization>) -> SolverConfig {
+    SolverConfig {
+        label: format!("Test FDTD ({name})"),
+        common: SolverConfigCommon {
+            volume: Volume::Fixed(FixedVolume {
+                isometry: Isometry3::identity(),
+                half_extents: Vector3::new(0.5, 0.5, 0.0),
+            }),
+            physical_constants: PhysicalConstants::REDUCED,
+            default_material: Material {
+                // intoduce dissipation
+                eletrical_conductivity: 10.0,
+                ..Material::VACUUM
+            },
+            parallelization,
+            memory_limit: Some(200_000_000),
+        },
+        specifics: SolverConfigSpecifics::Fdtd(SolverConfigFdtd {
+            resolution: fdtd::Resolution {
+                spatial: Vector3::repeat(0.01),
+                temporal: 0.001,
+            },
+            stop_condition: StopCondition::Never,
+        }),
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct ExampleScene;
 
@@ -845,7 +852,7 @@ impl PopulateScene for ExampleScene {
             .spawn(scene);
         scene.entities.attach::<()>(ball, cube).unwrap();
 
-        // pml
+        // pml (wip)
 
         {
             let cuboid = Cuboid::new(Vector3::new(0.05, 0.5, 0.5));
@@ -867,6 +874,8 @@ impl PopulateScene for ExampleScene {
                 ShowInTree,
                 material::Wireframe::new(palette::named::PURPLE.into_format().with_alpha(1.0)),
                 LoadMesh::from_shape(cuboid, ()),
+                Selectable,
+                ShowInTree,
             ));
         }
 
@@ -899,10 +908,11 @@ impl PopulateScene for ExampleScene {
         {
             let shape = Ball::new(0.01);
             scene.entities.spawn((
-                Label::new_static("Source (Gaussian Pulse)"),
+                Label::new_static("Source"),
                 Source::from(
-                    GaussianPulse::new(0.05, 0.01)
-                        .with_amplitudes(Vector3::z() * 100.0, Vector3::zeros()),
+                    //GaussianPulse::new(0.05, 0.01)
+                    ContinousWave::new(0.0, 5.0)
+                        .with_amplitudes(Vector3::z() * 50.0, Vector3::zeros()),
                 ),
                 LocalTransform::identity(),
                 material::Material::from(material::presets::COPPER),

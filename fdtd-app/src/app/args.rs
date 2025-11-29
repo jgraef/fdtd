@@ -8,6 +8,9 @@ pub struct Args {
 
     #[clap(long)]
     pub new_file: bool,
+
+    #[clap(long)]
+    pub ignore_config: bool,
 }
 
 impl Args {

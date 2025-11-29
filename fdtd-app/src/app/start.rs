@@ -43,7 +43,12 @@ pub(super) fn run_app(args: Args) -> Result<(), Error> {
     let app_files = AppFiles::open()?;
 
     // load config
-    let config = app_files.read_config_or_create::<AppConfig>()?;
+    let config = if args.ignore_config {
+        AppConfig::default()
+    }
+    else {
+        app_files.read_config_or_create::<AppConfig>()?
+    };
 
     // these are more or less fixed
     let multisample_count = NonZero::new(4).unwrap(); // can really only be 1 or 4

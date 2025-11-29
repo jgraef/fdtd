@@ -61,13 +61,21 @@ fn fs_main(input: VertexOutput) -> FragmentOutput {
     let index = point_to_index(point);
 
     let value = field[index].value;
-    var color = clamp(projection.color_map * vec4f(value, 1.0), vec4f(0.0), vec4f(1.0));
+
+
+    //var color = clamp(projection.color_map * vec4f(value, 1.0), vec4f(0.0), vec4f(1.0));
 
     // hard-coded alpha
     //color.a = clamp(length(value), 0.0, 1.0);
-    color.a = min(length(color.rgb) * 40.0, 1.0);
+    //color.a = min(length(color.rgb) * 40.0, 1.0);
+
+    let color = color_map(value);
 
     return FragmentOutput(color);
+}
+
+fn color_map(value: vec3f) -> vec4f {
+    return vec4f(0.0);
 }
 
 

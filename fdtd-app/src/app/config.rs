@@ -108,7 +108,10 @@ fn default_point_light() -> PointLight {
 }
 
 fn default_background_color() -> Srgb {
-    palette::named::BLUEVIOLET.into_format()
+    // i liked this one, but it doesn't go well with a transparent field projection
+    //palette::named::BLUEVIOLET.into_format()
+
+    [0.71, 0.79, 0.70].into()
 }
 
 fn default_fovy() -> f32 {
