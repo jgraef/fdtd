@@ -258,7 +258,7 @@ where
 
         for _ in 0..self.height() {
             view[destination_offset..][..n].copy_from_slice(&samples.samples[source_offset..][..n]);
-            source_offset += samples.layout.height_stride as usize;
+            source_offset += samples.layout.height_stride;
             destination_offset += bytes_per_row_padded as usize;
         }
     }

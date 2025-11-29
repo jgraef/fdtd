@@ -32,7 +32,7 @@ use crate::{
         scene::{
             Changed,
             transform::GlobalTransform,
-            ui::ComponentUiHeading,
+            ui::ComponentUi,
         },
     },
     util::format_size,
@@ -413,7 +413,7 @@ impl PropertiesUi for Aabb {
     }
 }
 
-impl ComponentUiHeading for Aabb {
+impl ComponentUi for Aabb {
     fn heading(&self) -> impl Into<egui::RichText> {
         "AABB"
     }

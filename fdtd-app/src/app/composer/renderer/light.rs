@@ -18,7 +18,7 @@ use crate::app::composer::{
         TrackChanges,
         label_and_value,
     },
-    scene::ui::ComponentUiHeading,
+    scene::ui::ComponentUi,
 };
 
 /// A point light source.
@@ -68,7 +68,7 @@ impl From<Srgb<u8>> for PointLight {
     }
 }
 
-impl ComponentUiHeading for PointLight {
+impl ComponentUi for PointLight {
     fn heading(&self) -> impl Into<egui::RichText> {
         "Point Light"
     }
@@ -104,7 +104,7 @@ impl AmbientLight {
     }
 }
 
-impl ComponentUiHeading for AmbientLight {
+impl ComponentUi for AmbientLight {
     fn heading(&self) -> impl Into<egui::RichText> {
         "Ambient Light"
     }

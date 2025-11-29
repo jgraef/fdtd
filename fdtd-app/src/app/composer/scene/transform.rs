@@ -21,7 +21,7 @@ use crate::app::composer::{
     },
     scene::{
         Changed,
-        ui::ComponentUiHeading,
+        ui::ComponentUi,
     },
 };
 
@@ -125,7 +125,7 @@ impl From<UnitQuaternion<f32>> for LocalTransform {
     }
 }
 
-impl ComponentUiHeading for LocalTransform {
+impl ComponentUi for LocalTransform {
     fn heading(&self) -> impl Into<egui::RichText> {
         "Transform (Local)"
     }
@@ -159,7 +159,7 @@ impl GlobalTransform {
     }
 }
 
-impl ComponentUiHeading for GlobalTransform {
+impl ComponentUi for GlobalTransform {
     fn heading(&self) -> impl Into<egui::RichText> {
         "Transform (Global)"
     }

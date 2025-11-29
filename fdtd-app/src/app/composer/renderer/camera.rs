@@ -49,7 +49,7 @@ use crate::{
             Changed,
             Scene,
             transform::GlobalTransform,
-            ui::ComponentUiHeading,
+            ui::ComponentUi,
         },
     },
     util::wgpu::buffer::{
@@ -358,7 +358,7 @@ impl Default for CameraConfig {
     }
 }
 
-impl ComponentUiHeading for CameraConfig {
+impl ComponentUi for CameraConfig {
     fn heading(&self) -> impl Into<egui::RichText> {
         "Camera Config"
     }

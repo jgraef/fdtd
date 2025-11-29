@@ -259,7 +259,11 @@ fn fs_main_solid(input: VertexOutputSolid, @builtin(front_facing) front_face: bo
 
         // tonemap hdr to ldr
         if (camera.flags & FLAG_CAMERA_TONE_MAP) != 0 && (instance.material.flags & FLAG_MATERIAL_TONE_MAP) != 0 {
+            // reinhard tone map
             color /= color + vec3f(1.0);
+
+            const gamma: f32 = 2.2;
+            color = pow(color, vec3f(1.0 / gamma));
         }
 
         output.color = vec4f(color, alpha);

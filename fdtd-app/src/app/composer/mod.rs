@@ -75,7 +75,7 @@ use crate::{
                 },
                 ui::{
                     self as scene_ui,
-                    ComponentUiHeading,
+                    ComponentUi,
                     EntityPropertiesWindow,
                 },
                 undo::{
@@ -609,7 +609,7 @@ impl ComposerState {
                         *entity,
                     )
                     .deletable(window.despawn_button)
-                    .show(ctx, scene_ui::default_title, scene_ui::debug(true));
+                    .show(ctx, scene_ui::default_title);
                 }
 
                 self.scene.apply_deferred();
@@ -914,7 +914,7 @@ impl PropertiesUi for Selected {
     }
 }
 
-impl ComponentUiHeading for Selected {
+impl ComponentUi for Selected {
     fn heading(&self) -> impl Into<egui::RichText> {
         "Selected"
     }
@@ -1071,7 +1071,7 @@ impl PropertiesUi for Selectable {
     }
 }
 
-impl ComponentUiHeading for Selectable {
+impl ComponentUi for Selectable {
     fn heading(&self) -> impl Into<egui::RichText> {
         "Selectable"
     }

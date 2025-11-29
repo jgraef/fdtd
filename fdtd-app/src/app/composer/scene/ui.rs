@@ -1,7 +1,6 @@
 pub use std::any::type_name;
 
 use hecs_hierarchy::Hierarchy;
-pub use show_all::show_all as debug;
 
 use crate::app::composer::{
     EntityWindow,
@@ -37,12 +36,11 @@ impl<'a> EntityPropertiesWindow<'a> {
         self
     }
 
-    pub fn show<R>(
+    pub fn show(
         &mut self,
         ctx: &egui::Context,
         title: impl FnOnce(hecs::EntityRef<'_>) -> egui::WidgetText,
-        add_contents: impl FnOnce(&mut egui::Ui, hecs::EntityRef<'_>, &mut hecs::CommandBuffer) -> R,
-    ) -> Option<egui::InnerResponse<Option<R>>> {
+    ) -> Option<egui::Response> {
         let entity_ref = self.scene.entities.entity(self.entity).ok()?;
 
         let mut is_open = true;
@@ -82,11 +80,22 @@ impl<'a> EntityPropertiesWindow<'a> {
                             // outline in egui data
                             tracing::debug!("todo");
                         }
+
+                        egui::containers::menu::MenuButton::from_button(
+                            egui::Button::new("+").small(),
+                        )
+                        .ui(ui, |ui| {
+                            show_all::show_add_component_menu(
+                                ui,
+                                entity_ref,
+                                &mut self.scene.command_buffer,
+                            );
+                        });
                     });
                 });
                 ui.separator();
 
-                add_contents(ui, entity_ref, &mut self.scene.command_buffer)
+                show_all::show_component_uis(ui, entity_ref, &mut self.scene.command_buffer, true);
             });
 
         if delete_requested {
@@ -99,12 +108,12 @@ impl<'a> EntityPropertiesWindow<'a> {
                 .remove_one::<EntityWindow>(self.entity);
         }
 
-        response
+        response.map(|response| response.response)
     }
 }
 
 #[derive(derive_more::Debug)]
-pub struct ComponentUi<'a, T>
+pub struct ComponentWidget<'a, T>
 where
     T: PropertiesUi,
 {
@@ -117,16 +126,19 @@ where
     deletable: bool,
     mark_changed: bool,
 
+    type_name: &'a str,
+
     config: &'a T::Config,
 }
 
-impl<'a, T> ComponentUi<'a, T>
+impl<'a, T> ComponentWidget<'a, T>
 where
     T: PropertiesUi,
 {
     pub fn new(
         entity_ref: hecs::EntityRef<'a>,
         command_buffer: &'a mut hecs::CommandBuffer,
+        type_name: &'a str,
         config: &'a T::Config,
     ) -> Self {
         Self {
@@ -134,6 +146,7 @@ where
             command_buffer,
             deletable: false,
             mark_changed: false,
+            type_name,
             config,
         }
     }
@@ -149,9 +162,9 @@ where
     }
 }
 
-impl<'a, T> egui::Widget for ComponentUi<'a, T>
+impl<'a, T> egui::Widget for ComponentWidget<'a, T>
 where
-    T: hecs::Component + PropertiesUi + ComponentUiHeading,
+    T: hecs::Component + PropertiesUi + ComponentUi,
 {
     fn ui(self, ui: &mut egui::Ui) -> egui::Response {
         let entity = self.entity_ref.entity();
@@ -160,7 +173,9 @@ where
             let mut deletion_requested = false;
 
             ui.horizontal(|ui| {
-                ui.heading(value.heading());
+                //ui.heading(value.heading());
+                ui.heading(self.type_name);
+
                 if self.deletable {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
                         if ui.small_button("Delete").clicked() {
@@ -201,7 +216,9 @@ pub fn default_title(entity_ref: hecs::EntityRef) -> egui::WidgetText {
     .into()
 }
 
-pub trait ComponentUiHeading {
+// todo: we can just use PropertiesUi for this
+// it might be better to just use `stringify!($ty)` for this.
+pub trait ComponentUi {
     fn heading(&self) -> impl Into<egui::RichText>;
 }
 
@@ -214,6 +231,7 @@ mod show_all {
         properties::PropertiesUi,
         renderer::{
             ClearColor,
+            Hidden,
             Outline,
             camera::CameraConfig,
             light::{
@@ -226,34 +244,28 @@ mod show_all {
             },
         },
         scene::{
+            Changed,
             transform::{
                 GlobalTransform,
                 LocalTransform,
             },
             ui::{
                 ComponentUi,
-                ComponentUiHeading,
+                ComponentWidget,
             },
         },
     };
 
-    pub fn show_all(
-        deletable_components: bool,
-    ) -> impl FnOnce(&mut egui::Ui, hecs::EntityRef, &mut hecs::CommandBuffer) {
-        move |ui, entity_ref, command_buffer| {
-            show_all_with_config(ui, entity_ref, command_buffer, deletable_components)
-        }
-    }
-
-    fn show_component<T>(
+    fn show_component_ui<T>(
         ui: &mut egui::Ui,
+        type_name: &'static str,
         entity_ref: hecs::EntityRef,
         command_buffer: &mut hecs::CommandBuffer,
         deletable_components: bool,
         is_first: &mut bool,
         mark_changed: bool,
     ) where
-        T: PropertiesUi + hecs::Component + ComponentUiHeading,
+        T: PropertiesUi + hecs::Component + ComponentUi,
     {
         if entity_ref.has::<T>() {
             if !*is_first {
@@ -262,7 +274,8 @@ mod show_all {
             *is_first = false;
 
             let config = T::Config::default();
-            let mut component_ui = ComponentUi::<T>::new(entity_ref, command_buffer, &config);
+            let mut component_ui =
+                ComponentWidget::<T>::new(entity_ref, command_buffer, type_name, &config);
 
             if deletable_components {
                 component_ui = component_ui.deletable();
@@ -277,7 +290,50 @@ mod show_all {
         }
     }
 
-    pub fn show_all_with_config(
+    fn show_component_add_button<T>(
+        ui: &mut egui::Ui,
+        type_name: &'static str,
+        entity_ref: hecs::EntityRef,
+        command_buffer: &mut hecs::CommandBuffer,
+        mark_changed: bool,
+    ) where
+        T: PropertiesUi + hecs::Component + ComponentUi + Default,
+    {
+        if !entity_ref.has::<T>() && ui.small_button(type_name).clicked() {
+            let mut builder = hecs::EntityBuilder::new();
+            if mark_changed {
+                builder.add(Changed::<T>::default());
+            }
+            builder.add(T::default());
+            command_buffer.insert(entity_ref.entity(), builder.build());
+        }
+    }
+
+    macro_rules! for_all_components {
+        ($callback:ident) => {
+            // [mark as changed, add component button]
+
+            $callback!(LocalTransform, [true, true]);
+            $callback!(GlobalTransform, [false, false]);
+
+            $callback!(Material, [true, true]);
+            $callback!(Wireframe, [true, true]);
+            $callback!(Outline, [false, true]);
+            $callback!(Hidden, [false, true]);
+
+            $callback!(PointLight, [false, true]);
+            $callback!(AmbientLight, [false, true]);
+            $callback!(CameraConfig, [false, true]);
+            $callback!(ClearColor, [false, true]);
+
+            $callback!(Selectable, [false, true]);
+            $callback!(Selected, [false, true]);
+
+            $callback!(Aabb, [false, false]);
+        };
+    }
+
+    pub fn show_component_uis(
         ui: &mut egui::Ui,
         entity_ref: hecs::EntityRef,
         command_buffer: &mut hecs::CommandBuffer,
@@ -286,35 +342,43 @@ mod show_all {
         let mut is_first = true;
 
         macro_rules! show_component {
-            (@emit $ty:ty, $mark_changed:expr) => {{
-                show_component::<$ty>(ui, entity_ref, command_buffer, deletable_components, &mut is_first, $mark_changed);
+            ($ty:ty, [$mark_changed:expr, $add_button:expr]) => {{
+                show_component_ui::<$ty>(
+                    ui,
+                    stringify!($ty),
+                    entity_ref,
+                    command_buffer,
+                    deletable_components,
+                    &mut is_first,
+                    $mark_changed,
+                );
             }};
-            ($ty:ty, Changed) => {
-                show_component!(@emit $ty, true)
-            };
-            ($ty:ty) => {
-                show_component!(@emit $ty, false)
-            };
         }
 
-        show_component!(LocalTransform, Changed);
-        show_component!(GlobalTransform);
-
-        show_component!(Material, Changed);
-        show_component!(Wireframe, Changed);
-        show_component!(Outline);
-
-        show_component!(PointLight);
-        show_component!(AmbientLight);
-        show_component!(CameraConfig);
-        show_component!(ClearColor);
-
-        show_component!(Selectable);
-        show_component!(Selected);
-
-        show_component!(Aabb);
+        for_all_components!(show_component);
 
         // this then shows a checkbox to enable the despawn button lol
         //show_component!(EntityWindow);
+    }
+
+    pub fn show_add_component_menu(
+        ui: &mut egui::Ui,
+        entity_ref: hecs::EntityRef,
+        command_buffer: &mut hecs::CommandBuffer,
+    ) {
+        macro_rules! show_component_add_button {
+            ($ty:ty, [$mark_changed:expr, true]) => {{
+                show_component_add_button::<$ty>(
+                    ui,
+                    stringify!($ty),
+                    entity_ref,
+                    command_buffer,
+                    $mark_changed,
+                );
+            }};
+            ($ty:ty, [$mark_changed:expr, false]) => {};
+        }
+
+        for_all_components!(show_component_add_button);
     }
 }

@@ -42,7 +42,7 @@ use crate::{
             std::NumericPropertyUiConfig,
         },
         renderer::texture_channel::TextureReceiver,
-        scene::ui::ComponentUiHeading,
+        scene::ui::ComponentUi,
     },
     util::{
         palette::ColorExt,
@@ -183,7 +183,7 @@ impl From<Srgb<u8>> for Material {
     }
 }
 
-impl ComponentUiHeading for Material {
+impl ComponentUi for Material {
     fn heading(&self) -> impl Into<egui::RichText> {
         "Material"
     }
@@ -306,7 +306,7 @@ impl Default for Wireframe {
     }
 }
 
-impl ComponentUiHeading for Wireframe {
+impl ComponentUi for Wireframe {
     fn heading(&self) -> impl Into<egui::RichText> {
         "Wireframe"
     }

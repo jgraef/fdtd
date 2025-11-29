@@ -91,12 +91,13 @@ use crate::{
                 Label,
                 Scene,
                 transform::GlobalTransform,
-                ui::ComponentUiHeading,
+                ui::ComponentUi,
             },
         },
         start::CreateAppContext,
     },
     util::{
+        egui::EguiUtilUiExt,
         format_size,
         wgpu::{
             WgpuContext,
@@ -115,6 +116,20 @@ use crate::{
 /// Tag for entities that should be rendered
 #[derive(Copy, Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Hidden;
+
+impl ComponentUi for Hidden {
+    fn heading(&self) -> impl Into<egui::RichText> {
+        "Hidden"
+    }
+}
+
+impl PropertiesUi for Hidden {
+    type Config = ();
+
+    fn properties_ui(&mut self, ui: &mut egui::Ui, _config: &Self::Config) -> egui::Response {
+        ui.noop()
+    }
+}
 
 // todo: respect eguis theme. we might just pass this in from the view when
 // rendering and remove this component.
@@ -135,7 +150,7 @@ impl From<Srgb<u8>> for ClearColor {
     }
 }
 
-impl ComponentUiHeading for ClearColor {
+impl ComponentUi for ClearColor {
     fn heading(&self) -> impl Into<egui::RichText> {
         "Clear Color"
     }
@@ -653,6 +668,11 @@ where
     // prepare the actual draw commands
     let mut draw_command_builder = draw_command_buffer.builder();
 
+    type AnyRenderable<'a> = hecs::Or<
+        hecs::Or<&'a Material, &'a Wireframe>,
+        hecs::Or<&'a AlbedoTexture, &'a MaterialTexture>,
+    >;
+
     // draw meshes (opaque, transparent, wireframe, outlines)
     for (
         entity,
@@ -680,12 +700,14 @@ where
             Option<&Outline>,
         )>()
         .without::<&Hidden>()
+        .with::<AnyRenderable>()
     {
         let has_material =
             material.is_some() || albedo_texture.is_some() || material_texture.is_some();
         let has_wireframe = wireframe.is_some();
 
         if !has_material && !has_wireframe {
+            // note: this should not be triggered with the AnyRenderable filter
             let label = EntityDebugLabel {
                 entity,
                 label: label.cloned(),
@@ -810,7 +832,7 @@ impl Default for Outline {
     }
 }
 
-impl ComponentUiHeading for Outline {
+impl ComponentUi for Outline {
     fn heading(&self) -> impl Into<egui::RichText> {
         "Outline"
     }
