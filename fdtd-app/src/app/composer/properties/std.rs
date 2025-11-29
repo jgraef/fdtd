@@ -1,4 +1,7 @@
-use std::ops::RangeInclusive;
+use std::{
+    ops::RangeInclusive,
+    path::PathBuf,
+};
 
 use egui::emath;
 
@@ -6,7 +9,10 @@ use crate::{
     app::composer::properties::PropertiesUi,
     util::{
         Moo,
-        egui::EguiUtilUiExt,
+        egui::{
+            EguiUtilUiExt,
+            FilePickerConfig,
+        },
     },
 };
 
@@ -149,5 +155,13 @@ impl PropertiesUi for bool {
             BoolPropertiesUiConfig::Checkbox => ui.checkbox(self, ()),
             BoolPropertiesUiConfig::ToggleButton => ui.toggle_button(self),
         }
+    }
+}
+
+impl PropertiesUi for Option<PathBuf> {
+    type Config = FilePickerConfig;
+
+    fn properties_ui(&mut self, ui: &mut egui::Ui, config: &Self::Config) -> egui::Response {
+        ui.file_picker_button(self, config)
     }
 }

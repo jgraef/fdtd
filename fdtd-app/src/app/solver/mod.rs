@@ -135,7 +135,7 @@ pub trait FieldView<P> {
     fn iter<'a>(&'a self) -> Self::Iter<'a>;
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum FieldComponent {
     E,
     H,

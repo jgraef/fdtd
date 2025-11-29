@@ -265,27 +265,30 @@ mod builtin {
     macro_rules! for_all_builtin {
         ($callback:ident) => {{
             use parry3d::bounding_volume::Aabb;
-            use $crate::app::composer::{
-                Selectable,
-                Selected,
-                renderer::{
-                    ClearColor,
-                    Hidden,
-                    Outline,
-                    camera::CameraConfig,
-                    light::{
-                        AmbientLight,
-                        PointLight,
+            use $crate::app::{
+                composer::{
+                    Selectable,
+                    Selected,
+                    renderer::{
+                        ClearColor,
+                        Hidden,
+                        Outline,
+                        camera::CameraConfig,
+                        light::{
+                            AmbientLight,
+                            PointLight,
+                        },
+                        material::{
+                            Material,
+                            Wireframe,
+                        },
                     },
-                    material::{
-                        Material,
-                        Wireframe,
+                    scene::transform::{
+                        GlobalTransform,
+                        LocalTransform,
                     },
                 },
-                scene::transform::{
-                    GlobalTransform,
-                    LocalTransform,
-                },
+                solver::observer::Observer,
             };
 
             $callback!(LocalTransform);
@@ -301,6 +304,7 @@ mod builtin {
             $callback!(Selectable);
             $callback!(Selected);
             $callback!(Aabb);
+            $callback!(Observer);
         }};
     }
 }

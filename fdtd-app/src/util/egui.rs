@@ -2,7 +2,10 @@
 //! This is meant to be read as a tutorial, hence the plethora of comments.
 
 use std::{
-    path::Path,
+    path::{
+        Path,
+        PathBuf,
+    },
     sync::Arc,
     time::{
         Duration,
@@ -10,10 +13,15 @@ use std::{
     },
 };
 
+use egui_file_dialog::{
+    DialogState,
+    FileDialog,
+};
 use parking_lot::Mutex;
 
 use crate::util::{
     FormatPath,
+    format_path,
     wgpu::WgpuContext,
 };
 
@@ -131,6 +139,11 @@ fn toggle_ui_compact(ui: &mut egui::Ui, on: &mut bool) -> egui::Response {
 pub trait EguiUtilUiExt {
     fn toggle_button(&mut self, on: &mut bool) -> egui::Response;
     fn noop(&mut self) -> egui::Response;
+    fn file_picker_button(
+        &mut self,
+        path: &mut Option<PathBuf>,
+        config: &FilePickerConfig,
+    ) -> egui::Response;
 }
 
 impl EguiUtilUiExt for egui::Ui {
@@ -140,6 +153,116 @@ impl EguiUtilUiExt for egui::Ui {
 
     fn noop(&mut self) -> egui::Response {
         self.allocate_response(egui::Vec2::default(), egui::Sense::empty())
+    }
+
+    fn file_picker_button(
+        &mut self,
+        path: &mut Option<PathBuf>,
+        config: &FilePickerConfig,
+    ) -> egui::Response {
+        let id = self.id().with("file_picker");
+        struct State {
+            file_dialog: FileDialog,
+            formatted_path: Option<egui::RichText>,
+            formatted_file_name: Option<egui::RichText>,
+        }
+
+        let mut was_picked = false;
+        let mut is_open = false;
+        let mut button_text = None;
+        let mut hover_text = None;
+
+        {
+            let state = self.data(|data| data.get_temp::<Arc<Mutex<State>>>(id));
+
+            if let Some(state) = state {
+                let mut state = state.lock();
+
+                if path.is_none() {
+                    state.formatted_path = None;
+                    state.formatted_file_name = None;
+                }
+
+                state.file_dialog.update(self.ctx());
+
+                if let Some(picked) = state.file_dialog.take_picked() {
+                    tracing::debug!(path = %picked.display(), "picked file");
+
+                    state.formatted_path = Some(format_path(&picked).to_string().into());
+                    state.formatted_file_name =
+                        Some(picked.file_name().unwrap().display().to_string().into());
+
+                    *path = Some(picked);
+                    was_picked = true;
+                }
+                // Arc these if you want to avoid cloning every frame
+                button_text = state.formatted_file_name.clone();
+                hover_text = state.formatted_path.clone();
+
+                is_open = matches!(state.file_dialog.state(), DialogState::Open);
+            }
+        };
+
+        let mut response = self
+            .horizontal(|ui| {
+                let button_text = button_text.unwrap_or_else(|| "Pick File".into());
+                let mut button_response = ui.add_enabled(!is_open, egui::Button::new(button_text));
+
+                if let Some(hover_text) = hover_text {
+                    button_response = button_response.on_hover_text(hover_text);
+                }
+
+                if button_response.clicked() {
+                    *path = None;
+
+                    let state = ui.data_mut(|data| {
+                        data.get_temp_mut_or_insert_with(id, || {
+                            let file_dialog = FileDialog::new();
+                            Arc::new(Mutex::new(State {
+                                file_dialog,
+                                formatted_path: None,
+                                formatted_file_name: None,
+                            }))
+                        })
+                        .clone()
+                    });
+
+                    let mut state = state.lock();
+
+                    match config {
+                        FilePickerConfig::Open => state.file_dialog.pick_file(),
+                        FilePickerConfig::Save => state.file_dialog.save_file(),
+                    }
+
+                    state.formatted_path = None;
+                }
+
+                if ui
+                    .add_enabled(path.is_some(), egui::Button::new("x"))
+                    .clicked()
+                {
+                    *path = None;
+                }
+            })
+            .response;
+
+        if was_picked {
+            response.mark_changed();
+        }
+
+        response
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum FilePickerConfig {
+    Open,
+    Save,
+}
+
+impl Default for FilePickerConfig {
+    fn default() -> Self {
+        Self::Open
     }
 }
 

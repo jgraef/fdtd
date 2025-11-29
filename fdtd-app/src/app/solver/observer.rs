@@ -1,4 +1,7 @@
-use std::path::PathBuf;
+use std::{
+    ops::Index,
+    path::PathBuf,
+};
 
 use nalgebra::{
     Matrix4,
@@ -6,7 +9,19 @@ use nalgebra::{
     Vector2,
 };
 
-use crate::app::solver::FieldComponent;
+use crate::{
+    app::{
+        composer::properties::{
+            PropertiesUi,
+            TrackChanges,
+            label_and_value,
+            label_and_value_with_config,
+        },
+        solver::FieldComponent,
+    },
+    impl_register_component,
+    util::egui::FilePickerConfig,
+};
 
 #[derive(Clone, Debug)]
 pub struct Observer {
@@ -16,6 +31,45 @@ pub struct Observer {
     pub color_map: Matrix4<f32>,
     pub half_extents: Vector2<f32>,
 }
+
+impl PropertiesUi for Observer {
+    type Config = ();
+
+    fn properties_ui(&mut self, ui: &mut egui::Ui, config: &Self::Config) -> egui::Response {
+        let _ = config;
+        let mut changes = TrackChanges::default();
+
+        egui::Frame::new()
+            .show(ui, |ui| {
+                egui::ComboBox::from_id_salt(ui.id().with("field"))
+                    .selected_text(FieldNames[self.field])
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(
+                            &mut self.field,
+                            FieldComponent::E,
+                            FieldNames[FieldComponent::E],
+                        );
+                        ui.selectable_value(
+                            &mut self.field,
+                            FieldComponent::H,
+                            FieldNames[FieldComponent::H],
+                        );
+                    });
+
+                label_and_value_with_config(
+                    ui,
+                    "File",
+                    &mut changes,
+                    &mut self.write_to_gif,
+                    &FilePickerConfig::Save,
+                );
+                label_and_value(ui, "Live", &mut changes, &mut self.display_as_texture);
+            })
+            .response
+    }
+}
+
+impl_register_component!(Observer where ComponentUi);
 
 pub fn test_color_map(scale: f32, axis: UnitVector3<f32>) -> Matrix4<f32> {
     let mut m = Matrix4::zeros();
@@ -33,4 +87,17 @@ pub fn test_color_map(scale: f32, axis: UnitVector3<f32>) -> Matrix4<f32> {
     m[(3, 3)] = 1.0;
 
     m
+}
+
+struct FieldNames;
+
+impl Index<FieldComponent> for FieldNames {
+    type Output = &'static str;
+
+    fn index(&self, index: FieldComponent) -> &Self::Output {
+        match index {
+            FieldComponent::E => &"Electric Field",
+            FieldComponent::H => &"Magnetic Field",
+        }
+    }
 }
