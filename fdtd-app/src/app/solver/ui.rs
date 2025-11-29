@@ -32,7 +32,7 @@ impl PropertiesUi for SolverConfig {
     fn properties_ui(&mut self, ui: &mut egui::Ui, _config: &Self::Config) -> egui::Response {
         let mut changes = TrackChanges::default();
 
-        egui::Frame::new()
+        let response = egui::Frame::new()
             .show(ui, |ui| {
                 label_and_value(ui, "Label", &mut changes, &mut self.label);
 
@@ -52,7 +52,9 @@ impl PropertiesUi for SolverConfig {
                     SolverConfigSpecifics::Feec(_feec_config) => {}
                 }
             })
-            .response
+            .response;
+
+        changes.propagated(response)
     }
 }
 

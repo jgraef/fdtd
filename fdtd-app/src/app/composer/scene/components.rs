@@ -307,6 +307,7 @@ mod builtin {
             $callback!(Selected);
             $callback!(Aabb);
             $callback!(Observer);
+            $callback!(crate::physics::material::Material);
         }};
     }
 }

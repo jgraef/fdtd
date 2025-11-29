@@ -824,22 +824,22 @@ impl PopulateScene for ExampleScene {
     fn populate_scene(&self, scene: &mut Scene) -> Result<(), Self::Error> {
         // device
 
-        let cube = |size| Cuboid::new(Vector3::repeat(size));
-        let ball = |size| Ball::new(size);
-
         let em_material = crate::physics::material::Material {
             relative_permittivity: 3.9,
             ..crate::physics::material::Material::VACUUM
         };
 
         let cube = scene
-            .add_object(Point3::new(-0.2, 0.0, 0.0), cube(0.1))
+            .add_object(
+                Point3::new(-0.2, 0.0, 0.0),
+                Cuboid::new(Vector3::repeat(0.1)),
+            )
             .material(material::presets::BRASS)
             .component(em_material)
             .spawn(scene);
 
         let ball = scene
-            .add_object(Point3::new(0.4, 0.0, 0.0), ball(0.1))
+            .add_object(Point3::new(0.4, 0.0, 0.0), Ball::new(0.1))
             .material(material::presets::BLACKBOARD)
             .component(em_material)
             .spawn(scene);
@@ -872,35 +872,46 @@ impl PopulateScene for ExampleScene {
 
         // observer
 
-        let half_extents = Vector2::repeat(0.5);
-        let quad = Quad::new(half_extents);
-        scene.entities.spawn((
-            Label::new_static("Observer"),
-            Observer {
-                write_to_gif: None,
-                display_as_texture: true,
-                field: FieldComponent::E,
-                color_map: test_color_map(1.0, Vector3::z_axis()),
-                half_extents,
-            },
-            material::LoadAlbedoTexture::new("tmp/test_pattern.png"),
-            material::Material::from(material::presets::OFFICE_PAPER),
-            LocalTransform::identity(),
-            Collider::from(quad),
-            Selectable,
-            ShowInTree,
-            LoadMesh::from_shape(quad, QuadMeshConfig { back_face: true }),
-        ));
+        {
+            let half_extents = Vector2::repeat(0.5);
+            let quad = Quad::new(half_extents);
+            scene.entities.spawn((
+                Label::new_static("Observer"),
+                Observer {
+                    write_to_gif: None,
+                    display_as_texture: true,
+                    field: FieldComponent::E,
+                    color_map: test_color_map(1.0, Vector3::z_axis()),
+                    half_extents,
+                },
+                material::LoadAlbedoTexture::new("tmp/test_pattern.png"),
+                material::Material::from(material::presets::OFFICE_PAPER),
+                LocalTransform::identity(),
+                Collider::from(quad),
+                Selectable,
+                ShowInTree,
+                LoadMesh::from_shape(quad, QuadMeshConfig { back_face: true }),
+            ));
+        }
 
         // source
 
-        scene.entities.spawn((
-            Source::from(
-                GaussianPulse::new(0.05, 0.01)
-                    .with_amplitudes(Vector3::z() * 1000.0, Vector3::zeros()),
-            ),
-            LocalTransform::identity(),
-        ));
+        {
+            let shape = Ball::new(0.01);
+            scene.entities.spawn((
+                Label::new_static("Source (Gaussian Pulse)"),
+                Source::from(
+                    GaussianPulse::new(0.05, 0.01)
+                        .with_amplitudes(Vector3::z() * 100.0, Vector3::zeros()),
+                ),
+                LocalTransform::identity(),
+                material::Material::from(material::presets::COPPER),
+                Collider::from(shape),
+                LoadMesh::from_shape(shape, Default::default()),
+                Selectable,
+                ShowInTree,
+            ));
+        }
 
         Ok(())
     }

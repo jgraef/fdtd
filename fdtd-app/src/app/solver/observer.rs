@@ -39,7 +39,7 @@ impl PropertiesUi for Observer {
         let _ = config;
         let mut changes = TrackChanges::default();
 
-        egui::Frame::new()
+        let response = egui::Frame::new()
             .show(ui, |ui| {
                 egui::ComboBox::from_id_salt(ui.id().with("field"))
                     .selected_text(FieldNames[self.field])
@@ -65,7 +65,9 @@ impl PropertiesUi for Observer {
                 );
                 label_and_value(ui, "Live", &mut changes, &mut self.display_as_texture);
             })
-            .response
+            .response;
+
+        changes.propagated(response)
     }
 }
 

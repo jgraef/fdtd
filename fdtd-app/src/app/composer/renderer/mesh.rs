@@ -425,8 +425,8 @@ pub enum BallMeshConfig {
 impl Default for BallMeshConfig {
     fn default() -> Self {
         Self::Uv {
-            inclination_subdivisions: 20,
-            azimuth_subdivisions: 40,
+            inclination_subdivisions: 10,
+            azimuth_subdivisions: 20,
         }
     }
 }

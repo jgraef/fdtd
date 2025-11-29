@@ -571,7 +571,10 @@ impl<P> Observers<P> {
                         entity,
                         (
                             material::LoadAlbedoTexture::new(receiver).with_transparency(false),
-                            material::Material::default(),
+                            material::Material {
+                                transparent: true,
+                                ..Default::default()
+                            },
                         ),
                     );
 
