@@ -75,7 +75,6 @@ use crate::{
                 },
                 ui::{
                     self as scene_ui,
-                    ComponentUi,
                     EntityPropertiesWindow,
                 },
                 undo::{
@@ -136,6 +135,7 @@ use crate::{
             PopulateWithNec,
         },
     },
+    impl_register_component,
     lipsum,
     physics::{
         PhysicalConstants,
@@ -914,11 +914,7 @@ impl PropertiesUi for Selected {
     }
 }
 
-impl ComponentUi for Selected {
-    fn heading(&self) -> impl Into<egui::RichText> {
-        "Selected"
-    }
-}
+impl_register_component!(Selected where ComponentUi, default);
 
 #[derive(Serialize, Deserialize)]
 enum SceneClipboard<E> {
@@ -1071,11 +1067,7 @@ impl PropertiesUi for Selectable {
     }
 }
 
-impl ComponentUi for Selectable {
-    fn heading(&self) -> impl Into<egui::RichText> {
-        "Selectable"
-    }
-}
+impl_register_component!(Selectable where ComponentUi, default);
 
 #[derive(derive_more::Debug)]
 pub struct CameraMut<'a> {

@@ -12,13 +12,13 @@ use serde::{
     Serialize,
 };
 
-use crate::app::composer::{
-    properties::{
+use crate::{
+    app::composer::properties::{
         PropertiesUi,
         TrackChanges,
         label_and_value,
     },
-    scene::ui::ComponentUi,
+    impl_register_component,
 };
 
 /// A point light source.
@@ -68,12 +68,6 @@ impl From<Srgb<u8>> for PointLight {
     }
 }
 
-impl ComponentUi for PointLight {
-    fn heading(&self) -> impl Into<egui::RichText> {
-        "Point Light"
-    }
-}
-
 impl PropertiesUi for PointLight {
     type Config = ();
 
@@ -90,6 +84,8 @@ impl PropertiesUi for PointLight {
     }
 }
 
+impl_register_component!(PointLight where ComponentUi, default);
+
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
 pub struct AmbientLight {
     #[serde(with = "crate::util::serde::palette")]
@@ -101,12 +97,6 @@ impl AmbientLight {
         Self {
             color: Srgb::new(intensity, intensity, intensity),
         }
-    }
-}
-
-impl ComponentUi for AmbientLight {
-    fn heading(&self) -> impl Into<egui::RichText> {
-        "Ambient Light"
     }
 }
 
@@ -125,6 +115,8 @@ impl PropertiesUi for AmbientLight {
         changes.propagated(response)
     }
 }
+
+impl_register_component!(AmbientLight where ComponentUi, default);
 
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 #[repr(C)]

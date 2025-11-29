@@ -32,9 +32,9 @@ use crate::{
         scene::{
             Changed,
             transform::GlobalTransform,
-            ui::ComponentUi,
         },
     },
+    impl_register_component,
     util::format_size,
 };
 
@@ -413,11 +413,7 @@ impl PropertiesUi for Aabb {
     }
 }
 
-impl ComponentUi for Aabb {
-    fn heading(&self) -> impl Into<egui::RichText> {
-        "AABB"
-    }
-}
+impl_register_component!(Aabb where ComponentUi);
 
 #[cfg(test)]
 mod tests {

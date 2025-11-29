@@ -1,4 +1,5 @@
 pub mod buffer;
+pub mod components;
 pub mod serialize;
 pub mod spatial;
 pub mod transform;
@@ -45,6 +46,7 @@ use crate::app::composer::{
         },
     },
     scene::{
+        components::ComponentRegistry,
         serialize::SerializeEntity,
         spatial::{
             Collider,
@@ -86,16 +88,22 @@ pub struct Scene {
     tick: Tick,
 
     transform_hierarchy_updater: TransformHierarchyUpdater,
+
+    pub component_registry: ComponentRegistry,
 }
 
 impl Default for Scene {
     fn default() -> Self {
+        let mut component_registry = ComponentRegistry::default();
+        component_registry.register_builtin();
+
         Self {
             entities: Default::default(),
             command_buffer: Default::default(),
             spatial_queries: Default::default(),
             tick: Tick { tick: 0 },
             transform_hierarchy_updater: TransformHierarchyUpdater::default(),
+            component_registry,
         }
     }
 }

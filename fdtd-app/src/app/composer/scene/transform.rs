@@ -14,15 +14,12 @@ use serde::{
     Serialize,
 };
 
-use crate::app::composer::{
-    properties::{
-        PropertiesUi,
-        nalgebra::Isometry3UiConfig,
+use crate::{
+    app::composer::{
+        properties::PropertiesUi,
+        scene::Changed,
     },
-    scene::{
-        Changed,
-        ui::ComponentUi,
-    },
+    impl_register_component,
 };
 
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
@@ -125,19 +122,16 @@ impl From<UnitQuaternion<f32>> for LocalTransform {
     }
 }
 
-impl ComponentUi for LocalTransform {
-    fn heading(&self) -> impl Into<egui::RichText> {
-        "Transform (Local)"
-    }
-}
-
 impl PropertiesUi for LocalTransform {
-    type Config = Isometry3UiConfig;
+    type Config = ();
 
     fn properties_ui(&mut self, ui: &mut egui::Ui, config: &Self::Config) -> egui::Response {
-        self.isometry.properties_ui(ui, config)
+        let _ = config;
+        self.isometry.properties_ui(ui, &Default::default())
     }
 }
+
+impl_register_component!(LocalTransform where Changed, ComponentUi, default);
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct GlobalTransform {
@@ -159,19 +153,16 @@ impl GlobalTransform {
     }
 }
 
-impl ComponentUi for GlobalTransform {
-    fn heading(&self) -> impl Into<egui::RichText> {
-        "Transform (Global)"
-    }
-}
-
 impl PropertiesUi for GlobalTransform {
-    type Config = Isometry3UiConfig;
+    type Config = ();
 
     fn properties_ui(&mut self, ui: &mut egui::Ui, config: &Self::Config) -> egui::Response {
-        self.isometry.properties_ui(ui, config)
+        let _ = config;
+        self.isometry.properties_ui(ui, &Default::default())
     }
 }
+
+impl_register_component!(GlobalTransform where Changed, ComponentUi);
 
 #[derive(Debug, Default)]
 pub(super) struct TransformHierarchyUpdater {

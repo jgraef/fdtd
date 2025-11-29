@@ -18,7 +18,8 @@ pub struct EntityPropertiesWindow<'a> {
     scene: &'a mut Scene,
     entity: hecs::Entity,
     id: egui::Id,
-    deletable: bool,
+    entity_deletable: bool,
+    components_deletable: bool,
 }
 
 impl<'a> EntityPropertiesWindow<'a> {
@@ -27,12 +28,13 @@ impl<'a> EntityPropertiesWindow<'a> {
             scene,
             entity,
             id,
-            deletable: false,
+            entity_deletable: false,
+            components_deletable: false,
         }
     }
 
     pub fn deletable(mut self, deletable: bool) -> Self {
-        self.deletable = deletable;
+        self.entity_deletable = deletable;
         self
     }
 
@@ -63,7 +65,10 @@ impl<'a> EntityPropertiesWindow<'a> {
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
                         if ui
-                            .add_enabled(self.deletable, egui::Button::new("Despawn").small())
+                            .add_enabled(
+                                self.entity_deletable,
+                                egui::Button::new("Despawn").small(),
+                            )
                             .clicked()
                         {
                             delete_requested = true;
@@ -85,17 +90,42 @@ impl<'a> EntityPropertiesWindow<'a> {
                             egui::Button::new("+").small(),
                         )
                         .ui(ui, |ui| {
-                            show_all::show_add_component_menu(
-                                ui,
-                                entity_ref,
-                                &mut self.scene.command_buffer,
-                            );
+                            let addable_components =
+                                self.scene.component_registry.iter().filter(|component| {
+                                    !component.has(entity_ref) && component.can_create()
+                                });
+
+                            for component in addable_components {
+                                if ui
+                                    .small_button(component.display_name_with_fallback())
+                                    .clicked()
+                                {
+                                    let mut builder = hecs::EntityBuilder::new();
+                                    component.create(&mut builder);
+                                    self.scene
+                                        .command_buffer
+                                        .insert(entity_ref.entity(), builder.build());
+                                }
+                            }
                         });
                     });
                 });
                 ui.separator();
 
-                show_all::show_component_uis(ui, entity_ref, &mut self.scene.command_buffer, true);
+                let mut emit_seperator = false;
+                for component in self.scene.component_registry.iter() {
+                    if emit_seperator {
+                        ui.separator();
+                        emit_seperator = false;
+                    }
+
+                    let response =
+                        component.component_ui(entity_ref, &mut self.scene.command_buffer, ui);
+
+                    if response.is_some() {
+                        emit_seperator = true;
+                    }
+                }
             });
 
         if delete_requested {
@@ -115,94 +145,73 @@ impl<'a> EntityPropertiesWindow<'a> {
 #[derive(derive_more::Debug)]
 pub struct ComponentWidget<'a, T>
 where
-    T: PropertiesUi,
+    T: ?Sized,
 {
     #[debug("hecs::EntityRef {{ ... }}")]
-    entity_ref: hecs::EntityRef<'a>,
+    pub entity: hecs::Entity,
 
     #[debug("hecs::CommandBuffer {{ ... }}")]
-    command_buffer: &'a mut hecs::CommandBuffer,
+    pub command_buffer: &'a mut hecs::CommandBuffer,
 
-    deletable: bool,
-    mark_changed: bool,
+    pub component: &'a mut T,
 
-    type_name: &'a str,
-
-    config: &'a T::Config,
+    pub heading: Option<&'a egui::RichText>,
+    pub mark_changed: bool,
+    pub deletable: bool,
 }
 
-impl<'a, T> ComponentWidget<'a, T>
-where
-    T: PropertiesUi,
-{
+impl<'a, T> ComponentWidget<'a, T> {
     pub fn new(
-        entity_ref: hecs::EntityRef<'a>,
+        entity: hecs::Entity,
         command_buffer: &'a mut hecs::CommandBuffer,
-        type_name: &'a str,
-        config: &'a T::Config,
+        component: &'a mut T,
     ) -> Self {
         Self {
-            entity_ref,
+            entity,
             command_buffer,
-            deletable: false,
+            component,
+            heading: None,
             mark_changed: false,
-            type_name,
-            config,
+            deletable: false,
         }
-    }
-
-    pub fn deletable(mut self) -> Self {
-        self.deletable = true;
-        self
-    }
-
-    pub fn mark_changed(mut self) -> Self {
-        self.mark_changed = true;
-        self
     }
 }
 
 impl<'a, T> egui::Widget for ComponentWidget<'a, T>
 where
-    T: hecs::Component + PropertiesUi + ComponentUi,
+    T: ComponentUi,
 {
     fn ui(self, ui: &mut egui::Ui) -> egui::Response {
-        let entity = self.entity_ref.entity();
+        let mut deletion_requested = false;
 
-        if let Some(mut value) = self.entity_ref.get::<&mut T>() {
-            let mut deletion_requested = false;
-
-            ui.horizontal(|ui| {
-                //ui.heading(value.heading());
-                ui.heading(self.type_name);
-
-                if self.deletable {
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
-                        if ui.small_button("Delete").clicked() {
-                            deletion_requested = true;
-                        }
-                    });
-                }
-            });
-
-            let response = ui
-                .indent(egui::Id::NULL, |ui| value.properties_ui(ui, self.config))
-                .inner;
-
-            if deletion_requested {
-                tracing::debug!(?entity, component = type_name::<T>(), "removing");
-                self.command_buffer.remove_one::<T>(entity);
-            }
-            else if response.changed() && self.mark_changed {
-                self.command_buffer
-                    .insert_one(entity, Changed::<T>::default());
+        ui.horizontal(|ui| {
+            if let Some(heading) = self.heading {
+                ui.heading(heading.clone());
             }
 
-            response
+            if self.deletable {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
+                    if ui.small_button("Delete").clicked() {
+                        deletion_requested = true;
+                    }
+                });
+            }
+        });
+
+        let response = ui
+            .indent(egui::Id::NULL, |ui| self.component.properties_ui(ui, &()))
+            .inner;
+
+        if deletion_requested {
+            tracing::debug!(entity = ?self.entity, component = type_name::<T>(), "removing");
+            self.command_buffer.remove_one::<T>(self.entity);
         }
-        else {
-            ui.allocate_response(Default::default(), egui::Sense::empty())
+        else if response.changed() && self.mark_changed {
+            self.command_buffer
+                .insert_one(self.entity, Changed::<T>::default());
         }
+
+        response
     }
 }
 
@@ -216,12 +225,12 @@ pub fn default_title(entity_ref: hecs::EntityRef) -> egui::WidgetText {
     .into()
 }
 
-// todo: we can just use PropertiesUi for this
-// it might be better to just use `stringify!($ty)` for this.
-pub trait ComponentUi {
-    fn heading(&self) -> impl Into<egui::RichText>;
-}
+/// Dyn-compatible trait for components that can render an UI
+pub trait ComponentUi: hecs::Component + PropertiesUi<Config = ()> {}
 
+impl<T> ComponentUi for T where T: hecs::Component + PropertiesUi<Config = ()> {}
+
+/*
 mod show_all {
     use parry3d::bounding_volume::Aabb;
 
@@ -250,7 +259,7 @@ mod show_all {
                 LocalTransform,
             },
             ui::{
-                ComponentUi,
+                AnyComponentUi,
                 ComponentWidget,
             },
         },
@@ -263,9 +272,8 @@ mod show_all {
         command_buffer: &mut hecs::CommandBuffer,
         deletable_components: bool,
         is_first: &mut bool,
-        mark_changed: bool,
     ) where
-        T: PropertiesUi + hecs::Component + ComponentUi,
+        T: PropertiesUi + hecs::Component + AnyComponentUi,
     {
         if entity_ref.has::<T>() {
             if !*is_first {
@@ -280,9 +288,6 @@ mod show_all {
             if deletable_components {
                 component_ui = component_ui.deletable();
             }
-            if mark_changed {
-                component_ui = component_ui.mark_changed();
-            }
 
             //ui.label(label);
 
@@ -295,9 +300,8 @@ mod show_all {
         type_name: &'static str,
         entity_ref: hecs::EntityRef,
         command_buffer: &mut hecs::CommandBuffer,
-        mark_changed: bool,
     ) where
-        T: PropertiesUi + hecs::Component + ComponentUi + Default,
+        T: PropertiesUi + hecs::Component + AnyComponentUi + Default,
     {
         if !entity_ref.has::<T>() && ui.small_button(type_name).clicked() {
             let mut builder = hecs::EntityBuilder::new();
@@ -350,7 +354,6 @@ mod show_all {
                     command_buffer,
                     deletable_components,
                     &mut is_first,
-                    $mark_changed,
                 );
             }};
         }
@@ -368,13 +371,7 @@ mod show_all {
     ) {
         macro_rules! show_component_add_button {
             ($ty:ty, [$mark_changed:expr, true]) => {{
-                show_component_add_button::<$ty>(
-                    ui,
-                    stringify!($ty),
-                    entity_ref,
-                    command_buffer,
-                    $mark_changed,
-                );
+                show_component_add_button::<$ty>(ui, stringify!($ty), entity_ref, command_buffer);
             }};
             ($ty:ty, [$mark_changed:expr, false]) => {};
         }
@@ -382,3 +379,4 @@ mod show_all {
         for_all_components!(show_component_add_button);
     }
 }
+ */

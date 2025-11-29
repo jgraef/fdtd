@@ -91,11 +91,11 @@ use crate::{
                 Label,
                 Scene,
                 transform::GlobalTransform,
-                ui::ComponentUi,
             },
         },
         start::CreateAppContext,
     },
+    impl_register_component,
     util::{
         egui::EguiUtilUiExt,
         format_size,
@@ -117,12 +117,6 @@ use crate::{
 #[derive(Copy, Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Hidden;
 
-impl ComponentUi for Hidden {
-    fn heading(&self) -> impl Into<egui::RichText> {
-        "Hidden"
-    }
-}
-
 impl PropertiesUi for Hidden {
     type Config = ();
 
@@ -130,6 +124,8 @@ impl PropertiesUi for Hidden {
         ui.noop()
     }
 }
+
+impl_register_component!(Hidden where ComponentUi, default);
 
 // todo: respect eguis theme. we might just pass this in from the view when
 // rendering and remove this component.
@@ -150,12 +146,6 @@ impl From<Srgb<u8>> for ClearColor {
     }
 }
 
-impl ComponentUi for ClearColor {
-    fn heading(&self) -> impl Into<egui::RichText> {
-        "Clear Color"
-    }
-}
-
 impl PropertiesUi for ClearColor {
     type Config = ();
 
@@ -163,6 +153,8 @@ impl PropertiesUi for ClearColor {
         self.clear_color.properties_ui(ui, &())
     }
 }
+
+impl_register_component!(ClearColor where ComponentUi, default);
 
 #[derive(Clone, Copy, Debug)]
 pub struct RendererConfig {
@@ -832,12 +824,6 @@ impl Default for Outline {
     }
 }
 
-impl ComponentUi for Outline {
-    fn heading(&self) -> impl Into<egui::RichText> {
-        "Outline"
-    }
-}
-
 impl PropertiesUi for Outline {
     type Config = ();
 
@@ -860,6 +846,8 @@ impl PropertiesUi for Outline {
         changes.propagated(response)
     }
 }
+
+impl_register_component!(Outline where ComponentUi, default);
 
 #[derive(Clone, Copy, Debug)]
 struct DepthState {

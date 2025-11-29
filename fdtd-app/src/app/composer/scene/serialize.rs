@@ -11,6 +11,14 @@ use std::{
 
 use serde::ser::SerializeMap;
 
+pub trait ComponentSerialize {
+    // todo
+}
+
+pub trait ComponentDeserialize {
+    // todo
+}
+
 pub struct SerializeEntity<'a> {
     pub entity_ref: hecs::EntityRef<'a>,
 }

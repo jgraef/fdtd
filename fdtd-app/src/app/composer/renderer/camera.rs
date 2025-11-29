@@ -49,9 +49,9 @@ use crate::{
             Changed,
             Scene,
             transform::GlobalTransform,
-            ui::ComponentUi,
         },
     },
+    impl_register_component,
     util::wgpu::buffer::{
         StagingBufferProvider,
         WriteStagingTransaction,
@@ -358,12 +358,6 @@ impl Default for CameraConfig {
     }
 }
 
-impl ComponentUi for CameraConfig {
-    fn heading(&self) -> impl Into<egui::RichText> {
-        "Camera Config"
-    }
-}
-
 impl PropertiesUi for CameraConfig {
     type Config = ();
 
@@ -399,6 +393,8 @@ impl PropertiesUi for CameraConfig {
         changes.propagated(response)
     }
 }
+
+impl_register_component!(CameraConfig where ComponentUi, default);
 
 #[derive(Clone, Copy, Debug)]
 pub struct CameraRenderInfo {

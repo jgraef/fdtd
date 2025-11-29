@@ -42,8 +42,8 @@ use crate::{
             std::NumericPropertyUiConfig,
         },
         renderer::texture_channel::TextureReceiver,
-        scene::ui::ComponentUi,
     },
+    impl_register_component,
     util::{
         palette::ColorExt,
         wgpu::create_texture_view_from_texture,
@@ -183,12 +183,6 @@ impl From<Srgb<u8>> for Material {
     }
 }
 
-impl ComponentUi for Material {
-    fn heading(&self) -> impl Into<egui::RichText> {
-        "Material"
-    }
-}
-
 impl PropertiesUi for Material {
     type Config = ();
 
@@ -284,6 +278,8 @@ impl PropertiesUi for Material {
     }
 }
 
+impl_register_component!(Material where Changed, ComponentUi, default);
+
 #[derive(Clone, Copy, Debug)]
 pub struct Wireframe {
     pub color: Srgba,
@@ -306,12 +302,6 @@ impl Default for Wireframe {
     }
 }
 
-impl ComponentUi for Wireframe {
-    fn heading(&self) -> impl Into<egui::RichText> {
-        "Wireframe"
-    }
-}
-
 impl PropertiesUi for Wireframe {
     type Config = ();
 
@@ -319,6 +309,8 @@ impl PropertiesUi for Wireframe {
         self.color.properties_ui(ui, &Default::default())
     }
 }
+
+impl_register_component!(Wireframe where Changed, ComponentUi, default);
 
 #[derive(Clone, Debug)]
 pub struct AlbedoTexture {
