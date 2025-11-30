@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use cem_solver::{
     fdtd,
     material::{
@@ -9,15 +11,18 @@ use nalgebra::Vector3;
 
 use crate::{
     impl_register_component,
-    solver::config::{
-        FixedVolume,
-        SceneAabbVolume,
-        SolverConfig,
-        SolverConfigCommon,
-        SolverConfigFdtd,
-        SolverConfigSpecifics,
-        StopCondition,
-        Volume,
+    solver::{
+        config::{
+            FixedVolume,
+            SceneAabbVolume,
+            SolverConfig,
+            SolverConfigCommon,
+            SolverConfigFdtd,
+            SolverConfigSpecifics,
+            StopCondition,
+            Volume,
+        },
+        runner::SolverRunner,
     },
     util::egui::probe::{
         HasChangeValue,
@@ -27,6 +32,102 @@ use crate::{
         label_and_value,
     },
 };
+
+impl SolverRunner {
+    pub fn show_active_solver_ui(&mut self, ctx: &egui::Context) {
+        let mut close_runner = false;
+
+        if let Some(solver) = self.active_solver() {
+            let state = solver.state();
+            let mut window_open = true;
+
+            egui::Window::new("Solver")
+                .movable(true)
+                .default_size([300.0, 300.0])
+                .max_size([f32::INFINITY, f32::INFINITY])
+                .open(&mut window_open)
+                .show(ctx, |ui| {
+                    ui.horizontal(|ui| {
+                        if state.finished {
+                            ui.add_enabled(false, egui::Button::new("▶"));
+                            ui.add_enabled(false, egui::Button::new("⏹"));
+                        }
+                        else {
+                            if state.paused {
+                                if ui.button("▶").clicked() {
+                                    solver.resume();
+                                }
+                            }
+                            else if ui.button("⏸").clicked() {
+                                solver.pause();
+                            }
+
+                            if ui.button("⏹").clicked() {
+                                solver.stop();
+                            }
+                        }
+                    });
+
+                    ui.label(format!(
+                        "Simulation Time: {:.3} (Tick {})",
+                        state.sim_time, state.sim_tick
+                    ));
+
+                    ui.label(format!("Running Time: {:.3?}", state.elapsed()));
+                    ui.label(format!("Update Time: {:.3?}", state.last_step_time));
+
+                    let mut ups_slider = |label: &str, delay: Option<Duration>, max: u64| {
+                        // returns Option<Option<Duration>>: the outer Option indicates if the
+                        // value changed. The inner Option indicates whether the change enabled
+                        // or disabled the slider
+
+                        ui.horizontal(|ui| {
+                            let (mut value, mut enabled) = delay
+                                .and_then(|delay| u64::try_from(delay.as_millis()).ok())
+                                .and_then(|delay| 1000u64.checked_div(delay))
+                                .map(|value| (value, true))
+                                .unwrap_or_default();
+
+                            let toggled = ui.checkbox(&mut enabled, label).changed();
+
+                            if value == 0 && toggled && enabled {
+                                value = 1;
+                            }
+
+                            let slidered = ui
+                                .add_enabled(enabled, egui::Slider::new(&mut value, 0..=max))
+                                .changed();
+
+                            if value == 0 {
+                                enabled = false;
+                            }
+
+                            let delay = (toggled || slidered)
+                                .then(|| enabled.then(|| Duration::from_millis(1000 / value)));
+                            (delay, value)
+                        })
+                        .inner
+                    };
+
+                    let (delay_change, ups) = ups_slider("UPS", state.step_delay, 1000);
+                    if let Some(delay) = delay_change {
+                        let mut state = solver.state_mut();
+                        state.step_delay = delay;
+                    }
+                    if let (Some(delay), _) = ups_slider("FPS", state.observation_delay, ups) {
+                        let mut state = solver.state_mut();
+                        state.observation_delay = delay;
+                    }
+                });
+
+            close_runner = !window_open;
+        }
+
+        if close_runner {
+            self.stop();
+        }
+    }
+}
 
 impl PropertiesUi for SolverConfig {
     type Config = ();

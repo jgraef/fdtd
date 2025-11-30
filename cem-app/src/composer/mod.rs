@@ -262,6 +262,8 @@ impl Composer {
     }
 
     pub fn show(&mut self, ctx: &egui::Context) {
+        self.solver_runner.show_active_solver_ui(ctx);
+
         if let Some(state) = &mut self.state {
             state.show(ctx, &mut self.renderer, &mut self.asset_loader);
         }
@@ -273,86 +275,6 @@ impl Composer {
                     ui.label(egui::RichText::new("Welcome!").heading());
                     ui.label(lipsum!(20));
                 });
-            });
-        }
-    }
-
-    pub fn show_debug(&mut self, ui: &mut egui::Ui) {
-        if let Some(state) = &self.state {
-            ui.collapsing("Scene", |ui| {
-                {
-                    // this whole block is just for debugging
-                    state
-                        .selection()
-                        .with_query_iter::<Option<&Label>, _>(|selected| {
-                            let num_selected = selected.len();
-                            if num_selected == 0 {
-                                ui.label("Nothing selected");
-                            }
-                            else {
-                                ui.label("Selected:");
-                                ui.indent(egui::Id::NULL, |ui| {
-                                    for (entity, label) in selected {
-                                        ui.label(EntityDebugLabel {
-                                            entity,
-                                            label: label.cloned(),
-                                            invalid: false,
-                                        });
-                                    }
-                                });
-                            }
-                        });
-
-                    if let Some(entity_under_pointer) = &state.scene_pointer.entity_under_pointer {
-                        ui.label("Hovered");
-                        ui.indent(egui::Id::NULL, |ui| {
-                            ui.label(state.scene.entity_debug_label(entity_under_pointer.entity));
-                            ui.label(format!(
-                                "({:.4}, {:.4}, {:.4})",
-                                entity_under_pointer.point_hovered.x,
-                                entity_under_pointer.point_hovered.y,
-                                entity_under_pointer.point_hovered.z,
-                            ));
-                            ui.label(format!(
-                                "Distance: {}",
-                                entity_under_pointer.distance_from_camera
-                            ));
-                        });
-                    }
-                    else {
-                        ui.label("Nothing hovered");
-                    }
-                }
-
-                state.scene.show_debug(ui);
-            });
-        }
-
-        ui.collapsing("wgpu", |ui| {
-            self.renderer.wgpu_context().show_debug(ui);
-        });
-
-        ui.collapsing("Renderer", |ui| {
-            self.renderer.show_debug(ui);
-
-            if let Some(state) = &mut self.state {
-                ui.separator();
-
-                for (entity, info) in state.scene.entities.query_mut::<&CameraRenderInfo>() {
-                    ui.label(format!("Camera {entity:?}"));
-                    ui.indent(egui::Id::NULL, |ui| {
-                        ui.label(format!("Total: {:?}", info.total));
-                        ui.label(format!("Opaque: {:?}", info.num_opaque));
-                        ui.label(format!("Transparent: {:?}", info.num_transparent));
-                        ui.label(format!("Outlines: {:?}", info.num_outlines));
-                    });
-                }
-            }
-        });
-
-        if let Some(state) = &mut self.state {
-            ui.collapsing("Undo Buffer", |ui| {
-                state.undo_buffer.show_debug(ui);
             });
         }
     }
@@ -1267,5 +1189,86 @@ impl Default for EntityWindow {
         Self {
             despawn_button: true,
         }
+    }
+}
+
+impl DebugUi for Composer {
+    fn show_debug(&self, ui: &mut egui::Ui) {
+        if let Some(state) = &self.state {
+            ui.collapsing("Scene", |ui| {
+                {
+                    // this whole block is just for debugging
+                    state
+                        .selection()
+                        .with_query_iter::<Option<&Label>, _>(|selected| {
+                            let num_selected = selected.len();
+                            if num_selected == 0 {
+                                ui.label("Nothing selected");
+                            }
+                            else {
+                                ui.label("Selected:");
+                                ui.indent(egui::Id::NULL, |ui| {
+                                    for (entity, label) in selected {
+                                        ui.label(EntityDebugLabel {
+                                            entity,
+                                            label: label.cloned(),
+                                            invalid: false,
+                                        });
+                                    }
+                                });
+                            }
+                        });
+
+                    if let Some(entity_under_pointer) = &state.scene_pointer.entity_under_pointer {
+                        ui.label("Hovered");
+                        ui.indent(egui::Id::NULL, |ui| {
+                            ui.label(state.scene.entity_debug_label(entity_under_pointer.entity));
+                            ui.label(format!(
+                                "({:.4}, {:.4}, {:.4})",
+                                entity_under_pointer.point_hovered.x,
+                                entity_under_pointer.point_hovered.y,
+                                entity_under_pointer.point_hovered.z,
+                            ));
+                            ui.label(format!(
+                                "Distance: {}",
+                                entity_under_pointer.distance_from_camera
+                            ));
+                        });
+                    }
+                    else {
+                        ui.label("Nothing hovered");
+                    }
+                }
+
+                ui.label("Undo Buffer");
+                ui.indent(egui::Id::NULL, |ui| {
+                    state.undo_buffer.show_debug(ui);
+                });
+
+                state.scene.show_debug(ui);
+            });
+        }
+
+        ui.collapsing("wgpu", |ui| {
+            self.renderer.wgpu_context().show_debug(ui);
+        });
+
+        ui.collapsing("Renderer", |ui| {
+            self.renderer.show_debug(ui);
+
+            if let Some(state) = &self.state {
+                ui.separator();
+
+                for (entity, info) in state.scene.entities.query::<&CameraRenderInfo>().iter() {
+                    ui.label(format!("Camera {entity:?}"));
+                    ui.indent(egui::Id::NULL, |ui| {
+                        ui.label(format!("Total: {:?}", info.total));
+                        ui.label(format!("Opaque: {:?}", info.num_opaque));
+                        ui.label(format!("Transparent: {:?}", info.num_transparent));
+                        ui.label(format!("Outlines: {:?}", info.num_outlines));
+                    });
+                }
+            }
+        });
     }
 }

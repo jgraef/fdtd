@@ -1,6 +1,10 @@
-use std::time::{
-    Duration,
-    Instant,
+use std::{
+    sync::Arc,
+    thread::JoinHandle,
+    time::{
+        Duration,
+        Instant,
+    },
 };
 
 use cem_solver::{
@@ -44,6 +48,11 @@ use nalgebra::{
     UnitQuaternion,
     Vector3,
 };
+use parking_lot::{
+    Condvar,
+    Mutex,
+    MutexGuard,
+};
 use parry3d::{
     bounding_volume::Aabb,
     query::Ray,
@@ -81,6 +90,7 @@ pub struct SolverRunner {
     fdtd_wgpu: FdtdWgpuBackend,
     render_resource_creator: RenderResourceCreator,
     repaint_trigger: RepaintTrigger,
+    active_solver: Option<Solver>,
 }
 
 impl SolverRunner {
@@ -97,6 +107,7 @@ impl SolverRunner {
             ),
             render_resource_creator: render_resource_creator.clone(),
             repaint_trigger,
+            active_solver: None,
         }
     }
 
@@ -104,6 +115,10 @@ impl SolverRunner {
     /// trait defines how a solver_config and scene is turned into the problem
     /// description for the runner (e.g. a `fdtd::Simulation`).
     pub fn run(&mut self, solver_config: &SolverConfig, scene: &mut Scene) -> Result<(), Error> {
+        if self.active_solver.is_some() {
+            bail!("Can't run more than one solver at once.");
+        }
+
         match &solver_config.specifics {
             SolverConfigSpecifics::Fdtd(fdtd_config) => {
                 self.run_fdtd(scene, &solver_config.common, fdtd_config)?;
@@ -114,8 +129,35 @@ impl SolverRunner {
         Ok(())
     }
 
+    pub fn stop(&mut self) {
+        if let Some(solver) = self.active_solver.take() {
+            tracing::debug!("Requested closing of solver");
+
+            let mut state = solver.shared.state.lock();
+            state.finished = true;
+            if state.paused {
+                solver.shared.condition.notify_all();
+            }
+            drop(state);
+
+            match solver.join_handle.join() {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => {
+                    tracing::error!(%error, "Solver thread returned an error");
+                }
+                Err(panic) => {
+                    tracing::error!(?panic, "Solver thread panicked");
+                }
+            }
+        }
+    }
+
+    pub fn active_solver(&self) -> Option<&Solver> {
+        self.active_solver.as_ref()
+    }
+
     fn run_fdtd(
-        &self,
+        &mut self,
         scene: &mut Scene,
         common_config: &SolverConfigCommon,
         fdtd_config: &SolverConfigFdtd,
@@ -131,17 +173,15 @@ impl SolverRunner {
             )
         };
 
-        match &common_config.parallelization {
-            None => {
-                run_single_threaded()?;
-            }
+        let solver = match &common_config.parallelization {
+            None => run_single_threaded()?,
             Some(Parallelization::MultiThreaded { num_threads }) => {
                 if num_threads.is_some_and(|num_threads| num_threads <= 1) {
                     tracing::debug!(
                         ?num_threads,
                         "switching to single-threaded backend, because num_threads <= 1"
                     );
-                    run_single_threaded()?;
+                    run_single_threaded()?
                 }
                 else {
                     #[cfg(not(feature = "multi-threading"))]
@@ -150,7 +190,7 @@ impl SolverRunner {
                         tracing::warn!(
                             "Compiled without rayon feature. Falling back to single-threaded"
                         );
-                        run_single_threaded()?;
+                        run_single_threaded()?
                     }
 
                     #[cfg(feature = "multi-threading")]
@@ -163,7 +203,7 @@ impl SolverRunner {
                             &FdtdCpuBackend::multi_threaded(*num_threads)?,
                             &self.render_resource_creator,
                             self.repaint_trigger.clone(),
-                        )?;
+                        )?
                     }
                 }
             }
@@ -176,9 +216,11 @@ impl SolverRunner {
                     &self.fdtd_wgpu,
                     &self.render_resource_creator,
                     self.repaint_trigger.clone(),
-                )?;
+                )?
             }
-        }
+        };
+
+        self.active_solver = Some(solver);
 
         Ok(())
     }
@@ -191,7 +233,7 @@ fn run_fdtd_with_backend<Backend>(
     backend: &Backend,
     render_resource_creator: &RenderResourceCreator,
     repaint_trigger: RepaintTrigger,
-) -> Result<(), Error>
+) -> Result<Solver, Error>
 where
     Backend: SolverBackend<FdtdSolverConfig, Point3<usize>>,
     Backend::Instance: CreateProjection<UndecidedTextureSender> + Send + 'static,
@@ -324,7 +366,7 @@ where
     tracing::debug!("time to create simulation: {:?}", time_start.elapsed());
 
     // run simulation
-    spawn_solver(
+    let solver = Solver::spawn(
         instance,
         state,
         fdtd_config.stop_condition,
@@ -332,66 +374,199 @@ where
         observers,
     );
 
-    Ok(())
+    Ok(solver)
 }
 
-fn spawn_solver<Instance>(
-    instance: Instance,
-    mut state: Instance::State,
-    stop_condition: StopCondition,
-    sources: Sources,
-    mut observers: Observers<<Instance as CreateProjection<UndecidedTextureSender>>::Projection>,
-) where
-    Instance: SolverInstance + CreateProjection<UndecidedTextureSender> + Send + 'static,
-    Instance::State: Time + Send + 'static,
-    for<'a> Instance::UpdatePass<'a>: UpdatePassForcing<Point3<usize>>,
-    for<'a> <Instance as BeginProjectionPass>::ProjectionPass<'a>:
-        ProjectionPassAdd<'a, <Instance as CreateProjection<UndecidedTextureSender>>::Projection>,
-    <Instance as CreateProjection<UndecidedTextureSender>>::Projection: Send + 'static,
-{
-    let _join_handle = std::thread::spawn(move || {
-        let time_start = Instant::now();
-        let step_duration = Some(Duration::from_millis(10));
-        //let step_duration: Option<Duration> = None;
-        let observation_duration = Some(Duration::from_millis(1000 / 25));
-        let mut time_last_observation: Option<Instant> = None;
+#[derive(Debug)]
+struct Shared {
+    state: Mutex<SolverState>,
+    condition: Condvar,
+}
 
-        loop {
-            let time_elapsed = time_start.elapsed();
+#[derive(Clone, Copy, Debug)]
+pub struct SolverState {
+    pub finished: bool,
+    pub paused: bool,
+    pub sim_time: f64,
+    pub sim_tick: usize,
+    pub start_time: Instant,
+    pub stop_time: Option<Instant>,
+    pub total_running_time: Duration,
+    pub last_step_time: Duration,
+    pub step_delay: Option<Duration>,
+    pub observation_delay: Option<Duration>,
+}
 
-            if evaluate_stop_condition(&stop_condition, time_elapsed, &state) {
-                tracing::debug!("stop condition reached");
-                break;
-            }
+impl SolverState {
+    pub fn elapsed(&self) -> Duration {
+        if let Some(stop_time) = self.stop_time {
+            stop_time - self.start_time
+        }
+        else {
+            self.start_time.elapsed()
+        }
+    }
+}
 
-            //tracing::debug!(tick = simulation.tick(), elapsed = ?time_elapsed);
+#[derive(Debug)]
+pub struct Solver {
+    join_handle: JoinHandle<Result<(), Error>>,
+    shared: Arc<Shared>,
+}
 
-            let time_pass_start = Instant::now();
+impl Solver {
+    pub fn state(&self) -> SolverState {
+        let state = self.shared.state.lock();
+        *state
+    }
 
-            let time = state.time();
-            let mut update_pass = instance.begin_update(&mut state);
-            sources.apply(time, &mut update_pass);
-            update_pass.finish();
+    pub fn state_mut(&self) -> MutexGuard<'_, SolverState> {
+        self.shared.state.lock()
+    }
 
-            if observation_duration.is_some_and(|observation_duration| {
-                time_last_observation.is_none_or(|time_last_observation| {
-                    time_last_observation.elapsed() > observation_duration
-                })
-            }) {
-                observers.run(&instance, &state);
-                time_last_observation = Some(Instant::now());
-            }
+    pub fn stop(&self) {
+        let mut state = self.shared.state.lock();
+        state.finished = true;
+        self.shared.condition.notify_all();
+    }
 
-            let time_pass = time_pass_start.elapsed();
+    pub fn pause(&self) {
+        let mut state = self.shared.state.lock();
+        state.paused = true;
+    }
 
-            if let Some(step_duration) = step_duration {
-                let sleep = step_duration.saturating_sub(time_pass);
-                if !sleep.is_zero() {
-                    std::thread::sleep(sleep);
+    pub fn resume(&self) {
+        let mut state = self.shared.state.lock();
+        state.paused = false;
+        self.shared.condition.notify_all();
+    }
+
+    fn spawn<Instance>(
+        instance: Instance,
+        mut state: Instance::State,
+        stop_condition: StopCondition,
+        sources: Sources,
+        mut observers: Observers<
+            <Instance as CreateProjection<UndecidedTextureSender>>::Projection,
+        >,
+    ) -> Self
+    where
+        Instance: SolverInstance + CreateProjection<UndecidedTextureSender> + Send + 'static,
+        Instance::State: Time + Send + 'static,
+        for<'a> Instance::UpdatePass<'a>: UpdatePassForcing<Point3<usize>>,
+        for<'a> <Instance as BeginProjectionPass>::ProjectionPass<'a>: ProjectionPassAdd<
+                'a,
+                <Instance as CreateProjection<UndecidedTextureSender>>::Projection,
+            >,
+        <Instance as CreateProjection<UndecidedTextureSender>>::Projection: Send + 'static,
+    {
+        let start_paused = true;
+
+        let control_state = SolverState {
+            finished: false,
+            paused: start_paused,
+            sim_time: 0.0,
+            sim_tick: 0,
+            start_time: Instant::now(),
+            stop_time: None,
+            total_running_time: Duration::ZERO,
+            last_step_time: Duration::ZERO,
+            step_delay: Some(Duration::from_millis(10)),
+            observation_delay: Some(Duration::from_millis(1000 / 25)),
+        };
+        let shared = Arc::new(Shared {
+            state: Mutex::new(control_state),
+            condition: Condvar::new(),
+        });
+
+        let join_handle = std::thread::spawn({
+            let shared = shared.clone();
+
+            move || {
+                let mut time_last_observation: Option<Instant> = None;
+                let mut stop_condition_reached = false;
+                let mut time_pass = Duration::ZERO;
+                let mut total_time = Duration::ZERO;
+
+                // if we start out paused we want to run ob observers at least once
+                if start_paused {
+                    observers.run(&instance, &state);
+                }
+
+                loop {
+                    let mut control_state = shared.state.lock();
+
+                    // update some data in the shared struct
+                    control_state.sim_tick = state.tick();
+                    control_state.sim_time = state.time();
+                    control_state.last_step_time = time_pass;
+                    control_state.total_running_time = total_time;
+
+                    control_state.finished |= stop_condition_reached;
+                    if control_state.finished {
+                        control_state.stop_time = Some(Instant::now());
+                        return Ok(());
+                    }
+
+                    if control_state.paused {
+                        shared.condition.wait(&mut control_state);
+                    }
+                    else {
+                        let observation_delay = control_state.observation_delay;
+                        let step_delay = control_state.step_delay;
+
+                        drop(control_state);
+
+                        // check if stop condition reached. if so, set flag and continue to next
+                        // (and last) iteration of loop
+                        if evaluate_stop_condition(&stop_condition, total_time, &state) {
+                            tracing::debug!("stop condition reached");
+                            stop_condition_reached = true;
+                            continue;
+                        }
+
+                        let time_pass_start = Instant::now();
+
+                        // note: can't just put the method call into the argument because by then
+                        // the state is borrowed. we should probably give some access to the state
+                        // during an update pass.
+                        let sim_time = state.time();
+
+                        // do the update pass
+                        let mut update_pass = instance.begin_update(&mut state);
+                        sources.apply(sim_time, &mut update_pass);
+                        update_pass.finish();
+
+                        // do observations
+                        if observation_delay.is_some_and(|observation_delay| {
+                            time_last_observation.is_none_or(|time_last_observation| {
+                                time_last_observation.elapsed() > observation_delay
+                            })
+                        }) {
+                            observers.run(&instance, &state);
+                            time_last_observation = Some(Instant::now());
+                        }
+
+                        time_pass = time_pass_start.elapsed();
+                        total_time += time_pass;
+
+                        // sleep if we're ups limited
+                        if let Some(step_delay) = step_delay {
+                            let sleep = step_delay.saturating_sub(time_pass);
+                            if !sleep.is_zero() {
+                                std::thread::sleep(sleep);
+                            }
+                        }
+                    }
                 }
             }
+        });
+
+        Self {
+            join_handle,
+            shared,
         }
-    });
+    }
 }
 
 #[derive(derive_more::Debug)]

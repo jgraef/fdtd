@@ -469,7 +469,7 @@ impl<'a> FdtdWgpuProjectionPass<'a> {
                 .backend
                 .device
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("fdtd/update/post"),
+                    label: Some("fdtd/update"),
                 });
 
         let swap_buffer_index = SwapBufferIndex::from_tick(state.tick + 1);

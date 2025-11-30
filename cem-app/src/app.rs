@@ -23,7 +23,6 @@ use image::RgbaImage;
 
 use crate::{
     args::Args,
-    build_info::BUILD_INFO,
     clipboard::EguiClipboardPlugin,
     composer::Composer,
     config::AppConfig,
@@ -351,67 +350,7 @@ impl eframe::App for App {
                 // wgpu info?)
             });
 
-        let debug_open_id = egui::Id::new("debug_open");
-        let mut debug_open = ctx
-            .data_mut(|data| data.get_persisted(debug_open_id))
-            .unwrap_or_default();
-        let debug_open_before = debug_open;
-        egui::Window::new("Debug Info")
-            .movable(true)
-            .default_size([300.0, 300.0])
-            .max_size([f32::INFINITY, f32::INFINITY])
-            .open(&mut debug_open)
-            .show(ctx, |ui| {
-                egui::ScrollArea::vertical()
-                    .id_salt("debug_panel")
-                    .show(ui, |ui| {
-                        egui::ScrollArea::both().show(ui, |ui| {
-                            ui.collapsing("Build", |ui| {
-                                ui.small("Target:");
-                                ui.monospace(BUILD_INFO.target);
-                                ui.small("Opt Level:");
-                                ui.monospace(BUILD_INFO.opt_level);
-                                ui.small("Debug:");
-                                ui.monospace(BUILD_INFO.debug);
-                                ui.small("Profile:");
-                                ui.monospace(BUILD_INFO.profile);
-                                if let Some(branch) = BUILD_INFO.git_branch {
-                                    ui.small("Branch:");
-                                    ui.hyperlink_to(
-                                        egui::WidgetText::from(branch).monospace(),
-                                        GithubUrls::PACKAGE.branch(branch),
-                                    );
-                                }
-
-                                if let Some(commit) = BUILD_INFO.git_commit {
-                                    ui.small("Commit:");
-                                    ui.hyperlink_to(
-                                        egui::WidgetText::from(commit).monospace(),
-                                        GithubUrls::PACKAGE.commit(commit),
-                                    );
-                                }
-                            });
-
-                            ui.collapsing("Settings", |ui| {
-                                ctx.settings_ui(ui);
-                            });
-
-                            ui.collapsing("Inspection", |ui| {
-                                ctx.inspection_ui(ui);
-                            });
-
-                            ui.collapsing("Memory", |ui| {
-                                ctx.memory_ui(ui);
-                            });
-
-                            self.composer.show_debug(ui);
-                        });
-                    });
-                ui.take_available_space();
-            });
-        if debug_open != debug_open_before {
-            ctx.data_mut(|data| data.insert_persisted(debug_open_id, debug_open))
-        }
+        self.show_debug_window(ctx);
 
         self.file_dialog.update(ctx);
         if let Some(path) = self.file_dialog.take_picked() {
