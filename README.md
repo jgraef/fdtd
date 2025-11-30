@@ -4,6 +4,7 @@ This app is work-in-progress. It's intended to model electromagnetic behavior. I
 
 # TODO
 
+ - Bug: somehow even the simulation stops when app is in background, even though it runs in a completely separate thread!
  - control UI for solver:
   - share a small struct (with CondVar) to control and read stats from the solver thread.
   - i think we could even replace the solver instance if the simulation volume changes, although this was not intended.

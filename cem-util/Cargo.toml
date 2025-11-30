@@ -15,5 +15,7 @@ tracing = "0.1.43"
 wgpu = { version = "27.0.1", default-features = false, optional = true }
 
 [features]
-wgpu = ["dep:wgpu", "image", "dep:nalgebra", "dep:palette"]
+default = []
+full = ["wgpu", "image"]
+wgpu = ["dep:wgpu", "dep:nalgebra", "dep:palette"]
 image = ["dep:image"]

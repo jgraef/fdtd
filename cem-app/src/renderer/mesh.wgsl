@@ -12,7 +12,7 @@ struct Camera {
     // 8 bytes padding
 };
 
-struct Instance {
+struct InstanceData {
     transform: mat4x4f,
     instance_flags: u32,
     mesh_flags: u32,
@@ -93,7 +93,7 @@ var<uniform> camera: Camera;
 // instance data
 
 @group(0) @binding(1)
-var<storage, read> instance_buffer: array<Instance>;
+var<storage, read> instance_buffer: array<InstanceData>;
 
 // this would be for camera-independent point lights
 //@group(1) @binding(1)
@@ -106,7 +106,7 @@ var<storage, read> instance_buffer: array<Instance>;
 var<storage, read> index_buffer: array<u32>;
 
 @group(1) @binding(1)
-var<storage, read> vertex_buffer: array<Vertex>;
+var<storage, read> vertex_buffer: array<VertexData>;
 
 @group(1) @binding(2)
 var texture_sampler: sampler;
@@ -117,7 +117,7 @@ var texture_albedo: texture_2d<f32>;
 @group(1) @binding(4)
 var texture_material: texture_2d<f32>;
 
-struct Vertex {
+struct VertexData {
     position_uvx: vec4f,
     normal_uvy: vec4f,
 }
@@ -130,8 +130,7 @@ fn vs_main_solid(input: VertexInput) -> VertexOutputSolid {
     let instance = instance_buffer[input.instance_index];
     output.instance_index = input.instance_index;
 
-    let index = index_buffer[input.vertex_index];
-    let vertex_data = vertex_buffer[index];
+    let vertex_data = get_vertex_data(input.vertex_index, instance.base_vertex);
     let vertex_position = vertex_data.position_uvx.xyz;
 
     // we only actually use the combined transform, so we could pass the combined to the shader directly
@@ -153,7 +152,7 @@ fn vs_main_solid(input: VertexInput) -> VertexOutputSolid {
         }
         else {
             // FLAG_MESH_NORMALS_FROM_FACE (default)
-            vertex_normal = calculate_face_normal(input.vertex_index, vertex_position);;
+            vertex_normal = calculate_face_normal(input.vertex_index, instance.base_vertex, vertex_position);;
         }
     }
     output.world_normal = instance.transform * vec4f(vertex_normal, 0.0);
@@ -161,119 +160,132 @@ fn vs_main_solid(input: VertexInput) -> VertexOutputSolid {
     return output;
 }
 
+fn calculate_normal(v1: vec3f, v2: vec3f, v3: vec3f,) -> vec3f {
+    return cross(v2 - v1, v3 - v1);
+}
+
+// todo: we could actually do this once with a compute shader, or on cpu
+fn calculate_face_normal(vertex_index: u32, base_vertex: u32, vertex_position: vec3f) -> vec3f {
+    let first_face_vertex = (vertex_index / 3) * 3;
+    let right_neighbor_vertex_index = (vertex_index + 1) % 3 + first_face_vertex;
+    let left_neighbor_vertex_index = (vertex_index + 2) % 3 + first_face_vertex;
+
+    let face_normal = calculate_normal(
+        vertex_position,
+        get_vertex_data(right_neighbor_vertex_index, base_vertex).position_uvx.xyz,
+        get_vertex_data(left_neighbor_vertex_index, base_vertex).position_uvx.xyz,
+    );
+
+    return face_normal;
+}
+
+fn get_vertex_data(vertex_index: u32, base_vertex: u32) -> VertexData {
+    let index = index_buffer[vertex_index];
+    return vertex_buffer[base_vertex + index];
+}
+
+
 @fragment
-fn fs_main_solid(input: VertexOutputSolid, @builtin(front_facing) front_face: bool) -> FragmentOutput {
+fn fs_main_solid(input: VertexOutputSolid) -> FragmentOutput {
+    let instance = instance_buffer[input.instance_index];
+    let color = pbr_shader(input, instance);
+    return FragmentOutput(color);
+}
+
+fn pbr_shader(input: VertexOutputSolid, instance: InstanceData) -> vec4f {
     // https://learnopengl.com/PBR/Theory
     // https://learnopengl.com/PBR/Lighting
 
-    var output: FragmentOutput;
+    // uniform material
+    var albedo = instance.material.albedo.rgb;
+    var alpha = instance.material.albedo.a;
+    var metalness = instance.material.metalness;
+    var roughness = instance.material.roughness;
+    var ambient_occlusion = instance.material.ambient_occlusion;
+    var color: vec3f;
 
-    if front_face {
-        let instance = instance_buffer[input.instance_index];
-
-        // uniform material
-        var albedo = instance.material.albedo.rgb;
-        var alpha = instance.material.albedo.a;
-        var metalness = instance.material.metalness;
-        var roughness = instance.material.roughness;
-        var ambient_occlusion = instance.material.ambient_occlusion;
-        var color: vec3f;
-
-        // sample material textures
-        if (instance.material.flags & FLAG_MATERIAL_ALBEDO_TEXTURE) != 0 {
-            let albedo_and_alpha = textureSample(texture_albedo, texture_sampler, input.texture_position);
-            albedo *= albedo_and_alpha.rgb;
-            alpha *= albedo_and_alpha.a;
+    // sample material textures
+    if (instance.material.flags & FLAG_MATERIAL_ALBEDO_TEXTURE) != 0 {
+        let albedo_and_alpha = textureSample(texture_albedo, texture_sampler, input.texture_position);
+        albedo *= albedo_and_alpha.rgb;
+        alpha *= albedo_and_alpha.a;
+    }
+    if (instance.material.flags & FLAG_MATERIAL_ANY_ORM) != 0 {
+        let material = textureSample(texture_material, texture_sampler, input.texture_position);
+        if (instance.material.flags & FLAG_MATERIAL_METALLIC_TEXTURE) != 0 {
+            metalness *= material.r;
         }
-        if (instance.material.flags & FLAG_MATERIAL_ANY_ORM) != 0 {
-            let material = textureSample(texture_material, texture_sampler, input.texture_position);
-            if (instance.material.flags & FLAG_MATERIAL_METALLIC_TEXTURE) != 0 {
-                metalness *= material.r;
-            }
-            if (instance.material.flags & FLAG_MATERIAL_ROUGHNESS_TEXTURE) != 0 {
-                roughness *= material.g;
-            }
-            if (instance.material.flags & FLAG_MATERIAL_AMBIENT_OCCLUSION_TEXTURE) != 0 {
-                ambient_occlusion *= material.b;
-            }
+        if (instance.material.flags & FLAG_MATERIAL_ROUGHNESS_TEXTURE) != 0 {
+            roughness *= material.g;
         }
-
-        // discard fragments with alpha below threshold
-        if alpha < instance.material.alpha_threshold {
-            discard;
+        if (instance.material.flags & FLAG_MATERIAL_AMBIENT_OCCLUSION_TEXTURE) != 0 {
+            ambient_occlusion *= material.b;
         }
+    }
 
-        // optionally disable transparency
-        if (instance.material.flags & FLAG_MATERIAL_TRANSPARENT) == 0 {
-            alpha = 1.0;
-        }
+    // discard fragments with alpha below threshold
+    if alpha < instance.material.alpha_threshold {
+        discard;
+    }
 
-        if (instance.material.flags & FLAG_MATERIAL_SHADING) == 0 {
-            color = albedo;
-        }
-        else {
-            // some light-independent geometry
-            let world_normal = normalize(input.world_normal.xyz);
-            let view_direction = normalize(camera.world_position.xyz - input.world_position.xyz);
-            //let view_direction = normalize(input.world_position.xyz - camera.world_position.xyz);
+    // optionally disable transparency
+    if (instance.material.flags & FLAG_MATERIAL_TRANSPARENT) == 0 {
+        alpha = 1.0;
+    }
 
-            // mix between base reflectivity approximation and surface color (F_0)
-            let surface_reflection = mix(vec3(0.04), albedo, metalness);
-
-            // this is needed in `light_radiance` but can be computed once upfront
-            let n_dot_v = max(dot(world_normal, view_direction), 0.0);
-
-            // surfaces with roughness=0 won't show anything with point lights
-            // https://computergraphics.stackexchange.com/a/9126
-            const min_roughness: f32 = 0.001;
-            roughness = max(roughness, min_roughness);
-
-            // debug
-            //alpha = 1.0;
-            //ambient_occlusion = 1.0;
-            //roughness = 0.8;
-            //metalness = 0.5;
-
-            if (camera.flags & FLAG_CAMERA_AMBIENT_LIGHT) != 0 {
-                color += camera.ambient_light_color.rgb * albedo * ambient_occlusion;
-            }
-
-            // point light attached to camera
-            if (camera.flags & FLAG_CAMERA_POINT_LIGHT) != 0 {
-                color += light_radiance(
-                    camera.world_position.xyz,
-                    camera.point_light_color.rgb,
-                    input.world_position.xyz,
-                    world_normal,
-                    view_direction,
-                    albedo,
-                    roughness,
-                    metalness,
-                    surface_reflection,
-                    n_dot_v,
-                );
-            }
-
-            // todo: add other point lights
-        }
-
-        // tonemap hdr to ldr
-        if (camera.flags & FLAG_CAMERA_TONE_MAP) != 0 && (instance.material.flags & FLAG_MATERIAL_TONE_MAP) != 0 {
-            color = aces_tone_map(color);
-        }
-
-        if (instance.material.flags & FLAG_MATERIAL_GAMMA) != 0 {
-            color = gamma_correct(color);
-        }
-
-        output.color = vec4f(color, alpha);
+    if (instance.material.flags & FLAG_MATERIAL_SHADING) == 0 {
+        color = albedo;
     }
     else {
-        // for debugging purposes we'll show back-faces as pink for now
-        output.color = vec4f(1.0, 0.0, 1.0, 1.0);
+        // some light-independent geometry
+        let world_normal = normalize(input.world_normal.xyz);
+        let view_direction = normalize(camera.world_position.xyz - input.world_position.xyz);
+        //let view_direction = normalize(input.world_position.xyz - camera.world_position.xyz);
+
+        // mix between base reflectivity approximation and surface color (F_0)
+        let surface_reflection = mix(vec3(0.04), albedo, metalness);
+
+        // this is needed in `light_radiance` but can be computed once upfront
+        let n_dot_v = max(dot(world_normal, view_direction), 0.0);
+
+        // surfaces with roughness=0 won't show anything with point lights
+        // https://computergraphics.stackexchange.com/a/9126
+        const min_roughness: f32 = 0.001;
+        roughness = max(roughness, min_roughness);
+
+        if (camera.flags & FLAG_CAMERA_AMBIENT_LIGHT) != 0 {
+            color += camera.ambient_light_color.rgb * albedo * ambient_occlusion;
+        }
+
+        // point light attached to camera
+        if (camera.flags & FLAG_CAMERA_POINT_LIGHT) != 0 {
+            color += light_radiance(
+                camera.world_position.xyz,
+                camera.point_light_color.rgb,
+                input.world_position.xyz,
+                world_normal,
+                view_direction,
+                albedo,
+                roughness,
+                metalness,
+                surface_reflection,
+                n_dot_v,
+            );
+        }
+
+        // todo: add other point lights
     }
 
-    return output;
+    // tonemap hdr to ldr
+    if (camera.flags & FLAG_CAMERA_TONE_MAP) != 0 && (instance.material.flags & FLAG_MATERIAL_TONE_MAP) != 0 {
+        color = aces_tone_map(color);
+    }
+
+    if (instance.material.flags & FLAG_MATERIAL_GAMMA) != 0 {
+        color = gamma_correct(color);
+    }
+
+    return vec4f(color, alpha);
 }
 
 fn light_radiance(
@@ -435,22 +447,4 @@ fn vs_main_clear(input: VertexInput) -> VertexOutputSingleColor {
     output.color = camera.clear_color;
 
     return output;
-}
-
-fn calculate_normal(v1: vec3f, v2: vec3f, v3: vec3f,) -> vec3f {
-    return cross(v2 - v1, v3 - v1);
-}
-
-fn calculate_face_normal(vertex_index: u32, vertex_position: vec3f) -> vec3f {
-    let first_face_vertex = (vertex_index / 3) * 3;
-    let right_neighbor_vertex_index = (vertex_index + 1) % 3 + first_face_vertex;
-    let left_neighbor_vertex_index = (vertex_index + 2) % 3 + first_face_vertex;
-
-    let face_normal = calculate_normal(
-        vertex_position,
-        vertex_buffer[index_buffer[right_neighbor_vertex_index]].position_uvx.xyz,
-        vertex_buffer[index_buffer[left_neighbor_vertex_index]].position_uvx.xyz,
-    );
-
-    return face_normal;
 }

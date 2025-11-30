@@ -396,7 +396,7 @@ impl Renderer {
                 topology: wgpu::PrimitiveTopology::LineList,
                 vertex_shader_entry_point: "vs_main_wireframe",
                 fragment_shader_entry_point: "fs_main_single_color",
-                alpha_blending: false,
+                alpha_blending: true,
             },
         );
 

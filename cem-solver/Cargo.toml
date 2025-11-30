@@ -20,7 +20,7 @@ tracing = "0.1.43"
 wgpu = { version = "27.0.1", optional = true }
 
 [features]
-default = ["full"]
+default = []
 full = ["rayon", "wgpu"]
 rayon = ["dep:rayon"]
 wgpu = ["dep:wgpu", "cem-util/wgpu", "dep:bytemuck", "nalgebra/bytemuck"]
