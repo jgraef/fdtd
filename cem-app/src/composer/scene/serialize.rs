@@ -266,8 +266,19 @@ pub fn global() -> &'static EntitySerializer {
 }
 
 mod register_global {
-    use crate::composer::{
-        Selected,
+    use crate::{
+        composer::{
+            Selected,
+            scene::{
+                Label,
+                serialize::EntitySerializer,
+                transform::{
+                    GlobalTransform,
+                    LocalTransform,
+                },
+            },
+            tree::ShowInTree,
+        },
         renderer::{
             ClearColor,
             Hidden,
@@ -283,15 +294,6 @@ mod register_global {
             },
             material::Material,
         },
-        scene::{
-            Label,
-            serialize::EntitySerializer,
-            transform::{
-                GlobalTransform,
-                LocalTransform,
-            },
-        },
-        tree::ShowInTree,
     };
 
     pub(super) fn register_global(serializer: &mut EntitySerializer) {

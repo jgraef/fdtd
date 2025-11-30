@@ -60,47 +60,6 @@ use crate::{
             label_and_value_with_config,
             std::NumericPropertyUiConfig,
         },
-        renderer::{
-            camera::{
-                CameraConfig,
-                CameraResources,
-            },
-            command::{
-                Command,
-                CommandQueue,
-                CommandReceiver,
-            },
-            draw_commands::{
-                DrawCommand,
-                DrawCommandBuffer,
-                DrawCommandFlags,
-            },
-            material::{
-                AlbedoTexture,
-                Material,
-                MaterialData,
-                MaterialTexture,
-                Wireframe,
-            },
-            mesh::{
-                Mesh,
-                MeshBindGroup,
-                MeshFlags,
-                WindingOrder,
-            },
-            pipeline::{
-                clear::{
-                    ClearPipeline,
-                    ClearPipelineDescriptor,
-                },
-                mesh::{
-                    MeshPipeline,
-                    MeshPipelineDescriptor,
-                    StencilStateExt,
-                },
-            },
-            resource::RenderResourceCreator,
-        },
         scene::{
             EntityDebugLabel,
             Label,
@@ -110,6 +69,47 @@ use crate::{
     },
     debug::DebugUi,
     impl_register_component,
+    renderer::{
+        camera::{
+            CameraConfig,
+            CameraResources,
+        },
+        command::{
+            Command,
+            CommandQueue,
+            CommandReceiver,
+        },
+        draw_commands::{
+            DrawCommand,
+            DrawCommandBuffer,
+            DrawCommandFlags,
+        },
+        material::{
+            AlbedoTexture,
+            Material,
+            MaterialData,
+            MaterialTexture,
+            Wireframe,
+        },
+        mesh::{
+            Mesh,
+            MeshBindGroup,
+            MeshFlags,
+            WindingOrder,
+        },
+        pipeline::{
+            clear::{
+                ClearPipeline,
+                ClearPipelineDescriptor,
+            },
+            mesh::{
+                MeshPipeline,
+                MeshPipelineDescriptor,
+                StencilStateExt,
+            },
+        },
+        resource::RenderResourceCreator,
+    },
     util::egui::EguiUtilUiExt,
 };
 

@@ -37,14 +37,6 @@ use serde::{
 use crate::{
     composer::{
         Selectable,
-        renderer::{
-            grid::GridPlane,
-            material::Material,
-            mesh::{
-                IntoGenerateMesh,
-                LoadMesh,
-            },
-        },
         scene::{
             components::ComponentRegistry,
             serialize::SerializeEntity,
@@ -63,6 +55,14 @@ use crate::{
         tree::ShowInTree,
     },
     debug::DebugUi,
+    renderer::{
+        grid::GridPlane,
+        material::Material,
+        mesh::{
+            IntoGenerateMesh,
+            LoadMesh,
+        },
+    },
 };
 
 /// # TODO

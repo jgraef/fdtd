@@ -13,7 +13,7 @@ use bitflags::bitflags;
 use nalgebra::Point3;
 
 use crate::{
-    composer::renderer::{
+    renderer::{
         Renderer,
         Stencil,
         camera::CameraRenderInfo,

@@ -12,20 +12,18 @@ use std::{
 
 use crate::{
     Error,
-    composer::{
-        renderer::{
-            material::{
-                LoadAlbedoTexture,
-                LoadMaterialTexture,
-                TextureAndView,
-            },
-            mesh::LoadMesh,
-            resource::RenderResourceCreator,
+    composer::scene::{
+        Changed,
+        Scene,
+    },
+    renderer::{
+        material::{
+            LoadAlbedoTexture,
+            LoadMaterialTexture,
+            TextureAndView,
         },
-        scene::{
-            Changed,
-            Scene,
-        },
+        mesh::LoadMesh,
+        resource::RenderResourceCreator,
     },
 };
 

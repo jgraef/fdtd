@@ -1,4 +1,4 @@
-use crate::composer::renderer::{
+use crate::renderer::{
     DepthState,
     Renderer,
     RendererConfig,

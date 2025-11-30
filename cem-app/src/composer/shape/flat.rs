@@ -18,18 +18,18 @@ use parry3d::{
     },
 };
 
-use crate::composer::{
+use crate::{
+    composer::scene::spatial::{
+        Collider,
+        ComputeAabb,
+        PointQuery,
+        RayCast,
+    },
     renderer::mesh::{
         GenerateMesh,
         IntoGenerateMesh,
         MeshBuilder,
         WindingOrder,
-    },
-    scene::spatial::{
-        Collider,
-        ComputeAabb,
-        PointQuery,
-        RayCast,
     },
 };
 

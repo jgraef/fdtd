@@ -42,9 +42,9 @@ use crate::{
             label_and_value_with_config,
             std::NumericPropertyUiConfig,
         },
-        renderer::texture_channel::TextureReceiver,
     },
     impl_register_component,
+    renderer::texture_channel::TextureReceiver,
     util::palette::ColorExt,
 };
 
@@ -57,7 +57,7 @@ pub mod presets {
     };
     pub use pbr_presets::*;
 
-    use crate::composer::renderer::material::Material;
+    use crate::renderer::material::Material;
 
     impl From<MaterialPreset> for Material {
         fn from(value: MaterialPreset) -> Self {

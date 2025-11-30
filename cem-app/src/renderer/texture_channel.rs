@@ -13,7 +13,7 @@ use parking_lot::{
     RwLockWriteGuard,
 };
 
-use crate::composer::renderer::{
+use crate::renderer::{
     command::CommandSender,
     material::TextureAndView,
 };

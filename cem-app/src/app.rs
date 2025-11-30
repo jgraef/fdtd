@@ -25,13 +25,7 @@ use crate::{
     args::Args,
     build_info::BUILD_INFO,
     clipboard::EguiClipboardPlugin,
-    composer::{
-        Composer,
-        renderer::{
-            EguiWgpuRenderer,
-            RendererConfig,
-        },
-    },
+    composer::Composer,
     config::AppConfig,
     error::{
         ErrorDialog,
@@ -42,6 +36,10 @@ use crate::{
     menubar::{
         MenuBar,
         RecentlyOpenedFiles,
+    },
+    renderer::{
+        EguiWgpuRenderer,
+        RendererConfig,
     },
 };
 

@@ -52,17 +52,15 @@ use parry3d::{
 use crate::{
     Error,
     app::WgpuContext,
-    composer::{
-        renderer::{
-            material,
-            resource::RenderResourceCreator,
-            texture_channel::UndecidedTextureSender,
-        },
-        scene::{
-            Scene,
-            spatial::Collider,
-            transform::GlobalTransform,
-        },
+    composer::scene::{
+        Scene,
+        spatial::Collider,
+        transform::GlobalTransform,
+    },
+    renderer::{
+        material,
+        resource::RenderResourceCreator,
+        texture_channel::UndecidedTextureSender,
     },
     solver::{
         config::{

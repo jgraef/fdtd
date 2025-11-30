@@ -10,7 +10,7 @@ use palette::Srgba;
 
 use crate::{
     app::WgpuContext,
-    composer::renderer::{
+    renderer::{
         Renderer,
         command::CommandSender,
         material::TextureAndView,

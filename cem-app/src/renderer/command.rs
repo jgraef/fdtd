@@ -1,6 +1,6 @@
 use std::sync::mpsc;
 
-use crate::composer::renderer::{
+use crate::renderer::{
     draw_commands::DrawCommandInfo,
     texture_channel::CopyImageToTextureCommand,
 };

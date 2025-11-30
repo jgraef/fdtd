@@ -33,18 +33,18 @@ use crate::{
             LoadingProgress,
             LoadingState,
         },
-        renderer::{
-            Fallbacks,
-            Renderer,
-            material::{
-                AlbedoTexture,
-                MaterialTexture,
-            },
-        },
         scene::{
             Changed,
             Label,
             Scene,
+        },
+    },
+    renderer::{
+        Fallbacks,
+        Renderer,
+        material::{
+            AlbedoTexture,
+            MaterialTexture,
         },
     },
 };

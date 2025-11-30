@@ -271,23 +271,23 @@ mod builtin {
                 composer::{
                     Selectable,
                     Selected,
-                    renderer::{
-                        ClearColor,
-                        Hidden,
-                        Outline,
-                        camera::CameraConfig,
-                        light::{
-                            AmbientLight,
-                            PointLight,
-                        },
-                        material::{
-                            Material,
-                            Wireframe,
-                        },
-                    },
                     scene::transform::{
                         GlobalTransform,
                         LocalTransform,
+                    },
+                },
+                renderer::{
+                    ClearColor,
+                    Hidden,
+                    Outline,
+                    camera::CameraConfig,
+                    light::{
+                        AmbientLight,
+                        PointLight,
+                    },
+                    material::{
+                        Material,
+                        Wireframe,
                     },
                 },
                 solver::observer::Observer,

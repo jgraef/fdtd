@@ -7,20 +7,20 @@ use nalgebra::{
 };
 use parry3d::query::Ray;
 
-use crate::composer::{
-    renderer::{
-        Renderer,
-        camera::{
-            CameraProjection,
-            Viewport,
-        },
-    },
-    scene::{
+use crate::{
+    composer::scene::{
         Changed,
         Scene,
         transform::{
             GlobalTransform,
             LocalTransform,
+        },
+    },
+    renderer::{
+        Renderer,
+        camera::{
+            CameraProjection,
+            Viewport,
         },
     },
 };

@@ -6,7 +6,7 @@ use serde::{
     Serialize,
 };
 
-use crate::composer::renderer::{
+use crate::renderer::{
     Outline,
     light::{
         AmbientLight,

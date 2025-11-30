@@ -43,14 +43,6 @@ use crate::{
             label_and_value_with_config,
             std::NumericPropertyUiConfig,
         },
-        renderer::{
-            ClearColor,
-            draw_commands::DrawCommandFlags,
-            light::{
-                AmbientLight,
-                PointLight,
-            },
-        },
         scene::{
             Changed,
             Scene,
@@ -58,6 +50,14 @@ use crate::{
         },
     },
     impl_register_component,
+    renderer::{
+        ClearColor,
+        draw_commands::DrawCommandFlags,
+        light::{
+            AmbientLight,
+            PointLight,
+        },
+    },
 };
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]

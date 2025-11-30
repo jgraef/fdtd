@@ -2,7 +2,6 @@ pub mod file_formats;
 pub mod loader;
 pub mod menubar;
 pub mod properties;
-pub mod renderer;
 pub mod scene;
 pub mod shape;
 pub mod tree;
@@ -68,18 +67,6 @@ use crate::{
         loader::AssetLoader,
         menubar::ComposerMenuElements,
         properties::PropertiesUi,
-        renderer::{
-            ClearColor,
-            Outline,
-            Renderer,
-            camera::{
-                CameraConfig,
-                CameraProjection,
-                CameraRenderInfo,
-            },
-            material,
-            mesh::LoadMesh,
-        },
         scene::{
             Changed,
             EntityDebugLabel,
@@ -124,6 +111,18 @@ use crate::{
     error::ResultExt,
     impl_register_component,
     lipsum,
+    renderer::{
+        ClearColor,
+        Outline,
+        Renderer,
+        camera::{
+            CameraConfig,
+            CameraProjection,
+            CameraRenderInfo,
+        },
+        material,
+        mesh::LoadMesh,
+    },
     solver::{
         config::{
             FixedVolume,

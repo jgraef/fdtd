@@ -7,14 +7,14 @@ use nalgebra::Point3;
 use parry3d::shape::TriMesh;
 use tobj::LoadOptions;
 
-use crate::composer::{
-    renderer::material::Material,
-    scene::{
+use crate::{
+    composer::scene::{
         Label,
         PopulateScene,
         Scene,
         transform::LocalTransform,
     },
+    renderer::material::Material,
 };
 
 pub type Error = tobj::LoadError;

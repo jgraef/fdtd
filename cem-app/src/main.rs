@@ -11,6 +11,7 @@ pub mod debug;
 pub mod error;
 pub mod files;
 pub mod menubar;
+pub mod renderer;
 pub mod solver;
 pub mod start;
 pub mod util;
