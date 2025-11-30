@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["fdtd-app"]
+members = ["cem-solver", "cem-util", "cem-app"]
 
 [patch.crates-io]
 eframe = { git = "https://github.com/jgraef/egui.git", branch = "switch/wgpu-stencil-buffer" }
@@ -8,3 +8,7 @@ egui = { git = "https://github.com/jgraef/egui.git", branch = "switch/wgpu-stenc
 egui-wgpu = { git = "https://github.com/jgraef/egui.git", branch = "switch/wgpu-stencil-buffer" }
 egui-winit = { git = "https://github.com/jgraef/egui.git", branch = "switch/wgpu-stencil-buffer" }
 emath = { git = "https://github.com/jgraef/egui.git", branch = "switch/wgpu-stencil-buffer" }
+
+[workspace.dependencies]
+cem-solver = { path = "cem-solver" }
+cem-util = { path = "cem-util" }

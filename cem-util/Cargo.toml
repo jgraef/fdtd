@@ -1,0 +1,19 @@
+[package]
+name = "cem-util"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bytemuck = "1.24.0"
+humansize = "2.1.3"
+image = { version = "0.25.9", default-features = false, optional = true }
+nalgebra = { version = "0.34.1", optional = true }
+palette = { version = "0.7.6", optional = true }
+parking_lot = "0.12.5"
+thiserror = "2.0.17"
+tracing = "0.1.43"
+wgpu = { version = "27.0.1", default-features = false, optional = true }
+
+[features]
+wgpu = ["dep:wgpu", "image", "dep:nalgebra", "dep:palette"]
+image = ["dep:image"]
