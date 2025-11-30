@@ -14,7 +14,6 @@ pub mod menubar;
 pub mod renderer;
 pub mod scene;
 pub mod solver;
-pub mod start;
 pub mod util;
 
 use std::path::PathBuf;

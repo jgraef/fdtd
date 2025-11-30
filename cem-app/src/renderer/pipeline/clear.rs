@@ -81,7 +81,7 @@ impl ClearPipeline {
             },
             fragment: Some(wgpu::FragmentState {
                 module: descriptor.shader_module,
-                entry_point: Some("fs_main_single_color"),
+                entry_point: Some("fs_main_flat"),
                 compilation_options: Default::default(),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: descriptor.renderer_config.target_texture_format,

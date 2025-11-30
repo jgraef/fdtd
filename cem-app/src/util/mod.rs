@@ -10,6 +10,7 @@ use std::{
     },
     path::Path,
     sync::Arc,
+    thread::JoinHandle,
 };
 
 use directories::UserDirs;
@@ -219,4 +220,15 @@ where
     fn default() -> Self {
         Self::Owned(Default::default())
     }
+}
+
+pub fn spawn_thread<F, R>(name: impl ToString, f: F) -> JoinHandle<R>
+where
+    F: FnOnce() -> R + Send + 'static,
+    R: Send + 'static,
+{
+    std::thread::Builder::new()
+        .name(name.to_string())
+        .spawn(f)
+        .expect("std::thread::spawn failed")
 }

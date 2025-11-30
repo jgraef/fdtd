@@ -86,7 +86,10 @@ use crate::{
         },
         observer::Observer,
     },
-    util::egui::RepaintTrigger,
+    util::{
+        egui::RepaintTrigger,
+        spawn_thread,
+    },
 };
 
 #[derive(Debug)]
@@ -398,17 +401,6 @@ pub struct SolverState {
     pub observation_delay: Option<Duration>,
 }
 
-impl SolverState {
-    pub fn elapsed(&self) -> Duration {
-        if let Some(stop_time) = self.stop_time {
-            stop_time - self.start_time
-        }
-        else {
-            self.start_time.elapsed()
-        }
-    }
-}
-
 #[derive(Debug)]
 pub struct Solver {
     join_handle: JoinHandle<()>,
@@ -481,7 +473,7 @@ impl Solver {
             condition: Condvar::new(),
         });
 
-        let join_handle = std::thread::spawn({
+        let join_handle = spawn_thread("solver", {
             let shared = shared.clone();
 
             move || {
@@ -523,7 +515,6 @@ impl Solver {
                         // check if stop condition reached. if so, set flag and continue to next
                         // (and last) iteration of loop
                         if evaluate_stop_condition(&stop_condition, total_time, &state) {
-                            tracing::debug!("stop condition reached");
                             stop_condition_reached = true;
                             continue;
                         }

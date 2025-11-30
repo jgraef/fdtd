@@ -73,7 +73,7 @@ impl SolverRunner {
                         state.sim_time, state.sim_tick
                     ));
 
-                    ui.label(format!("Running Time: {:.3?}", state.elapsed()));
+                    ui.label(format!("Running Time: {:.3?}", state.total_running_time));
                     ui.label(format!("Update Time: {:.3?}", state.last_step_time));
 
                     let mut ups_slider = |label: &str, delay: Option<Duration>, max: u64| {

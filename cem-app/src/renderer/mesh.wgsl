@@ -40,11 +40,11 @@ struct PointLight {
 }
 
 
-const FLAG_MESH_UVS                    = 0x00000001;
-const FLAG_MESH_NORMALS                = 0x00000002;
-const FLAG_MESH_NORMALS_GENERATOR_MASK = 0xff000000;
-const FLAG_MESH_NORMALS_FROM_FACE      = 0x01000000;
-const FLAG_MESH_NORMALS_FROM_VERTEX    = 0x02000000;
+const FLAG_MESH_UVS: u32                    = 0x00000001;
+const FLAG_MESH_NORMALS: u32                = 0x00000002;
+const FLAG_MESH_NORMALS_GENERATOR_MASK: u32 = 0xff000000;
+const FLAG_MESH_NORMALS_FROM_FACE: u32      = 0x01000000;
+const FLAG_MESH_NORMALS_FROM_VERTEX: u32    = 0x02000000;
 
 const FLAG_MATERIAL_ALBEDO_TEXTURE: u32            = 0x00000001;
 const FLAG_MATERIAL_METALLIC_TEXTURE: u32          = 0x00000002;
@@ -57,8 +57,8 @@ const FLAG_MATERIAL_TONE_MAP: u32                  = 0x00000040;
 const FLAG_MATERIAL_GAMMA: u32                     = 0x00000080;
 
 const FLAG_CAMERA_AMBIENT_LIGHT: u32 = 0x01;
-const FLAG_CAMERA_POINT_LIGHT: u32 = 0x02;
-const FLAG_CAMERA_TONE_MAP: u32 = 0x04;
+const FLAG_CAMERA_POINT_LIGHT: u32   = 0x02;
+const FLAG_CAMERA_TONE_MAP: u32      = 0x04;
 
 struct VertexInput {
     @builtin(vertex_index) vertex_index: u32,
@@ -74,7 +74,7 @@ struct VertexOutputSolid {
     //@location(4) @interpolate(flat, either) vertex_output_flags: u32,
 }
 
-struct VertexOutputSingleColor {
+struct VertexOutputFlat {
     @builtin(position) fragment_position: vec4f,
     @location(0) color: vec4f,
 }
@@ -164,7 +164,6 @@ fn calculate_normal(v1: vec3f, v2: vec3f, v3: vec3f,) -> vec3f {
     return cross(v2 - v1, v3 - v1);
 }
 
-// todo: we could actually do this once with a compute shader, or on cpu
 fn calculate_face_normal(vertex_index: u32, base_vertex: u32, vertex_position: vec3f) -> vec3f {
     let first_face_vertex = (vertex_index / 3) * 3;
     let right_neighbor_vertex_index = (vertex_index + 1) % 3 + first_face_vertex;
@@ -375,7 +374,7 @@ fn gamma_correct(color: vec3f) -> vec3f {
 }
 
 @vertex
-fn vs_main_wireframe(input: VertexInput) -> VertexOutputSingleColor {
+fn vs_main_wireframe(input: VertexInput) -> VertexOutputFlat {
     let instance = instance_buffer[input.instance_index];
 
     /*
@@ -402,23 +401,22 @@ fn vs_main_wireframe(input: VertexInput) -> VertexOutputSingleColor {
     vertex_index = index_buffer[vertex_index];
     let vertex_position = vertex_buffer[vertex_index].position_uvx.xyz;
 
-    var output: VertexOutputSingleColor;
+    var output: VertexOutputFlat;
     output.color = instance.material.wireframe;
     output.fragment_position = camera.projection * camera.transform * instance.transform * vec4f(vertex_position, 1.0);
 
     return output;
 }
 
-// note: almost completely identical to vs_main_wireframe
 @vertex
-fn vs_main_outline(input: VertexInput) -> VertexOutputSingleColor {
+fn vs_main_outline(input: VertexInput) -> VertexOutputFlat {
     let instance = instance_buffer[input.instance_index];
 
     let vertex_index = index_buffer[input.vertex_index];
     let vertex_position = vertex_buffer[vertex_index].position_uvx.xyz;
     let scaling = 1.0 + instance.outline_thickness;
 
-    var output: VertexOutputSingleColor;
+    var output: VertexOutputFlat;
     output.color = instance.outline_color;
     output.fragment_position = camera.projection * camera.transform * instance.transform * vec4f(vertex_position, 1.0 / scaling);
 
@@ -427,15 +425,15 @@ fn vs_main_outline(input: VertexInput) -> VertexOutputSingleColor {
 
 
 @fragment
-fn fs_main_single_color(input: VertexOutputSingleColor) -> FragmentOutput {
+fn fs_main_flat(input: VertexOutputFlat) -> FragmentOutput {
     var output: FragmentOutput;
     output.color = input.color;
     return output;
 }
 
 @vertex
-fn vs_main_clear(input: VertexInput) -> VertexOutputSingleColor {
-    var output: VertexOutputSingleColor;
+fn vs_main_clear(input: VertexInput) -> VertexOutputFlat {
+    var output: VertexOutputFlat;
 
     output.fragment_position = vec4f(
         f32((input.vertex_index & 1) << 2) - 1.0,

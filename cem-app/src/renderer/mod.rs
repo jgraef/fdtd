@@ -395,7 +395,7 @@ impl Renderer {
                 stencil_state: Default::default(),
                 topology: wgpu::PrimitiveTopology::LineList,
                 vertex_shader_entry_point: "vs_main_wireframe",
-                fragment_shader_entry_point: "fs_main_single_color",
+                fragment_shader_entry_point: "fs_main_flat",
                 alpha_blending: true,
             },
         );
@@ -421,7 +421,7 @@ impl Renderer {
                 ),
                 topology: wgpu::PrimitiveTopology::TriangleList,
                 vertex_shader_entry_point: "vs_main_outline",
-                fragment_shader_entry_point: "fs_main_single_color",
+                fragment_shader_entry_point: "fs_main_flat",
                 alpha_blending: true,
             },
         );

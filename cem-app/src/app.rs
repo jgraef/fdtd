@@ -125,6 +125,13 @@ pub(super) fn run_app(args: Args) -> Result<(), Error> {
                     }
                     SurfaceErrorAction::SkipFrame
                 }),
+                // eframe uses AutoVsync by default, but this causes issues: when the window is not
+                // visible, `SurfaceTexture::present` will block while the queue is locked, causing
+                // all other calls to wgpu that use the queue to hang. Specifically this causes a
+                // wgpu-based solver to hang while the window is not visible.
+                //
+                // https://github.com/gfx-rs/wgpu/issues/8597
+                present_mode: wgpu::PresentMode::Mailbox,
                 wgpu_setup: WgpuSetup::CreateNew(WgpuSetupCreateNew {
                     instance_descriptor: wgpu::InstanceDescriptor {
                         backends: config.graphics.backends,
