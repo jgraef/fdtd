@@ -3,17 +3,10 @@
 
 pub mod app;
 pub mod build_info;
-pub mod fdtd;
-pub mod feec;
-pub mod file_formats;
 pub mod geometry;
 pub mod util;
 
-use std::{
-    fs::File,
-    io::BufReader,
-    path::PathBuf,
-};
+use std::path::PathBuf;
 
 use clap::{
     Parser,
@@ -26,10 +19,7 @@ use color_eyre::eyre::{
 use dotenvy::dotenv;
 use tracing_subscriber::EnvFilter;
 
-use crate::{
-    app::config::AppConfig,
-    file_formats::nec::NecFile,
-};
+use crate::app::config::AppConfig;
 
 fn main() -> Result<(), Error> {
     let _ = dotenv();
@@ -43,14 +33,6 @@ fn main() -> Result<(), Error> {
     match args.command {
         Command::Main(args) => {
             args.run()?;
-        }
-        Command::Fdtd(args) => {
-            args.run()?;
-        }
-        Command::ReadNec { file } => {
-            let reader = BufReader::new(File::open(&file)?);
-            let nec = NecFile::from_reader(reader)?;
-            println!("{nec:#?}");
         }
         Command::DumpDefaultConfig { output, format } => {
             let config = AppConfig::default();
@@ -81,10 +63,6 @@ struct Args {
 enum Command {
     // the main app, the other's are just temporary for testing purposes
     Main(app::args::Args),
-    Fdtd(fdtd::Args),
-    ReadNec {
-        file: PathBuf,
-    },
     DumpDefaultConfig {
         #[clap(short, long)]
         output: Option<PathBuf>,

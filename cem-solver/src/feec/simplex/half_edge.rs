@@ -76,7 +76,7 @@ make_handle!(FaceHandle);
 
 impl<V, E, F> HalfEdgeMesh<V, E, F> {
     pub fn from_trimesh(
-        triangles: impl Iterator<Item = [u32; 3]>,
+        triangles: impl IntoIterator<Item = [u32; 3]>,
         mut vertex: impl FnMut(u32) -> V,
         mut edge: impl FnMut([u32; 2]) -> E,
         mut face: impl FnMut([u32; 3]) -> F,

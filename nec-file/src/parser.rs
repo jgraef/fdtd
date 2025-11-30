@@ -5,16 +5,14 @@ use std::{
 
 use arrayvec::ArrayVec;
 
-use crate::file_formats::nec::{
+use crate::card::{
+    CardHandler,
+    CardType,
     GroundPlaneFlag,
+    Section,
     SurfacePatchSpecification,
+    Tag,
     WireSegments,
-    card::{
-        CardHandler,
-        CardType,
-        Section,
-        Tag,
-    },
 };
 
 #[derive(Debug, thiserror::Error)]

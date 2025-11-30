@@ -14,7 +14,7 @@ use nalgebra::{
     Vector3,
 };
 
-use crate::file_formats::nec::{
+use crate::{
     card::{
         CardHandler,
         GroundPlaneFlag,

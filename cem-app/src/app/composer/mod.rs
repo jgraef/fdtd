@@ -1,3 +1,4 @@
+pub mod file_formats;
 pub mod loader;
 pub mod menubar;
 pub mod properties;
@@ -43,6 +44,7 @@ use nalgebra::{
     Vector2,
     Vector3,
 };
+use nec_file::NecFile;
 use palette::WithAlpha;
 use parry3d::shape::{
     Ball,
@@ -57,6 +59,11 @@ use crate::{
     Error,
     app::{
         composer::{
+            file_formats::{
+                FileFormat,
+                guess_file_format_from_path,
+                nec::PopulateWithNec,
+            },
             loader::AssetLoader,
             menubar::ComposerMenuElements,
             properties::PropertiesUi,
@@ -133,14 +140,6 @@ use crate::{
             ui::SolverConfigUiWindow,
         },
         start::CreateAppContext,
-    },
-    file_formats::{
-        FileFormat,
-        guess_file_format_from_path,
-        nec::{
-            NecFile,
-            PopulateWithNec,
-        },
     },
     impl_register_component,
     lipsum,

@@ -1,12 +1,3 @@
-use std::{
-    f32,
-    path::Path,
-};
-
-use color_eyre::eyre::{
-    Error,
-    OptionExt,
-};
 use nalgebra::{
     Matrix3,
     Point2,
@@ -15,55 +6,27 @@ use nalgebra::{
     Vector2,
 };
 
-use crate::geometry::simplex::half_edge::{
+use crate::feec::simplex::half_edge::{
     Boundary,
     Coboundary,
     HalfEdgeMesh,
 };
 
-fn load_mesh(path: impl AsRef<Path>) -> Result<HalfEdgeMesh<Vertex, Edge, Face>, Error> {
-    let (models, _) = tobj::load_obj(path.as_ref(), &Default::default())?;
-    let model = models.into_iter().next().ok_or_eyre("no models")?;
-    tracing::debug!("loading mesh: {}", model.name);
-    assert!(model.mesh.face_arities.is_empty());
-
-    let mesh = HalfEdgeMesh::from_trimesh(
-        model
-            .mesh
-            .indices
-            .chunks_exact(3)
-            .map(|indices| indices.try_into().unwrap()),
-        |index| {
-            Vertex {
-                position: Point3::new(
-                    model.mesh.positions[index as usize * 3],
-                    model.mesh.positions[index as usize * 3 + 1],
-                    model.mesh.positions[index as usize * 3 + 2],
-                ),
-            }
-        },
-        |_| Edge::default(),
-        |_| Face::default(),
-    );
-
-    Ok(mesh)
-}
-
 #[derive(Clone, Debug)]
-struct Vertex {
-    position: Point3<f32>,
+pub struct Vertex {
+    pub position: Point3<f64>,
 }
 
 #[derive(Clone, Debug, Default)]
-struct Edge {
-    electric_field: RowVector3<f64>,
-    epsilon_inv: Matrix3<f64>,
+pub struct Edge {
+    pub electric_field: RowVector3<f64>,
+    pub epsilon_inv: Matrix3<f64>,
 }
 
 #[derive(Clone, Debug, Default)]
-struct Face {
-    magnetic_field: RowVector3<f64>,
-    mu_inv: Matrix3<f64>,
+pub struct Face {
+    pub magnetic_field: RowVector3<f64>,
+    pub mu_inv: Matrix3<f64>,
 }
 
 pub struct Simulation {
@@ -72,6 +35,24 @@ pub struct Simulation {
 }
 
 impl Simulation {
+    pub fn from_tri_mesh(
+        indices: impl IntoIterator<Item = [u32; 3]>,
+        vertex: impl Fn(u32) -> Point3<f64>,
+    ) -> Self {
+        let mesh = HalfEdgeMesh::from_trimesh(
+            indices,
+            |index| {
+                Vertex {
+                    position: vertex(index),
+                }
+            },
+            |_| Edge::default(),
+            |_| Face::default(),
+        );
+
+        Self { mesh, dt: 0.0 }
+    }
+
     pub fn step(&mut self) {
         // update magnetic field
         for face in self.mesh.faces() {
@@ -127,7 +108,7 @@ fn generate_test_mesh() -> HalfEdgeMesh<Vertex, Edge, Face> {
         |i| {
             let r = index_to_xy(i);
             Vertex {
-                position: Point3::new(r.x as f32, r.y as f32, 0.0),
+                position: Point3::new(r.x, r.y, 0).cast(),
             }
         },
         |i| {
@@ -147,3 +128,28 @@ fn generate_test_mesh() -> HalfEdgeMesh<Vertex, Edge, Face> {
         },
     )
 }
+
+/*
+fn load_obj_file(path: impl AsRef<Path>) -> Result<Simulation, tobj::Error> {
+    let (models, _) = tobj::load_obj(path.as_ref(), &Default::default())?;
+    let model = models.into_iter().next().ok_or_eyre("no models")?;
+    tracing::debug!("loading mesh: {}", model.name);
+    assert!(model.mesh.face_arities.is_empty());
+
+    Ok(Simulation::from_tri_mesh(
+        model
+            .mesh
+            .indices
+            .chunks_exact(3)
+            .map(|indices| indices.try_into().unwrap()),
+        |index| {
+            Point3::new(
+                model.mesh.positions[index as usize * 3],
+                model.mesh.positions[index as usize * 3 + 1],
+                model.mesh.positions[index as usize * 3 + 2],
+            )
+            .cast()
+        },
+    ))
+}
+*/

@@ -1,4 +1,7 @@
+#![deny(clippy::todo)]
+
 pub mod fdtd;
+pub mod feec;
 pub mod material;
 pub mod project;
 pub mod source;

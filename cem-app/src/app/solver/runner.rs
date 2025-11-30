@@ -426,10 +426,16 @@ impl<'a, 'b> SceneDomainDescription<'a, 'b> {
     ) -> Self {
         // access to the material properties
         let mut materials = scene.entities.view::<&Material>();
+        let mut any_materials = false;
         for (entity, material) in materials.iter_mut() {
             if let Ok(collider) = scene.entities.get::<&Collider>(entity) {
                 tracing::debug!(?entity, ?collider, ?material, "found material");
+                any_materials = true;
             }
+        }
+
+        if !any_materials {
+            tracing::warn!("Did not find any materials in the simulation volume");
         }
 
         let mut pmls = scene

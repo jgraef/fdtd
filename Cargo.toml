@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["cem-solver", "cem-util", "cem-app"]
+members = ["cem-solver", "cem-util", "cem-app", "nec-file"]
 
 [patch.crates-io]
 eframe = { git = "https://github.com/jgraef/egui.git", branch = "switch/wgpu-stencil-buffer" }
@@ -12,3 +12,4 @@ emath = { git = "https://github.com/jgraef/egui.git", branch = "switch/wgpu-sten
 [workspace.dependencies]
 cem-solver = { path = "cem-solver" }
 cem-util = { path = "cem-util" }
+nec-file = { path = "nec-file" }
