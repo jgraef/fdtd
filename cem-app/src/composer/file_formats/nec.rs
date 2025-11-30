@@ -16,13 +16,13 @@ use nec_file::{
 use parry3d::shape::Cylinder;
 
 use crate::{
-    composer::scene::{
+    renderer::material::Material,
+    scene::{
         PopulateScene,
         Scene,
         Spawn,
         transform::LocalTransform,
     },
-    renderer::material::Material,
 };
 
 #[derive(Clone, Copy, Debug)]

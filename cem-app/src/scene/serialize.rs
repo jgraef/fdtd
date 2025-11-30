@@ -269,14 +269,6 @@ mod register_global {
     use crate::{
         composer::{
             Selected,
-            scene::{
-                Label,
-                serialize::EntitySerializer,
-                transform::{
-                    GlobalTransform,
-                    LocalTransform,
-                },
-            },
             tree::ShowInTree,
         },
         renderer::{
@@ -293,6 +285,14 @@ mod register_global {
                 PointLight,
             },
             material::Material,
+        },
+        scene::{
+            Label,
+            serialize::EntitySerializer,
+            transform::{
+                GlobalTransform,
+                LocalTransform,
+            },
         },
     };
 

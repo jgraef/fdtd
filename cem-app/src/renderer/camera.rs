@@ -35,20 +35,6 @@ use serde::{
 use wgpu::util::DeviceExt;
 
 use crate::{
-    composer::{
-        properties::{
-            PropertiesUi,
-            TrackChanges,
-            label_and_value,
-            label_and_value_with_config,
-            std::NumericPropertyUiConfig,
-        },
-        scene::{
-            Changed,
-            Scene,
-            transform::GlobalTransform,
-        },
-    },
     impl_register_component,
     renderer::{
         ClearColor,
@@ -57,6 +43,18 @@ use crate::{
             AmbientLight,
             PointLight,
         },
+    },
+    scene::{
+        Changed,
+        Scene,
+        transform::GlobalTransform,
+    },
+    util::egui::probe::{
+        PropertiesUi,
+        TrackChanges,
+        label_and_value,
+        label_and_value_with_config,
+        std::NumericPropertyUiConfig,
     },
 };
 

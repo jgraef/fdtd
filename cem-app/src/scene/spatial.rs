@@ -23,19 +23,17 @@ use parry3d::{
 };
 
 use crate::{
-    composer::{
-        properties::{
-            PropertiesUi,
-            TrackChanges,
-            label_and_value,
-        },
-        scene::{
-            Changed,
-            transform::GlobalTransform,
-        },
-    },
     debug::DebugUi,
     impl_register_component,
+    scene::{
+        Changed,
+        transform::GlobalTransform,
+    },
+    util::egui::probe::{
+        PropertiesUi,
+        TrackChanges,
+        label_and_value,
+    },
 };
 
 #[derive(derive_more::Debug, Default)]
@@ -419,7 +417,7 @@ impl_register_component!(Aabb where ComponentUi);
 mod tests {
     use parry3d::shape::Ball;
 
-    use crate::composer::scene::{
+    use crate::scene::{
         GlobalTransform,
         spatial::{
             Collider,

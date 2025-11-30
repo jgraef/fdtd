@@ -12,10 +12,6 @@ use std::{
 
 use crate::{
     Error,
-    composer::scene::{
-        Changed,
-        Scene,
-    },
     renderer::{
         material::{
             LoadAlbedoTexture,
@@ -24,6 +20,10 @@ use crate::{
         },
         mesh::LoadMesh,
         resource::RenderResourceCreator,
+    },
+    scene::{
+        Changed,
+        Scene,
     },
 };
 

@@ -2,15 +2,15 @@ pub use std::any::type_name;
 
 use hecs_hierarchy::Hierarchy;
 
-use crate::composer::{
-    EntityWindow,
-    properties::PropertiesUi,
+use crate::{
+    composer::EntityWindow,
     scene::{
         Changed,
         EntityDebugLabel,
         Label,
         Scene,
     },
+    util::egui::probe::PropertiesUi,
 };
 
 #[derive(derive_more::Debug)]

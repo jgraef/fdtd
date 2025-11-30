@@ -14,8 +14,8 @@ use serde::{
     Serialize,
 };
 
-use crate::composer::{
-    ComposerState,
+use crate::{
+    composer::ComposerState,
     scene::{
         EntityDebugLabel,
         Label,

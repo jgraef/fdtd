@@ -8,13 +8,6 @@ use cem_solver::{
 use nalgebra::Vector3;
 
 use crate::{
-    composer::properties::{
-        HasChangeValue,
-        PropertiesUi,
-        PropertiesUiExt,
-        TrackChanges,
-        label_and_value,
-    },
     impl_register_component,
     solver::config::{
         FixedVolume,
@@ -25,6 +18,13 @@ use crate::{
         SolverConfigSpecifics,
         StopCondition,
         Volume,
+    },
+    util::egui::probe::{
+        HasChangeValue,
+        PropertiesUi,
+        PropertiesUiExt,
+        TrackChanges,
+        label_and_value,
     },
 };
 

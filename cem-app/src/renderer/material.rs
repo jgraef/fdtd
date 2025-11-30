@@ -25,16 +25,18 @@ use serde::{
 
 use crate::{
     Error,
-    composer::{
-        loader::{
-            AndChanged,
-            ImageInfo,
-            LoadAsset,
-            LoaderContext,
-            LoadingProgress,
-            LoadingState,
-        },
-        properties::{
+    composer::loader::{
+        AndChanged,
+        ImageInfo,
+        LoadAsset,
+        LoaderContext,
+        LoadingProgress,
+        LoadingState,
+    },
+    impl_register_component,
+    renderer::texture_channel::TextureReceiver,
+    util::{
+        egui::probe::{
             HasChangeValue,
             PropertiesUi,
             TrackChanges,
@@ -42,10 +44,8 @@ use crate::{
             label_and_value_with_config,
             std::NumericPropertyUiConfig,
         },
+        palette::ColorExt,
     },
-    impl_register_component,
-    renderer::texture_channel::TextureReceiver,
-    util::palette::ColorExt,
 };
 
 pub mod presets {

@@ -13,12 +13,12 @@ use serde::{
 };
 
 use crate::{
-    composer::properties::{
+    impl_register_component,
+    util::egui::probe::{
         PropertiesUi,
         TrackChanges,
         label_and_value,
     },
-    impl_register_component,
 };
 
 /// A point light source.

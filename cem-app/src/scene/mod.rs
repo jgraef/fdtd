@@ -3,8 +3,6 @@ pub mod components;
 pub mod serialize;
 pub mod spatial;
 pub mod transform;
-pub mod ui;
-pub mod undo;
 
 use std::{
     any::type_name,
@@ -37,21 +35,6 @@ use serde::{
 use crate::{
     composer::{
         Selectable,
-        scene::{
-            components::ComponentRegistry,
-            serialize::SerializeEntity,
-            spatial::{
-                Collider,
-                RayHit,
-                SpatialQueries,
-                merge_aabbs,
-            },
-            transform::{
-                GlobalTransform,
-                LocalTransform,
-                TransformHierarchyUpdater,
-            },
-        },
         tree::ShowInTree,
     },
     debug::DebugUi,
@@ -61,6 +44,21 @@ use crate::{
         mesh::{
             IntoGenerateMesh,
             LoadMesh,
+        },
+    },
+    scene::{
+        components::ComponentRegistry,
+        serialize::SerializeEntity,
+        spatial::{
+            Collider,
+            RayHit,
+            SpatialQueries,
+            merge_aabbs,
+        },
+        transform::{
+            GlobalTransform,
+            LocalTransform,
+            TransformHierarchyUpdater,
         },
     },
 };

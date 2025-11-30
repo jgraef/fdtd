@@ -29,19 +29,21 @@ use nalgebra::{
 };
 
 use crate::{
-    composer::properties::{
-        PropertiesUi,
-        TrackChanges,
-        label_and_value,
-        label_and_value_with_config,
-    },
     impl_register_component,
     renderer::texture_channel::{
         ImageSender,
         TextureSender,
         UndecidedTextureSender,
     },
-    util::egui::FilePickerConfig,
+    util::egui::{
+        FilePickerConfig,
+        probe::{
+            PropertiesUi,
+            TrackChanges,
+            label_and_value,
+            label_and_value_with_config,
+        },
+    },
 };
 
 #[derive(Clone, Debug)]

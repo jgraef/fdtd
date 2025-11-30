@@ -11,7 +11,7 @@ use std::{
     fmt::Debug,
 };
 
-use crate::composer::scene::ui::{
+use crate::composer::entity::{
     ComponentUi,
     ComponentWidget,
 };
@@ -233,9 +233,9 @@ macro_rules! impl_register_component {
     // begin impl with a given list of params.
     // this needs to pass the builder into the muncher
     (@begin($ty:ty, [$($params:tt)*])) => {
-        impl $crate::composer::scene::components::RegisterComponent for $ty {
+        impl $crate::scene::components::RegisterComponent for $ty {
             #[allow(unused_variables)]
-            fn register(builder: &mut $crate::composer::scene::components::RegisteredComponentBuilder) {
+            fn register(builder: &mut $crate::scene::components::RegisteredComponentBuilder) {
                 builder.register_display_name(stringify!($ty));
                 impl_register_component!(@munch($ty, [$($params)*], builder, {}));
             }
@@ -271,10 +271,6 @@ mod builtin {
                 composer::{
                     Selectable,
                     Selected,
-                    scene::transform::{
-                        GlobalTransform,
-                        LocalTransform,
-                    },
                 },
                 renderer::{
                     ClearColor,
@@ -289,6 +285,10 @@ mod builtin {
                         Material,
                         Wireframe,
                     },
+                },
+                scene::transform::{
+                    GlobalTransform,
+                    LocalTransform,
                 },
                 solver::observer::Observer,
             };

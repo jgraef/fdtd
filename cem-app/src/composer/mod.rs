@@ -1,10 +1,10 @@
+pub mod entity;
 pub mod file_formats;
 pub mod loader;
 pub mod menubar;
-pub mod properties;
-pub mod scene;
 pub mod shape;
 pub mod tree;
+pub mod undo;
 pub mod view;
 
 use std::{
@@ -59,6 +59,7 @@ use crate::{
     Error,
     app::CreateAppContext,
     composer::{
+        entity::EntityPropertiesWindow,
         file_formats::{
             FileFormat,
             guess_file_format_from_path,
@@ -66,30 +67,6 @@ use crate::{
         },
         loader::AssetLoader,
         menubar::ComposerMenuElements,
-        properties::PropertiesUi,
-        scene::{
-            Changed,
-            EntityDebugLabel,
-            Label,
-            PopulateScene,
-            Scene,
-            Spawn,
-            serialize::DeserializeEntity,
-            spatial::Collider,
-            transform::{
-                GlobalTransform,
-                LocalTransform,
-            },
-            ui::{
-                self as scene_ui,
-                EntityPropertiesWindow,
-            },
-            undo::{
-                HadesId,
-                UndoAction,
-                UndoBuffer,
-            },
-        },
         shape::flat::{
             Quad,
             QuadMeshConfig,
@@ -97,6 +74,11 @@ use crate::{
         tree::{
             ObjectTreeState,
             ShowInTree,
+        },
+        undo::{
+            HadesId,
+            UndoAction,
+            UndoBuffer,
         },
         view::{
             ScenePointer,
@@ -123,6 +105,20 @@ use crate::{
         material,
         mesh::LoadMesh,
     },
+    scene::{
+        Changed,
+        EntityDebugLabel,
+        Label,
+        PopulateScene,
+        Scene,
+        Spawn,
+        serialize::DeserializeEntity,
+        spatial::Collider,
+        transform::{
+            GlobalTransform,
+            LocalTransform,
+        },
+    },
     solver::{
         config::{
             FixedVolume,
@@ -144,6 +140,7 @@ use crate::{
     util::egui::{
         EguiUtilContextExt,
         EguiUtilUiExt,
+        probe::PropertiesUi,
     },
 };
 
@@ -591,7 +588,7 @@ impl ComposerState {
                         *entity,
                     )
                     .deletable(window.despawn_button)
-                    .show(ctx, scene_ui::default_title);
+                    .show(ctx, entity::default_title);
                 }
 
                 self.scene.apply_deferred();

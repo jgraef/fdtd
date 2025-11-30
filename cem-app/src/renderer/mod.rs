@@ -52,21 +52,6 @@ use crate::{
         CreateAppContext,
         WgpuContext,
     },
-    composer::{
-        properties::{
-            PropertiesUi,
-            TrackChanges,
-            label_and_value,
-            label_and_value_with_config,
-            std::NumericPropertyUiConfig,
-        },
-        scene::{
-            EntityDebugLabel,
-            Label,
-            Scene,
-            transform::GlobalTransform,
-        },
-    },
     debug::DebugUi,
     impl_register_component,
     renderer::{
@@ -110,7 +95,22 @@ use crate::{
         },
         resource::RenderResourceCreator,
     },
-    util::egui::EguiUtilUiExt,
+    scene::{
+        EntityDebugLabel,
+        Label,
+        Scene,
+        transform::GlobalTransform,
+    },
+    util::egui::{
+        EguiUtilUiExt,
+        probe::{
+            PropertiesUi,
+            TrackChanges,
+            label_and_value,
+            label_and_value_with_config,
+            std::NumericPropertyUiConfig,
+        },
+    },
 };
 
 /// Tag for entities that should be rendered

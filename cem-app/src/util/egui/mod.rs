@@ -1,5 +1,4 @@
-//! Source code example of how to create your own widget.
-//! This is meant to be read as a tutorial, hence the plethora of comments.
+pub mod probe;
 
 use std::{
     path::{

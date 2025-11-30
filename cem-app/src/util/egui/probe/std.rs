@@ -5,14 +5,12 @@ use std::{
 
 use egui::emath;
 
-use crate::{
-    composer::properties::PropertiesUi,
-    util::{
-        Moo,
-        egui::{
-            EguiUtilUiExt,
-            FilePickerConfig,
-        },
+use crate::util::{
+    Moo,
+    egui::{
+        EguiUtilUiExt,
+        FilePickerConfig,
+        probe::PropertiesUi,
     },
 };
 

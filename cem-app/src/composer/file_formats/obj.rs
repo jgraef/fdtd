@@ -8,13 +8,13 @@ use parry3d::shape::TriMesh;
 use tobj::LoadOptions;
 
 use crate::{
-    composer::scene::{
+    renderer::material::Material,
+    scene::{
         Label,
         PopulateScene,
         Scene,
         transform::LocalTransform,
     },
-    renderer::material::Material,
 };
 
 pub type Error = tobj::LoadError;

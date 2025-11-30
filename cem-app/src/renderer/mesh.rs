@@ -26,18 +26,11 @@ use wgpu::util::DeviceExt;
 
 use crate::{
     Error,
-    composer::{
-        loader::{
-            LoadAsset,
-            LoaderContext,
-            LoadingProgress,
-            LoadingState,
-        },
-        scene::{
-            Changed,
-            Label,
-            Scene,
-        },
+    composer::loader::{
+        LoadAsset,
+        LoaderContext,
+        LoadingProgress,
+        LoadingState,
     },
     renderer::{
         Fallbacks,
@@ -46,6 +39,11 @@ use crate::{
             AlbedoTexture,
             MaterialTexture,
         },
+    },
+    scene::{
+        Changed,
+        Label,
+        Scene,
     },
 };
 

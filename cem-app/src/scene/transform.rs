@@ -15,11 +15,9 @@ use serde::{
 };
 
 use crate::{
-    composer::{
-        properties::PropertiesUi,
-        scene::Changed,
-    },
     impl_register_component,
+    scene::Changed,
+    util::egui::probe::PropertiesUi,
 };
 
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]

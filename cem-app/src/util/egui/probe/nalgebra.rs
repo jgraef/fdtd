@@ -8,7 +8,7 @@ use nalgebra::{
     Vector3,
 };
 
-use crate::composer::properties::{
+use crate::util::egui::probe::{
     PropertiesUi,
     TrackChanges,
     std::DragAngle,

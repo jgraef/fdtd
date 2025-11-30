@@ -1,8 +1,8 @@
 use std::collections::VecDeque;
 
 use crate::{
-    composer::scene::Scene,
     debug::DebugUi,
+    scene::Scene,
 };
 
 #[derive(derive_more::Debug)]
