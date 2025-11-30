@@ -1,4 +1,3 @@
-pub mod arena;
 pub mod egui;
 pub mod palette;
 pub mod serde;

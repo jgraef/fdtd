@@ -20,7 +20,7 @@ use egui_file_dialog::{
 use parking_lot::Mutex;
 
 use crate::{
-    app::start::WgpuContext,
+    app::WgpuContext,
     util::{
         FormatPath,
         format_path,

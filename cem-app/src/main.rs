@@ -2,8 +2,17 @@
 #![allow(clippy::explicit_counter_loop)]
 
 pub mod app;
+pub mod args;
 pub mod build_info;
-pub mod geometry;
+pub mod clipboard;
+pub mod composer;
+pub mod config;
+pub mod debug;
+pub mod error;
+pub mod files;
+pub mod menubar;
+pub mod solver;
+pub mod start;
 pub mod util;
 
 use std::path::PathBuf;
@@ -19,7 +28,7 @@ use color_eyre::eyre::{
 use dotenvy::dotenv;
 use tracing_subscriber::EnvFilter;
 
-use crate::app::config::AppConfig;
+use crate::config::AppConfig;
 
 fn main() -> Result<(), Error> {
     let _ = dotenv();
@@ -31,9 +40,7 @@ fn main() -> Result<(), Error> {
 
     let args = Args::parse();
     match args.command {
-        Command::Main(args) => {
-            args.run()?;
-        }
+        Command::Main(args) => crate::app::run_app(args)?,
         Command::DumpDefaultConfig { output, format } => {
             let config = AppConfig::default();
             let config = match format.as_str() {
@@ -62,7 +69,7 @@ struct Args {
 #[derive(Debug, Subcommand)]
 enum Command {
     // the main app, the other's are just temporary for testing purposes
-    Main(app::args::Args),
+    Main(crate::args::Args),
     DumpDefaultConfig {
         #[clap(short, long)]
         output: Option<PathBuf>,
