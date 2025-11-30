@@ -64,7 +64,7 @@ where
         let _ = state;
         ImageProjection {
             target,
-            parameters: *parameters,
+            parameters: parameters.clone(),
         }
     }
 }
@@ -109,7 +109,7 @@ where
 
         TextureSenderProjection {
             image_sender,
-            parameters: *parameters,
+            parameters: parameters.clone(),
         }
     }
 }

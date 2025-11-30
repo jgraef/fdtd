@@ -1,12 +1,6 @@
 use std::{
-    collections::{
-        HashMap,
-        hash_map,
-    },
-    sync::{
-        Arc,
-        Weak,
-    },
+    hash::Hash,
+    sync::Arc,
 };
 
 use bytemuck::{
@@ -17,39 +11,41 @@ use nalgebra::Matrix4;
 use parking_lot::Mutex;
 use wgpu::util::DeviceExt;
 
-use crate::app::{
-    composer::renderer::texture_channel::{
-        TextureSender,
-        UndecidedTextureSender,
-    },
-    solver::{
-        fdtd::{
-            util::{
-                SwapBuffer,
-                SwapBufferIndex,
+use crate::{
+    app::{
+        composer::renderer::texture_channel::{
+            TextureSender,
+            UndecidedTextureSender,
+        },
+        solver::{
+            fdtd::{
+                util::{
+                    SwapBuffer,
+                    SwapBufferIndex,
+                },
+                wgpu::{
+                    FdtdWgpuSolverInstance,
+                    FdtdWgpuSolverState,
+                },
             },
-            wgpu::{
-                FdtdWgpuSolverInstance,
-                FdtdWgpuSolverState,
+            project::{
+                BeginProjectionPass,
+                CreateProjection,
+                ImageTarget,
+                ProjectionParameters,
+                ProjectionPass,
+                ProjectionPassAdd,
             },
         },
-        project::{
-            BeginProjectionPass,
-            CreateProjection,
-            ImageTarget,
-            ProjectionParameters,
-            ProjectionPass,
-            ProjectionPassAdd,
-        },
     },
+    util::WeakCache,
 };
 
 #[derive(Clone, Debug)]
 pub(super) struct ProjectionPipeline {
     bind_group_layout: wgpu::BindGroupLayout,
-    shader_module: wgpu::ShaderModule,
     pipeline_layout: wgpu::PipelineLayout,
-    pipeline_cache: Arc<Mutex<HashMap<wgpu::TextureFormat, Weak<wgpu::RenderPipeline>>>>,
+    cache: Arc<Mutex<Cache>>,
 }
 
 impl ProjectionPipeline {
@@ -99,76 +95,10 @@ impl ProjectionPipeline {
             push_constant_ranges: &[],
         });
 
-        let shader_module = device.create_shader_module(wgpu::include_wgsl!("project.wgsl"));
-
         Self {
             bind_group_layout,
             pipeline_layout,
-            shader_module,
-            pipeline_cache: Arc::new(Mutex::new(HashMap::new())),
-        }
-    }
-
-    fn get_pipeline(
-        &self,
-        device: &wgpu::Device,
-        target_texture_format: wgpu::TextureFormat,
-    ) -> Arc<wgpu::RenderPipeline> {
-        let mut cache = self.pipeline_cache.lock();
-
-        let create_pipeline = || {
-            let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("fdtd/project"),
-                layout: Some(&self.pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &self.shader_module,
-                    entry_point: Some("vs_main"),
-                    compilation_options: Default::default(),
-                    buffers: &[],
-                },
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    strip_index_format: None,
-                    front_face: wgpu::FrontFace::Ccw,
-                    cull_mode: None,
-                    unclipped_depth: false,
-                    polygon_mode: wgpu::PolygonMode::Fill,
-                    conservative: false,
-                },
-                depth_stencil: None,
-                multisample: Default::default(),
-                fragment: Some(wgpu::FragmentState {
-                    module: &self.shader_module,
-                    entry_point: Some("fs_main"),
-                    compilation_options: Default::default(),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: target_texture_format,
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::all(),
-                    })],
-                }),
-                multiview: None,
-                cache: None,
-            });
-            Arc::new(pipeline)
-        };
-
-        match cache.entry(target_texture_format) {
-            hash_map::Entry::Occupied(mut occupied_entry) => {
-                if let Some(pipeline) = occupied_entry.get().upgrade() {
-                    pipeline
-                }
-                else {
-                    let pipeline = create_pipeline();
-                    occupied_entry.insert(Arc::downgrade(&pipeline));
-                    pipeline
-                }
-            }
-            hash_map::Entry::Vacant(vacant_entry) => {
-                let pipeline = create_pipeline();
-                vacant_entry.insert(Arc::downgrade(&pipeline));
-                pipeline
-            }
+            cache: Arc::new(Mutex::new(Default::default())),
         }
     }
 }
@@ -195,10 +125,24 @@ impl TextureProjectionInner {
         parameters: &ProjectionParameters,
         target_texture_format: wgpu::TextureFormat,
     ) -> Self {
-        let pipeline = instance
-            .backend
-            .projection
-            .get_pipeline(&instance.backend.device, target_texture_format);
+        let pipeline = {
+            let mut cache = instance.backend.projection.cache.lock();
+
+            let color_map = parameters.color_map_code.clone().inspect(|code| {
+                tracing::debug!("Using custom color map code:\n{code}");
+            }).unwrap_or_else(|| {
+                // the old implementation using the linear map
+                "return clamp(projection.color_map * vec4f(value, 1.0), vec4f(0.0), vec4f(1.0));"
+                    .to_owned()
+            });
+
+            cache.get_pipeline(
+                &instance.backend.device,
+                &instance.backend.projection.pipeline_layout,
+                target_texture_format,
+                color_map,
+            )
+        };
 
         let projection_data = ProjectionData::new(parameters);
 
@@ -638,4 +582,94 @@ impl<'a> Drop for MappedStagingBuffer<'a> {
 
         self.buffer.unmap();
     }
+}
+
+#[derive(Debug, Default)]
+struct Cache {
+    pipelines: WeakCache<PipelineKey, wgpu::RenderPipeline>,
+    shaders: WeakCache<ShaderKey, wgpu::ShaderModule>,
+}
+
+impl Cache {
+    fn get_pipeline(
+        &mut self,
+        device: &wgpu::Device,
+        pipeline_layout: &wgpu::PipelineLayout,
+        target_texture_format: wgpu::TextureFormat,
+        color_map: String,
+    ) -> Arc<wgpu::RenderPipeline> {
+        let shader_key = ShaderKey {
+            color_map: color_map.clone(),
+        };
+
+        let pipeline_key = PipelineKey {
+            target_texture_format,
+            shader_key: shader_key.clone(),
+        };
+
+        let make_shader = || {
+            let base = include_str!("project.wgsl");
+
+            let source = base.replace(
+                "fn color_map(value: vec3f) -> vec4f {return vec4f(0.0);}",
+                &format!("fn color_map(value: vec3f) -> vec4f {{{color_map}}}"),
+            );
+
+            let shader_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("fdtd/project"),
+                source: wgpu::ShaderSource::Wgsl(source.into()),
+            });
+            Arc::new(shader_module)
+        };
+
+        self.pipelines.get_or_insert_with(pipeline_key, || {
+            let shader_module = self.shaders.get_or_insert_with(shader_key, make_shader);
+
+            let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("fdtd/project"),
+                layout: Some(pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &shader_module,
+                    entry_point: Some("vs_main"),
+                    compilation_options: Default::default(),
+                    buffers: &[],
+                },
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    strip_index_format: None,
+                    front_face: wgpu::FrontFace::Ccw,
+                    cull_mode: None,
+                    unclipped_depth: false,
+                    polygon_mode: wgpu::PolygonMode::Fill,
+                    conservative: false,
+                },
+                depth_stencil: None,
+                multisample: Default::default(),
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader_module,
+                    entry_point: Some("fs_main"),
+                    compilation_options: Default::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: target_texture_format,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::all(),
+                    })],
+                }),
+                multiview: None,
+                cache: None,
+            });
+            Arc::new(pipeline)
+        })
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct ShaderKey {
+    color_map: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct PipelineKey {
+    target_texture_format: wgpu::TextureFormat,
+    shader_key: ShaderKey,
 }

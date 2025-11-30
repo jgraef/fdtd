@@ -871,7 +871,6 @@ impl PopulateScene for ExampleScene {
                 pml,
                 transform,
                 Collider::from(cuboid),
-                ShowInTree,
                 material::Wireframe::new(palette::named::PURPLE.into_format().with_alpha(1.0)),
                 LoadMesh::from_shape(cuboid, ()),
                 Selectable,

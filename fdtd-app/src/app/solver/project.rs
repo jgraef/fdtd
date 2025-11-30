@@ -42,7 +42,7 @@ use crate::{
 };
 
 /// Parameters for a projection
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct ProjectionParameters {
     /// An image plane (z=0) will be transformed by this homogeneous matrix. The
     /// resulting plane defines the points sampled from the simulation
@@ -63,6 +63,10 @@ pub struct ProjectionParameters {
     /// can be achieved. The output vector will be interpreted as linear
     /// `(r, g, b, a)`.
     pub color_map: Matrix4<f32>,
+
+    // at the moment this is just wgsl source code
+    // todo: this should be some proper type
+    pub color_map_code: Option<String>,
 }
 
 /// Trait for [`SolverInstance`]s that can create projections to a specific

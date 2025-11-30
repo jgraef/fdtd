@@ -551,6 +551,26 @@ impl<P> Observers<P> {
                         projection: Matrix4::identity(), // todo
                         field: observer.field,
                         color_map: observer.color_map,
+                        color_map_code: Some(
+                            r#"
+                        // color and alpha scaling
+                        const s_c: f32 = 10.0;
+                        const s_a: f32 = 100.0;
+
+                        var color: vec4f;
+                        var x = value.z;
+                        if x > 0.0 {
+                            color.r = min(s_c * x, 1.0);
+                            color.a = min(s_a * x, 1.0);
+                        }
+                        else {
+                            color.g = min(-s_c * x, 1.0);
+                            color.a = min(-s_a * x, 1.0);
+                        }
+                        return color;
+                        "#
+                            .to_owned(),
+                        ),
                     };
 
                     // create a texture channel. the sender is still undecided whether it will share

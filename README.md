@@ -4,6 +4,9 @@ This app is work-in-progress. It's intended to model electromagnetic behavior. I
 
 # TODO
 
+ - control UI for solver:
+  - share a small struct (with CondVar) to control and read stats from the solver thread.
+  - i think we could even replace the solver instance if the simulation volume changes, although this was not intended.
  - hierarchy:
   - fix hierarchy when deleting a parent
  - staging belt:

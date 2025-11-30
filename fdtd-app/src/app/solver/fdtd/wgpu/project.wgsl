@@ -74,9 +74,9 @@ fn fs_main(input: VertexOutput) -> FragmentOutput {
     return FragmentOutput(color);
 }
 
-fn color_map(value: vec3f) -> vec4f {
-    return vec4f(0.0);
-}
+// DO NOT MODIFY THIS LINE
+// This is hard-coded into project.rs to be replaced with the actual colormap
+fn color_map(value: vec3f) -> vec4f {return vec4f(0.0);}
 
 
 const quad_vertices: array<vec2f, 6> = array<vec2f, 6>(
