@@ -61,6 +61,10 @@ use parry3d::{
 use crate::{
     Error,
     app::WgpuContext,
+    error::{
+        ErrorHandler,
+        UiErrorSink,
+    },
     renderer::{
         material,
         resource::RenderResourceCreator,
@@ -90,6 +94,7 @@ pub struct SolverRunner {
     fdtd_wgpu: FdtdWgpuBackend,
     render_resource_creator: RenderResourceCreator,
     repaint_trigger: RepaintTrigger,
+    error_sink: UiErrorSink,
     active_solver: Option<Solver>,
 }
 
@@ -98,6 +103,7 @@ impl SolverRunner {
         wgpu_context: &WgpuContext,
         render_resource_creator: &RenderResourceCreator,
         repaint_trigger: RepaintTrigger,
+        error_sink: UiErrorSink,
     ) -> Self {
         Self {
             fdtd_wgpu: FdtdWgpuBackend::new(
@@ -107,6 +113,7 @@ impl SolverRunner {
             ),
             render_resource_creator: render_resource_creator.clone(),
             repaint_trigger,
+            error_sink,
             active_solver: None,
         }
     }
@@ -140,14 +147,8 @@ impl SolverRunner {
             }
             drop(state);
 
-            match solver.join_handle.join() {
-                Ok(Ok(())) => {}
-                Ok(Err(error)) => {
-                    tracing::error!(%error, "Solver thread returned an error");
-                }
-                Err(panic) => {
-                    tracing::error!(?panic, "Solver thread panicked");
-                }
+            if let Err(panic) = solver.join_handle.join() {
+                tracing::error!(?panic, "Solver thread panicked");
             }
         }
     }
@@ -162,26 +163,24 @@ impl SolverRunner {
         common_config: &SolverConfigCommon,
         fdtd_config: &SolverConfigFdtd,
     ) -> Result<(), Error> {
-        let mut run_single_threaded = || {
-            run_fdtd_with_backend(
-                scene,
-                common_config,
-                fdtd_config,
-                &FdtdCpuBackend::single_threaded(),
-                &self.render_resource_creator,
-                self.repaint_trigger.clone(),
-            )
+        let run_fdtd = RunFdtd {
+            scene,
+            common_config,
+            fdtd_config,
+            render_resource_creator: &self.render_resource_creator,
+            repaint_trigger: self.repaint_trigger.clone(),
+            error_sink: self.error_sink.clone(),
         };
 
         let solver = match &common_config.parallelization {
-            None => run_single_threaded()?,
+            None => run_fdtd.run_fdtd_with_backend(&FdtdCpuBackend::single_threaded())?,
             Some(Parallelization::MultiThreaded { num_threads }) => {
                 if num_threads.is_some_and(|num_threads| num_threads <= 1) {
                     tracing::debug!(
                         ?num_threads,
                         "switching to single-threaded backend, because num_threads <= 1"
                     );
-                    run_single_threaded()?
+                    run_fdtd.run_fdtd_with_backend(&FdtdCpuBackend::single_threaded())?
                 }
                 else {
                     #[cfg(not(feature = "multi-threading"))]
@@ -190,33 +189,20 @@ impl SolverRunner {
                         tracing::warn!(
                             "Compiled without rayon feature. Falling back to single-threaded"
                         );
-                        run_single_threaded()?
+                        run_fdtd.run_fdtd_with_backend(&FdtdCpuBackend::single_threaded())?
                     }
 
                     #[cfg(feature = "multi-threading")]
                     {
                         tracing::debug!(?num_threads, "using multi-threaded cpu backend");
-                        run_fdtd_with_backend(
-                            scene,
-                            common_config,
-                            fdtd_config,
-                            &FdtdCpuBackend::multi_threaded(*num_threads)?,
-                            &self.render_resource_creator,
-                            self.repaint_trigger.clone(),
-                        )?
+                        run_fdtd
+                            .run_fdtd_with_backend(&FdtdCpuBackend::multi_threaded(*num_threads)?)?
                     }
                 }
             }
             Some(Parallelization::Wgpu) => {
                 tracing::debug!("using wgpu backend");
-                run_fdtd_with_backend(
-                    scene,
-                    common_config,
-                    fdtd_config,
-                    &self.fdtd_wgpu,
-                    &self.render_resource_creator,
-                    self.repaint_trigger.clone(),
-                )?
+                run_fdtd.run_fdtd_with_backend(&self.fdtd_wgpu)?
             }
         };
 
@@ -226,155 +212,170 @@ impl SolverRunner {
     }
 }
 
-fn run_fdtd_with_backend<Backend>(
-    scene: &mut Scene,
-    common_config: &SolverConfigCommon,
-    fdtd_config: &SolverConfigFdtd,
-    backend: &Backend,
-    render_resource_creator: &RenderResourceCreator,
+struct RunFdtd<'a> {
+    scene: &'a mut Scene,
+    common_config: &'a SolverConfigCommon,
+    fdtd_config: &'a SolverConfigFdtd,
+    render_resource_creator: &'a RenderResourceCreator,
     repaint_trigger: RepaintTrigger,
-) -> Result<Solver, Error>
-where
-    Backend: SolverBackend<FdtdSolverConfig, Point3<usize>>,
-    Backend::Instance: CreateProjection<UndecidedTextureSender> + Send + 'static,
-    <Backend::Instance as SolverInstance>::State: Time + Send + 'static,
-    for<'a> <Backend::Instance as SolverInstance>::UpdatePass<'a>: UpdatePassForcing<Point3<usize>>,
-    for<'a> <Backend::Instance as BeginProjectionPass>::ProjectionPass<'a>: ProjectionPassAdd<
-            'a,
-            <Backend::Instance as CreateProjection<UndecidedTextureSender>>::Projection,
-        >,
-    <Backend::Instance as CreateProjection<UndecidedTextureSender>>::Projection: Send + 'static,
-{
-    let time_start = Instant::now();
+    error_sink: UiErrorSink,
+}
 
-    let aabb = common_config.volume.aabb(scene);
-
-    let size = aabb.extents();
-    if !size.iter().all(|c| c.is_finite() && *c >= 0.0) {
-        bail!("invalid aabb: {aabb:?}");
-    }
-
-    let config = FdtdSolverConfig {
-        resolution: fdtd_config.resolution,
-        physical_constants: common_config.physical_constants,
-        size: size.cast(),
-    };
-
-    // check courant condition
-    let temporal_resolution_satisfying_courant_condition =
-        fdtd::estimate_temporal_from_spatial_resolution(
-            common_config.physical_constants.speed_of_light(),
-            &config.resolution.spatial,
-        );
-    if config.resolution.temporal > temporal_resolution_satisfying_courant_condition {
-        tracing::warn!(resolution = ?config.resolution, "resolution doesn't satisfy courant condition");
-    }
-
-    // good config for debugging
-    /*let config = fdtd::SimulationConfig {
-        resolution: fdtd::Resolution {
-            spatial: Vector3::repeat(1.0),
-            temporal: 0.25,
-        },
-        physical_constants: PhysicalConstants::REDUCED,
-        origin: None,
-        size: Vector3::new(100.0, 100.0, 0.0),
-    };*/
-
-    let memory_required = backend.memory_required(&config);
-    let memory_required_str = memory_required.map_or_else(
-        || "unknown".to_owned(),
-        |memory_required| format_size(memory_required).to_string(),
-    );
-    let lattice_size = config.size();
-
-    tracing::debug!(
-        ?size,
-        resolution = ?config.resolution,
-        memory_required = memory_required_str,
-        ?lattice_size,
-        "creating fdtd simulation"
-    );
-
-    // todo: we want an ui flow that prepares the solver-run anyway, so
-    // we could display and warn about memory requirements there.
-    // for now this is just a safe-guard that I don't crash my system xD
-    if let (Some(memory_required), Some(memory_limit)) =
-        (memory_required, common_config.memory_limit)
-        && memory_required > memory_limit
+impl<'a> RunFdtd<'a> {
+    fn run_fdtd_with_backend<Backend>(self, backend: &Backend) -> Result<Solver, Error>
+    where
+        Backend: SolverBackend<FdtdSolverConfig, Point3<usize>>,
+        Backend::Instance: CreateProjection<UndecidedTextureSender> + Send + 'static,
+        <Backend::Instance as SolverInstance>::State: Time + Send + 'static,
+        for<'b> <Backend::Instance as SolverInstance>::UpdatePass<'b>:
+            UpdatePassForcing<Point3<usize>>,
+        for<'b> <Backend::Instance as BeginProjectionPass>::ProjectionPass<'b>: ProjectionPassAdd<
+                'b,
+                <Backend::Instance as CreateProjection<UndecidedTextureSender>>::Projection,
+            >,
+        <Backend::Instance as CreateProjection<UndecidedTextureSender>>::Projection: Send + 'static,
     {
-        bail!(
-            "too much memory required: {memory_required_str} > {}",
-            format_size(memory_limit)
+        let Self {
+            scene,
+            common_config,
+            fdtd_config,
+            render_resource_creator,
+            repaint_trigger,
+            error_sink,
+        } = self;
+
+        let time_start = Instant::now();
+
+        let aabb = common_config.volume.aabb(scene);
+
+        let size = aabb.extents();
+        if !size.iter().all(|c| c.is_finite() && *c >= 0.0) {
+            bail!("invalid aabb: {aabb:?}");
+        }
+
+        let config = FdtdSolverConfig {
+            resolution: fdtd_config.resolution,
+            physical_constants: common_config.physical_constants,
+            size: size.cast(),
+        };
+
+        // check courant condition
+        let temporal_resolution_satisfying_courant_condition =
+            fdtd::estimate_temporal_from_spatial_resolution(
+                common_config.physical_constants.speed_of_light(),
+                &config.resolution.spatial,
+            );
+        if config.resolution.temporal > temporal_resolution_satisfying_courant_condition {
+            tracing::warn!(resolution = ?config.resolution, "resolution doesn't satisfy courant condition");
+        }
+
+        // good config for debugging
+        /*let config = fdtd::SimulationConfig {
+            resolution: fdtd::Resolution {
+                spatial: Vector3::repeat(1.0),
+                temporal: 0.25,
+            },
+            physical_constants: PhysicalConstants::REDUCED,
+            origin: None,
+            size: Vector3::new(100.0, 100.0, 0.0),
+        };*/
+
+        let memory_required = backend.memory_required(&config);
+        let memory_required_str = memory_required.map_or_else(
+            || "unknown".to_owned(),
+            |memory_required| format_size(memory_required).to_string(),
         );
+        let lattice_size = config.size();
+
+        tracing::debug!(
+            ?size,
+            resolution = ?config.resolution,
+            memory_required = memory_required_str,
+            ?lattice_size,
+            "creating fdtd simulation"
+        );
+
+        // todo: we want an ui flow that prepares the solver-run anyway, so
+        // we could display and warn about memory requirements there.
+        // for now this is just a safe-guard that I don't crash my system xD
+        if let (Some(memory_required), Some(memory_limit)) =
+            (memory_required, common_config.memory_limit)
+            && memory_required > memory_limit
+        {
+            bail!(
+                "too much memory required: {memory_required_str} > {}",
+                format_size(memory_limit)
+            );
+        }
+
+        // coordinate transformations
+        let coordinate_transformations = CoordinateTransformations::for_fdtd(
+            &config.resolution,
+            &lattice_size,
+            &common_config.volume.rotation(),
+            &aabb,
+        );
+
+        let materials = SceneDomainDescription::new(
+            scene,
+            &config.resolution,
+            &config.physical_constants,
+            &coordinate_transformations,
+            &common_config.default_material,
+        );
+
+        let instance = backend
+            .create_instance(&config, materials)
+            .expect("fdtd solver instance creation never fails");
+
+        let mut state = instance.create_state();
+
+        // create sources
+        // todo: from scene. this is blocked by the fact that this specific source needs
+        // config parameters.
+
+        let sources = Sources::from_scene(scene, &coordinate_transformations);
+        //let mut sources = Sources::default();
+        /*let source = fdtd::source::ContinousWave {
+            electric_current_density_amplitude: Vector3::z() / config.resolution.temporal,
+            magnetic_current_density_amplitude: Vector3::zeros(),
+            electric_current_density_phase: 0.0,
+            magnetic_current_density_phase: 0.0,
+            frequency: 2.0,
+        };*/
+        /*sources.push(
+            Point3::from(lattice_size / 2),
+            GaussianPulse::new(
+                config.resolution.temporal * 50.0,
+                config.resolution.temporal * 10.0,
+            )
+            .with_amplitudes(Vector3::z() / config.resolution.temporal, Vector3::zeros()),
+        );*/
+
+        // create observers
+        let observers = Observers::from_scene(
+            &instance,
+            &mut state,
+            scene,
+            &lattice_size,
+            render_resource_creator,
+            repaint_trigger,
+        );
+
+        tracing::debug!("time to create simulation: {:?}", time_start.elapsed());
+
+        // run simulation
+        let solver = Solver::spawn(
+            instance,
+            state,
+            fdtd_config.stop_condition,
+            sources,
+            observers,
+            error_sink,
+        );
+
+        Ok(solver)
     }
-
-    // coordinate transformations
-    let coordinate_transformations = CoordinateTransformations::for_fdtd(
-        &config.resolution,
-        &lattice_size,
-        &common_config.volume.rotation(),
-        &aabb,
-    );
-
-    let materials = SceneDomainDescription::new(
-        scene,
-        &config.resolution,
-        &config.physical_constants,
-        &coordinate_transformations,
-        &common_config.default_material,
-    );
-
-    let instance = backend
-        .create_instance(&config, materials)
-        .expect("fdtd solver instance creation never fails");
-
-    let mut state = instance.create_state();
-
-    // create sources
-    // todo: from scene. this is blocked by the fact that this specific source needs
-    // config parameters.
-
-    let sources = Sources::from_scene(scene, &coordinate_transformations);
-    //let mut sources = Sources::default();
-    /*let source = fdtd::source::ContinousWave {
-        electric_current_density_amplitude: Vector3::z() / config.resolution.temporal,
-        magnetic_current_density_amplitude: Vector3::zeros(),
-        electric_current_density_phase: 0.0,
-        magnetic_current_density_phase: 0.0,
-        frequency: 2.0,
-    };*/
-    /*sources.push(
-        Point3::from(lattice_size / 2),
-        GaussianPulse::new(
-            config.resolution.temporal * 50.0,
-            config.resolution.temporal * 10.0,
-        )
-        .with_amplitudes(Vector3::z() / config.resolution.temporal, Vector3::zeros()),
-    );*/
-
-    // create observers
-    let observers = Observers::from_scene(
-        &instance,
-        &mut state,
-        scene,
-        &lattice_size,
-        render_resource_creator,
-        repaint_trigger,
-    );
-
-    tracing::debug!("time to create simulation: {:?}", time_start.elapsed());
-
-    // run simulation
-    let solver = Solver::spawn(
-        instance,
-        state,
-        fdtd_config.stop_condition,
-        sources,
-        observers,
-    );
-
-    Ok(solver)
 }
 
 #[derive(Debug)]
@@ -410,7 +411,7 @@ impl SolverState {
 
 #[derive(Debug)]
 pub struct Solver {
-    join_handle: JoinHandle<Result<(), Error>>,
+    join_handle: JoinHandle<()>,
     shared: Arc<Shared>,
 }
 
@@ -449,6 +450,7 @@ impl Solver {
         mut observers: Observers<
             <Instance as CreateProjection<UndecidedTextureSender>>::Projection,
         >,
+        error_sink: UiErrorSink,
     ) -> Self
     where
         Instance: SolverInstance + CreateProjection<UndecidedTextureSender> + Send + 'static,
@@ -489,8 +491,9 @@ impl Solver {
                 let mut total_time = Duration::ZERO;
 
                 // if we start out paused we want to run ob observers at least once
-                if start_paused {
-                    observers.run(&instance, &state);
+                if start_paused && let Err(error) = observers.run(&instance, &state) {
+                    error_sink.handle_error(error);
+                    return;
                 }
 
                 loop {
@@ -505,7 +508,7 @@ impl Solver {
                     control_state.finished |= stop_condition_reached;
                     if control_state.finished {
                         control_state.stop_time = Some(Instant::now());
-                        return Ok(());
+                        return;
                     }
 
                     if control_state.paused {
@@ -538,12 +541,17 @@ impl Solver {
                         update_pass.finish();
 
                         // do observations
-                        if observation_delay.is_some_and(|observation_delay| {
+                        let do_observations = observation_delay.is_some_and(|observation_delay| {
                             time_last_observation.is_none_or(|time_last_observation| {
                                 time_last_observation.elapsed() > observation_delay
                             })
-                        }) {
-                            observers.run(&instance, &state);
+                        });
+                        if do_observations {
+                            if let Err(error) = observers.run(&instance, &state) {
+                                error_sink.handle_error(error);
+                                stop_condition_reached = true;
+                                continue;
+                            }
                             time_last_observation = Some(Instant::now());
                         }
 
@@ -787,7 +795,7 @@ impl<P> Observers<P> {
         }
     }
 
-    pub fn run<I>(&mut self, instance: &I, state: &I::State)
+    pub fn run<I>(&mut self, instance: &I, state: &I::State) -> Result<(), Error>
     where
         I: BeginProjectionPass,
         for<'a> <I as BeginProjectionPass>::ProjectionPass<'a>: ProjectionPassAdd<'a, P>,
@@ -798,11 +806,13 @@ impl<P> Observers<P> {
             pass.add_projection(projection);
         }
 
-        pass.finish();
+        let result = pass.finish();
 
         if let Some(repaint_trigger) = &self.repaint_trigger {
             repaint_trigger.repaint();
         }
+
+        result.map_err(Into::into)
     }
 }
 

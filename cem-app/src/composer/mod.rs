@@ -172,6 +172,7 @@ impl Composer {
             &context.wgpu_context,
             &render_resource_creator,
             context.egui_context.repaint_trigger(),
+            context.egui_context.error_sink(),
         );
 
         Self {

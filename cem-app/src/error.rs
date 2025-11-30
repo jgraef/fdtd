@@ -44,6 +44,8 @@ impl ErrorHandler for &mut ErrorDialog {
 
 impl ErrorHandler for &egui::Context {
     fn handle_error(self, error: Error) {
+        tracing::error!("{error}");
+
         let container = self
             .data(|data| data.get_temp::<Container>(Id::NULL))
             .expect("error dialog not initialized");
@@ -56,6 +58,29 @@ impl ErrorHandler for &egui::Context {
 impl ErrorHandler for &egui::Ui {
     fn handle_error(self, error: Error) {
         self.ctx().handle_error(error);
+    }
+}
+
+/// This is just egui::Context, but we only allow it to be used for handling
+/// errors
+#[derive(Clone, Debug)]
+pub struct UiErrorSink(egui::Context);
+
+impl From<egui::Context> for UiErrorSink {
+    fn from(value: egui::Context) -> Self {
+        Self(value)
+    }
+}
+
+impl From<&egui::Context> for UiErrorSink {
+    fn from(value: &egui::Context) -> Self {
+        Self(value.clone())
+    }
+}
+
+impl ErrorHandler for &UiErrorSink {
+    fn handle_error(self, error: Error) {
+        self.0.handle_error(error);
     }
 }
 

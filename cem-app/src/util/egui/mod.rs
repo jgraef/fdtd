@@ -20,6 +20,7 @@ use parking_lot::Mutex;
 
 use crate::{
     app::WgpuContext,
+    error::UiErrorSink,
     util::{
         FormatPath,
         format_path,
@@ -272,6 +273,7 @@ impl Default for FilePickerConfig {
 pub trait EguiUtilContextExt {
     fn repaint_trigger(&self) -> RepaintTrigger;
     fn wgpu_context(&self) -> WgpuContext;
+    fn error_sink(&self) -> UiErrorSink;
 }
 
 impl EguiUtilContextExt for egui::Context {
@@ -286,6 +288,10 @@ impl EguiUtilContextExt for egui::Context {
     fn wgpu_context(&self) -> WgpuContext {
         self.data(|data| data.get_temp(egui::Id::NULL))
             .expect("no wgpu context available")
+    }
+
+    fn error_sink(&self) -> UiErrorSink {
+        UiErrorSink::from(self)
     }
 }
 

@@ -421,14 +421,18 @@ where
 
                 let staging_view = staging_buffer.view();
 
-                target.with_image_buffer(|image| {
-                    image.enumerate_pixels_mut().for_each(|(x, y, pixel)| {
-                        let staging_offset = y as usize * bytes_per_row_padded + 4 * x as usize;
-                        pixel
-                            .0
-                            .copy_from_slice(&staging_view[staging_offset..staging_offset + 4]);
-                    });
-                });
+                target
+                    .with_image_buffer(|image| {
+                        image.enumerate_pixels_mut().for_each(|(x, y, pixel)| {
+                            let staging_offset = y as usize * bytes_per_row_padded + 4 * x as usize;
+                            pixel
+                                .0
+                                .copy_from_slice(&staging_view[staging_offset..staging_offset + 4]);
+                        });
+                    })
+                    .map_err(|error| {
+                        Box::new(error) as Box<dyn std::error::Error + Send + Sync + 'static>
+                    })
             })
         });
     }
@@ -454,8 +458,11 @@ pub struct FdtdWgpuProjectionPass<'a> {
     command_encoder: wgpu::CommandEncoder,
     swap_buffer_index: SwapBufferIndex,
     #[debug(skip)]
-    copy_to_image_buffer: Vec<Box<dyn FnOnce() + 'a>>,
+    copy_to_image_buffer: Vec<CopyToImageBufferCallback<'a>>,
 }
+
+type CopyToImageBufferCallback<'a> =
+    Box<dyn FnOnce() -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> + 'a>;
 
 impl<'a> FdtdWgpuProjectionPass<'a> {
     fn new(instance: &'a FdtdWgpuSolverInstance, state: &'a FdtdWgpuSolverState) -> Self {
@@ -494,13 +501,32 @@ impl<'a> ProjectionPassAdd<'a, TextureProjection> for FdtdWgpuProjectionPass<'a>
 }
 
 impl<'a> ProjectionPass for FdtdWgpuProjectionPass<'a> {
-    fn finish(mut self) {
+    type Error = FdtdWgpuProjectionPassError;
+
+    fn finish(mut self) -> Result<(), FdtdWgpuProjectionPassError> {
         self.instance
             .backend
             .submit_and_poll([self.command_encoder.finish()]);
 
-        self.copy_to_image_buffer.drain(..).for_each(|f| f());
+        let errors = self
+            .copy_to_image_buffer
+            .drain(..)
+            .filter_map(|f| f().err())
+            .collect::<Vec<_>>();
+
+        if errors.is_empty() {
+            Ok(())
+        }
+        else {
+            Err(FdtdWgpuProjectionPassError { errors })
+        }
     }
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("fdtd-wgpu projection pass error")]
+pub struct FdtdWgpuProjectionPassError {
+    pub errors: Vec<Box<dyn std::error::Error + Send + Sync + 'static>>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]

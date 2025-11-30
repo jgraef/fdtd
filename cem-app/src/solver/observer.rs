@@ -1,4 +1,5 @@
 use std::{
+    convert::Infallible,
     ops::Index,
     path::PathBuf,
 };
@@ -145,6 +146,7 @@ pub struct CopyImageToTexture {
 impl cem_solver::project::ImageTarget for CopyImageToTexture {
     type Pixel = image::Rgba<u8>;
     type Container = Vec<u8>;
+    type Error = Infallible;
 
     fn size(&self) -> Vector2<u32> {
         self.image_sender.size()
@@ -153,9 +155,10 @@ impl cem_solver::project::ImageTarget for CopyImageToTexture {
     fn with_image_buffer(
         &mut self,
         f: impl FnOnce(&mut image::ImageBuffer<Self::Pixel, Self::Container>),
-    ) {
+    ) -> Result<(), Infallible> {
         let mut image_buffer = self.image_sender.update_image();
         f(&mut image_buffer);
+        Ok(())
     }
 }
 

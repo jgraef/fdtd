@@ -24,6 +24,7 @@
 //! 5. Finish projections using [`ProjectionPassFinish::finish`]
 
 use std::{
+    convert::Infallible,
     io::Write,
     ops::DerefMut,
 };
@@ -117,8 +118,10 @@ pub trait BeginProjectionPass: SolverInstance {
 /// [`add_projection`][ProjectionPassAdd::add_projection] are implemented in a
 /// separate trait.
 pub trait ProjectionPass {
+    type Error: std::error::Error + Send + Sync + 'static;
+
     /// Finish the projection pass.
-    fn finish(self);
+    fn finish(self) -> Result<(), Self::Error>;
 }
 
 /// Trait for projection passes that can accept `Projection`s to be added.
@@ -137,13 +140,14 @@ pub trait ProjectionPassAdd<'a, Projection>: 'a {
 pub trait ImageTarget {
     type Pixel: image::Pixel;
     type Container: DerefMut<Target = [<Self::Pixel as image::Pixel>::Subpixel]>;
+    type Error: std::error::Error + Send + Sync + 'static;
 
     fn size(&self) -> Vector2<u32>;
 
     fn with_image_buffer(
         &mut self,
         f: impl FnOnce(&mut image::ImageBuffer<Self::Pixel, Self::Container>),
-    );
+    ) -> Result<(), Self::Error>;
 }
 
 impl<T> ImageTarget for &mut T
@@ -152,6 +156,7 @@ where
 {
     type Pixel = T::Pixel;
     type Container = T::Container;
+    type Error = T::Error;
 
     fn size(&self) -> Vector2<u32> {
         T::size(*self)
@@ -160,8 +165,8 @@ where
     fn with_image_buffer(
         &mut self,
         f: impl FnOnce(&mut image::ImageBuffer<Self::Pixel, Self::Container>),
-    ) {
-        T::with_image_buffer(*self, f);
+    ) -> Result<(), Self::Error> {
+        T::with_image_buffer(*self, f)
     }
 }
 
@@ -172,13 +177,18 @@ where
 {
     type Pixel = Pixel;
     type Container = Container;
+    type Error = Infallible;
 
     fn size(&self) -> Vector2<u32> {
         Vector2::new(self.width(), self.height())
     }
 
-    fn with_image_buffer(&mut self, f: impl FnOnce(&mut image::ImageBuffer<Pixel, Container>)) {
-        f(self)
+    fn with_image_buffer(
+        &mut self,
+        f: impl FnOnce(&mut image::ImageBuffer<Pixel, Container>),
+    ) -> Result<(), Self::Error> {
+        f(self);
+        Ok(())
     }
 }
 
@@ -200,6 +210,7 @@ where
 {
     type Pixel = image::Rgba<u8>;
     type Container = Vec<u8>;
+    type Error = image::ImageError;
 
     fn size(&self) -> Vector2<u32> {
         self.frame_size
@@ -208,14 +219,14 @@ where
     fn with_image_buffer(
         &mut self,
         f: impl FnOnce(&mut image::ImageBuffer<image::Rgba<u8>, Vec<u8>>),
-    ) {
+    ) -> Result<(), Self::Error> {
+        // note: we can't avoid creating a new buffer here, because the GifEncoder wants
+        // ownership of it.
         let mut buffer = image::RgbaImage::new(self.frame_size.x, self.frame_size.y);
 
         f(&mut buffer);
 
         let frame = image::Frame::from_parts(buffer, 0, 0, self.frame_delay);
-        self.gif_encoder
-            .encode_frame(frame)
-            .unwrap_or_else(|error| todo!("handle error: {error}"));
+        self.gif_encoder.encode_frame(frame)
     }
 }

@@ -69,9 +69,11 @@ where
     Target: ImageTarget<Pixel = image::Rgba<u8>>,
 {
     fn add_projection(&mut self, projection: &'a mut ImageProjection<Target>) {
-        projection.target.with_image_buffer(|image| {
+        if let Err(error) = projection.target.with_image_buffer(|image| {
             self.project_to_image(image, &projection.parameters);
-        });
+        }) {
+            self.errors.push(Box::new(error));
+        }
     }
 }
 
@@ -97,6 +99,7 @@ pub struct FdtdCpuProjectionPass<'a, Threading> {
     instance: &'a FdtdCpuSolverInstance<Threading>,
     state: &'a FdtdCpuSolverState,
     swap_buffer_index: SwapBufferIndex,
+    errors: Vec<Box<dyn std::error::Error + Send + Sync + 'static>>,
 }
 
 impl<'a, Threading> FdtdCpuProjectionPass<'a, Threading> {
@@ -107,6 +110,7 @@ impl<'a, Threading> FdtdCpuProjectionPass<'a, Threading> {
             instance,
             state,
             swap_buffer_index,
+            errors: vec![],
         }
     }
 
@@ -162,7 +166,24 @@ impl<'a, Threading> FdtdCpuProjectionPass<'a, Threading> {
 }
 
 impl<'a, Threading> ProjectionPass for FdtdCpuProjectionPass<'a, Threading> {
-    fn finish(self) {
+    type Error = FdtdCpuProjectionPassError;
+
+    fn finish(self) -> Result<(), FdtdCpuProjectionPassError> {
         // we do projections immediately, so there's nothing to do here
+
+        if self.errors.is_empty() {
+            Ok(())
+        }
+        else {
+            Err(FdtdCpuProjectionPassError {
+                errors: self.errors,
+            })
+        }
     }
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("fdtd-cpu projection pass error")]
+pub struct FdtdCpuProjectionPassError {
+    pub errors: Vec<Box<dyn std::error::Error + Send + Sync + 'static>>,
 }
