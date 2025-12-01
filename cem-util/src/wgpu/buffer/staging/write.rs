@@ -576,14 +576,12 @@ impl StagingBufferProvider for WriteStagingBelt {
     }
 
     fn commit(&mut self, command_encoder: &mut wgpu::CommandEncoder) {
-        let inflight_chunks = self
-            .active_chunks
-            .drain(..)
-            .map(|chunk| {
-                chunk.buffer.unmap();
-                InflightChunk::new(self.pool.clone(), chunk)
-            })
-            .collect::<InflightChunks>();
+        for chunk in &self.active_chunks {
+            chunk.buffer.unmap();
+        }
+
+        let inflight_chunks =
+            InflightChunks::new(self.pool.clone(), std::mem::take(&mut self.active_chunks));
 
         command_encoder.on_submitted_work_done(move || {
             // the command encoder got submitted and is done, we can recall the chunks
@@ -616,12 +614,14 @@ mod inflight {
     // when we recall the chunks and map them, we need to move them individually
     // into the map_async callback with a pool anyway. so we pair them up
     // now.
-    pub(super) struct InflightChunk(Option<(StagingPool, Chunk)>);
+    pub(super) struct InflightChunk {
+        inner: Option<(StagingPool, Chunk)>,
+    }
 
     // then we give them a Drop impl to make sure they're always accounted for
     impl Drop for InflightChunk {
         fn drop(&mut self) {
-            if let Some((pool, chunk)) = self.0.take() {
+            if let Some((pool, chunk)) = self.inner.take() {
                 // this chunk got lost somewhere (map_sync dropped it). we'll drop it because we
                 // don't know its state (whether it's mapped or not). but we want to take it
                 // into account
@@ -638,28 +638,32 @@ mod inflight {
         fn deref(&self) -> &Self::Target {
             // this is always okay, because we only take out the chunk when we take
             // ownership of this.
-            &self.0.as_ref().unwrap().1
+            &self.inner.as_ref().unwrap().1
         }
     }
 
     impl InflightChunk {
         pub fn new(pool: StagingPool, chunk: Chunk) -> Self {
-            Self(Some((pool, chunk)))
+            Self {
+                inner: Some((pool, chunk)),
+            }
         }
-
         pub fn into_inner(mut self) -> (StagingPool, Chunk) {
-            self.0.take().unwrap()
+            self.inner.take().unwrap()
         }
     }
 
     // this will hold all the inflight chunks for the on_submitted_work_done
     // callback. if the user drops the command encoder this will be dropped,
     // and we can safely recall the chunks
-    pub(super) struct InflightChunks(Vec<InflightChunk>);
+    pub(super) struct InflightChunks {
+        pool: StagingPool,
+        chunks: Vec<Chunk>,
+    }
 
-    impl FromIterator<InflightChunk> for InflightChunks {
-        fn from_iter<T: IntoIterator<Item = InflightChunk>>(iter: T) -> Self {
-            Self(iter.into_iter().collect())
+    impl InflightChunks {
+        pub fn new(pool: StagingPool, chunks: Vec<Chunk>) -> Self {
+            Self { pool, chunks }
         }
     }
 
@@ -671,12 +675,16 @@ mod inflight {
         }
 
         fn recall_impl(&mut self) {
-            for chunk in self.0.drain(..) {
-                chunk
-                    .buffer
-                    .clone()
-                    .slice(..)
-                    .map_async(wgpu::MapMode::Write, move |_| {
+            for chunk in self.chunks.drain(..) {
+                let buffer = chunk.buffer.clone();
+
+                let chunk = InflightChunk::new(self.pool.clone(), chunk);
+
+                buffer.map_async(wgpu::MapMode::Write, .., move |result| {
+                    if let Err(error) = result {
+                        tracing::error!("{error}");
+                    }
+                    else {
                         // take out the chunk from the `InflightChunk`, so it's Drop doesn't do
                         // anything
                         let (pool, mut chunk) = chunk.into_inner();
@@ -691,7 +699,8 @@ mod inflight {
                         state.in_flight_count -= 1;
                         state.total_staged_bytes += allocated;
                         state.free_chunks.push(chunk);
-                    });
+                    }
+                });
             }
         }
     }
