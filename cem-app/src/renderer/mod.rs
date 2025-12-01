@@ -29,7 +29,9 @@ use cem_util::{
         ImageTextureExt,
         buffer::{
             StagedTypedArrayBuffer,
-            StagingBufferProvider,
+            WriteStaging,
+            WriteStagingCommit,
+            WriteStagingExt,
             WriteStagingTransaction,
         },
         create_texture_from_linsrgba,
@@ -93,7 +95,7 @@ use crate::{
                 StencilStateExt,
             },
         },
-        resource::RenderResourceCreator,
+        resource::RenderResourceManager,
     },
     scene::{
         EntityDebugLabel,
@@ -434,7 +436,26 @@ impl Renderer {
         );
         assert!(instance_buffer.buffer.is_allocated());
 
-        let fallbacks = Fallbacks::new(&context.wgpu_context);
+        let mut command_encoder =
+            context
+                .wgpu_context
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("render/init"),
+                });
+        let mut write_staging = WriteStagingTransaction::new(
+            context.wgpu_context.staging_pool.belt(),
+            &context.wgpu_context.device,
+            &mut command_encoder,
+        );
+
+        let fallbacks = Fallbacks::new(&context.wgpu_context.device, &mut write_staging);
+
+        write_staging.commit();
+        context
+            .wgpu_context
+            .queue
+            .submit([command_encoder.finish()]);
 
         Self {
             wgpu_context: context.wgpu_context.clone(),
@@ -464,8 +485,8 @@ impl Renderer {
         &self.config
     }
 
-    pub fn resource_creator(&self) -> RenderResourceCreator {
-        RenderResourceCreator::from_renderer(self)
+    pub fn resource_creator(&self) -> RenderResourceManager {
+        RenderResourceManager::from_renderer(self)
     }
 
     /// Prepares for the world to be rendered
@@ -483,6 +504,8 @@ impl Renderer {
     pub fn prepare_world(&mut self, scene: &mut Scene) {
         let time_start = Instant::now();
 
+        self.info.prepare_world_staged = Default::default();
+
         let mut command_encoder =
             self.wgpu_context
                 .device
@@ -491,13 +514,25 @@ impl Renderer {
                 });
 
         let mut write_staging = WriteStagingTransaction::new(
-            self.wgpu_context.staging_pool.start_write(),
+            self.wgpu_context.staging_pool.belt(),
             &self.wgpu_context.device,
             &mut command_encoder,
         );
 
+        macro_rules! track_staging {
+            ($name:ident) => {
+                write_staging
+                    .track_throughput(&mut self.info.prepare_world_staged.$name)
+                    .track_throughput(&mut self.info.prepare_world_staged.total)
+            };
+        }
+
         // handle command queue
-        handle_commands(&mut self.command_queue.receiver, &mut write_staging, scene);
+        handle_commands(
+            &mut self.command_queue.receiver,
+            track_staging!(command_queue),
+            scene,
+        );
 
         // generate meshes (for rendering) for objects that don't have them yet.
         mesh::update_mesh_bind_groups(
@@ -517,7 +552,7 @@ impl Renderer {
             &mut scene.command_buffer,
             &mut self.instance_buffer,
             &mut self.draw_command_buffer,
-            &mut write_staging,
+            track_staging!(instance_buffer),
         );
 
         // update cameras
@@ -528,15 +563,14 @@ impl Renderer {
         camera::update_cameras(
             scene,
             &self.wgpu_context.device,
-            &mut write_staging,
+            track_staging!(camera_buffers),
             &self.camera_bind_group_layout,
             self.instance_buffer.buffer.buffer().unwrap(),
             instance_buffer_reallocated,
         );
 
         // finish all staged writes
-        self.info.prepare_world_staged_bytes = write_staging.total_staged();
-        drop(write_staging);
+        write_staging.commit();
         self.wgpu_context.queue.submit([command_encoder.finish()]);
 
         // apply deferred scene commands
@@ -603,12 +637,12 @@ impl Renderer {
     }
 }
 
-fn handle_commands<P>(
+fn handle_commands<S>(
     command_receiver: &mut CommandReceiver,
-    write_staging: &mut WriteStagingTransaction<P>,
+    mut write_staging: S,
     scene: &mut Scene,
 ) where
-    P: StagingBufferProvider,
+    S: WriteStaging,
 {
     // todo: don't take the queue, but pass the WriteStaging
     //
@@ -620,7 +654,7 @@ fn handle_commands<P>(
         match command {
             Command::CopyImageToTexture(command) => {
                 command.handle(|image, texture| {
-                    image.write_to_texture(texture, write_staging);
+                    image.write_to_texture(texture, &mut write_staging);
                 });
             }
             Command::DrawCommandInfo(info) => {
@@ -632,15 +666,15 @@ fn handle_commands<P>(
     }
 }
 
-fn update_instance_buffer_and_draw_command<P>(
+fn update_instance_buffer_and_draw_command<S>(
     world: &mut hecs::World,
     command_buffer: &mut hecs::CommandBuffer,
     instance_buffer: &mut StagedTypedArrayBuffer<InstanceData>,
     draw_command_buffer: &mut DrawCommandBuffer,
-    write_staging: &mut WriteStagingTransaction<P>,
+    write_staging: S,
 ) -> bool
 where
-    P: StagingBufferProvider,
+    S: WriteStaging,
 {
     // for now every draw call will only draw one instance, but we could do
     // instancing for real later.
@@ -894,58 +928,82 @@ struct Fallbacks {
 }
 
 impl Fallbacks {
-    pub fn new(wgpu_context: &WgpuContext) -> Self {
-        wgpu_context.with_staging(|write_staging| {
-            let white = create_texture_from_linsrgba(
-                LinSrgba::new(255, 255, 255, 255),
-                wgpu::TextureUsages::TEXTURE_BINDING,
-                "white",
-                &wgpu_context.device,
-                write_staging,
-            );
-            let white = create_texture_view_from_texture(&white, "white");
+    pub fn new<S>(device: &wgpu::Device, mut write_staging: S) -> Self
+    where
+        S: WriteStaging,
+    {
+        let white = create_texture_from_linsrgba(
+            LinSrgba::new(255, 255, 255, 255),
+            wgpu::TextureUsages::TEXTURE_BINDING,
+            "white",
+            device,
+            &mut write_staging,
+        );
+        let white = create_texture_view_from_texture(&white, "white");
 
-            let black = create_texture_from_linsrgba(
-                LinSrgba::new(0, 0, 0, 255),
-                wgpu::TextureUsages::TEXTURE_BINDING,
-                "black",
-                &wgpu_context.device,
-                write_staging,
-            );
-            let black = create_texture_view_from_texture(&black, "black");
+        let black = create_texture_from_linsrgba(
+            LinSrgba::new(0, 0, 0, 255),
+            wgpu::TextureUsages::TEXTURE_BINDING,
+            "black",
+            device,
+            &mut write_staging,
+        );
+        let black = create_texture_view_from_texture(&black, "black");
 
-            let sampler = wgpu_context
-                .device
-                .create_sampler(&wgpu::SamplerDescriptor {
-                    label: Some("default texture sampler"),
-                    address_mode_u: wgpu::AddressMode::ClampToEdge,
-                    address_mode_v: wgpu::AddressMode::ClampToEdge,
-                    mag_filter: wgpu::FilterMode::Linear,
-                    min_filter: wgpu::FilterMode::Nearest,
-                    ..Default::default()
-                });
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("default texture sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Nearest,
+            ..Default::default()
+        });
 
-            Self {
-                white,
-                black,
-                sampler,
-            }
-        })
+        Self {
+            white,
+            black,
+            sampler,
+        }
     }
 }
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct RendererInfo {
-    pub prepare_world_staged_bytes: u64,
+    pub prepare_world_staged: StagingInfo,
     pub prepare_world_time: Duration,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct StagingInfo {
+    pub total: u64,
+    pub command_queue: u64,
+    pub instance_buffer: u64,
+    pub camera_buffers: u64,
 }
 
 impl DebugUi for Renderer {
     fn show_debug(&self, ui: &mut egui::Ui) {
-        ui.label(format!(
+        egui::CollapsingHeader::new(format!(
             "Bytes last frame: {}",
-            format_size(self.info.prepare_world_staged_bytes),
-        ));
+            format_size(self.info.prepare_world_staged.total),
+        ))
+        .id_salt(ui.id().with("prepare_world_staged"))
+        .default_open(true)
+        .show(ui, |ui| {
+            ui.label(format!(
+                "Command Queue: {}",
+                format_size(self.info.prepare_world_staged.command_queue),
+            ));
+            ui.label(format!(
+                "Instance Buffer: {}",
+                format_size(self.info.prepare_world_staged.instance_buffer),
+            ));
+            ui.label(format!(
+                "Camera Buffers: {}",
+                format_size(self.info.prepare_world_staged.camera_buffers),
+            ));
+        });
+
         ui.label(format!(
             "Prepare world time: {:?}",
             self.info.prepare_world_time

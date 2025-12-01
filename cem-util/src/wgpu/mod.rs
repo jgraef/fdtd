@@ -5,18 +5,14 @@ use palette::LinSrgba;
 
 #[cfg(feature = "image")]
 pub use self::image::*;
-use crate::wgpu::buffer::{
-    StagingBufferProvider,
-    TextureSourceLayout,
-    WriteStagingTransaction,
-};
+use crate::wgpu::buffer::WriteStaging;
 
 pub fn create_texture(
-    device: &wgpu::Device,
     size: &Vector2<u32>,
     usage: wgpu::TextureUsages,
     format: wgpu::TextureFormat,
     label: &str,
+    device: &wgpu::Device,
 ) -> wgpu::Texture {
     device.create_texture(&texture_descriptor(size, usage, format, label))
 }
@@ -29,24 +25,24 @@ pub fn create_texture_view_from_texture(texture: &wgpu::Texture, label: &str) ->
 }
 
 /// Creates a 1 by 1 pixel texture from the given color
-pub fn create_texture_from_linsrgba<P>(
+pub fn create_texture_from_linsrgba<S>(
     color: LinSrgba<u8>,
     usage: wgpu::TextureUsages,
     label: &str,
     device: &wgpu::Device,
-    write_staging: &mut WriteStagingTransaction<P>,
+    mut write_staging: S,
 ) -> wgpu::Texture
 where
-    P: StagingBufferProvider,
+    S: WriteStaging,
 {
     let size = Vector2::repeat(1);
 
     let texture = create_texture(
-        device,
         &size,
         usage | wgpu::TextureUsages::COPY_DST,
         wgpu::TextureFormat::Rgba8Unorm,
         label,
+        device,
     );
 
     let mut view = write_staging.write_texture(
@@ -98,6 +94,32 @@ pub fn texture_descriptor<'a>(
     }
 }
 
+/// Layout of a texture in a buffer's memory.
+///
+/// This is [`TexelCopyBufferLayout`](wgpu::TexelCopyBufferLayout), but without
+/// offset
+#[derive(Clone, Copy, Debug)]
+pub struct TextureSourceLayout {
+    pub bytes_per_row: u32,
+    pub rows_per_image: Option<u32>,
+}
+
+impl TextureSourceLayout {
+    pub fn into_texel_copy_buffer_info<'buffer>(
+        self,
+        buffer_slice: wgpu::BufferSlice<'buffer>,
+    ) -> wgpu::TexelCopyBufferInfo<'buffer> {
+        wgpu::TexelCopyBufferInfo {
+            buffer: buffer_slice.buffer(),
+            layout: wgpu::TexelCopyBufferLayout {
+                offset: buffer_slice.offset(),
+                bytes_per_row: Some(self.bytes_per_row),
+                rows_per_image: self.rows_per_image,
+            },
+        }
+    }
+}
+
 #[cfg(feature = "image")]
 mod image {
     use nalgebra::Vector2;
@@ -105,11 +127,8 @@ mod image {
     use crate::{
         image::ImageSizeExt as _,
         wgpu::{
-            buffer::{
-                StagingBufferProvider,
-                TextureSourceLayout,
-                WriteStagingTransaction,
-            },
+            TextureSourceLayout,
+            buffer::WriteStaging,
             texture_descriptor,
         },
     };
@@ -123,22 +142,19 @@ mod image {
             label: &'a str,
         ) -> Result<wgpu::TextureDescriptor<'a>, UnsupportedColorSpace>;
 
-        fn create_texture<P>(
+        fn create_texture<S>(
             &self,
             usage: wgpu::TextureUsages,
             label: &str,
             device: &wgpu::Device,
-            write_staging: &mut WriteStagingTransaction<P>,
+            write_staging: S,
         ) -> Result<wgpu::Texture, UnsupportedColorSpace>
         where
-            P: StagingBufferProvider;
+            S: WriteStaging;
 
-        fn write_to_texture<P>(
-            &self,
-            texture: &wgpu::Texture,
-            write_staging: &mut WriteStagingTransaction<P>,
-        ) where
-            P: StagingBufferProvider;
+        fn write_to_texture<S>(&self, texture: &wgpu::Texture, write_staging: S)
+        where
+            S: WriteStaging;
     }
 
     impl ImageTextureExt for image::RgbaImage {
@@ -174,15 +190,15 @@ mod image {
             ))
         }
 
-        fn create_texture<P>(
+        fn create_texture<S>(
             &self,
             usage: wgpu::TextureUsages,
             label: &str,
             device: &wgpu::Device,
-            write_staging: &mut WriteStagingTransaction<P>,
+            write_staging: S,
         ) -> Result<wgpu::Texture, UnsupportedColorSpace>
         where
-            P: StagingBufferProvider,
+            S: WriteStaging,
         {
             let texture = device.create_texture(
                 &self.texture_descriptor(usage | wgpu::TextureUsages::COPY_DST, label)?,
@@ -191,12 +207,9 @@ mod image {
             Ok(texture)
         }
 
-        fn write_to_texture<P>(
-            &self,
-            texture: &wgpu::Texture,
-            write_staging: &mut WriteStagingTransaction<P>,
-        ) where
-            P: StagingBufferProvider,
+        fn write_to_texture<S>(&self, texture: &wgpu::Texture, mut write_staging: S)
+        where
+            S: WriteStaging,
         {
             // note: images with width < 256 need padding. we do this while copying the
             // image data into the staging buffer.

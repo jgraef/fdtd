@@ -3,9 +3,8 @@ use std::borrow::Cow;
 use bytemuck::Pod;
 
 use crate::wgpu::buffer::{
-    StagingBufferProvider,
     TypedArrayBuffer,
-    WriteStagingTransaction,
+    WriteStaging,
 };
 
 /// A [`TypedArrayBuffer`] with a staging buffer (a simple [`Vec`]).
@@ -77,13 +76,9 @@ where
         }
     }
 
-    pub fn flush<P>(
-        &mut self,
-        on_reallocate: impl FnMut(&wgpu::Buffer),
-        gpu_staging: &mut WriteStagingTransaction<P>,
-    ) -> bool
+    pub fn flush<S>(&mut self, on_reallocate: impl FnMut(&wgpu::Buffer), gpu_staging: S) -> bool
     where
-        P: StagingBufferProvider,
+        S: WriteStaging,
     {
         if self.host_staging.is_empty() {
             // the below code works fine for an empty instance buffer, and it'll basically

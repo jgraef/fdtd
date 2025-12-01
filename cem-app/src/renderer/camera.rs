@@ -8,10 +8,7 @@ use bytemuck::{
     Pod,
     Zeroable,
 };
-use cem_util::wgpu::buffer::{
-    StagingBufferProvider,
-    WriteStagingTransaction,
-};
+use cem_util::wgpu::buffer::WriteStaging;
 use nalgebra::{
     Matrix4,
     Perspective3,
@@ -199,14 +196,14 @@ impl CameraResources {
         Self { buffer, bind_group }
     }
 
-    pub fn update<P>(
+    pub fn update<S>(
         &mut self,
         device: &wgpu::Device,
-        write_staging: &mut WriteStagingTransaction<P>,
+        mut write_staging: S,
         camera_data: &CameraData,
         updated_instance_buffer: Option<(&wgpu::BindGroupLayout, &wgpu::Buffer)>,
     ) where
-        P: StagingBufferProvider,
+        S: WriteStaging,
     {
         write_staging
             .write_buffer_from_slice(self.buffer.slice(..), bytemuck::bytes_of(camera_data));
@@ -411,15 +408,15 @@ pub struct CameraRenderInfo {
     pub num_outlines: usize,
 }
 
-pub(super) fn update_cameras<P>(
+pub(super) fn update_cameras<S>(
     scene: &mut Scene,
     device: &wgpu::Device,
-    write_staging: &mut WriteStagingTransaction<P>,
+    mut write_staging: S,
     camera_bind_group_layout: &wgpu::BindGroupLayout,
     instance_buffer: &wgpu::Buffer,
     instance_buffer_reallocated: bool,
 ) where
-    P: StagingBufferProvider,
+    S: WriteStaging,
 {
     // update cameras whose viewports changed
     for (entity, (camera_projection, viewport)) in scene
@@ -525,6 +522,11 @@ pub(super) fn update_cameras<P>(
             point_light,
             camera_config,
         );
-        camera_resources.update(device, write_staging, &camera_data, updated_instance_buffer);
+        camera_resources.update(
+            device,
+            &mut write_staging,
+            &camera_data,
+            updated_instance_buffer,
+        );
     }
 }

@@ -67,7 +67,7 @@ use crate::{
     },
     renderer::{
         material,
-        resource::RenderResourceCreator,
+        resource::RenderResourceManager,
         texture_channel::UndecidedTextureSender,
     },
     scene::{
@@ -95,7 +95,7 @@ use crate::{
 #[derive(Debug)]
 pub struct SolverRunner {
     fdtd_wgpu: FdtdWgpuBackend,
-    render_resource_creator: RenderResourceCreator,
+    render_resource_manager: RenderResourceManager,
     repaint_trigger: RepaintTrigger,
     error_sink: UiErrorSink,
     active_solver: Option<Solver>,
@@ -103,18 +103,18 @@ pub struct SolverRunner {
 
 impl SolverRunner {
     pub fn new(
-        wgpu_context: &WgpuContext,
-        render_resource_creator: &RenderResourceCreator,
+        wgpu_context: WgpuContext,
+        render_resource_manager: RenderResourceManager,
         repaint_trigger: RepaintTrigger,
         error_sink: UiErrorSink,
     ) -> Self {
         Self {
             fdtd_wgpu: FdtdWgpuBackend::new(
-                wgpu_context.device.clone(),
-                wgpu_context.queue.clone(),
-                wgpu_context.staging_pool.clone(),
+                wgpu_context.device,
+                wgpu_context.queue,
+                wgpu_context.staging_pool,
             ),
-            render_resource_creator: render_resource_creator.clone(),
+            render_resource_manager,
             repaint_trigger,
             error_sink,
             active_solver: None,
@@ -170,7 +170,7 @@ impl SolverRunner {
             scene,
             common_config,
             fdtd_config,
-            render_resource_creator: &self.render_resource_creator,
+            render_resource_manager: &self.render_resource_manager,
             repaint_trigger: self.repaint_trigger.clone(),
             error_sink: self.error_sink.clone(),
         };
@@ -219,7 +219,7 @@ struct RunFdtd<'a> {
     scene: &'a mut Scene,
     common_config: &'a SolverConfigCommon,
     fdtd_config: &'a SolverConfigFdtd,
-    render_resource_creator: &'a RenderResourceCreator,
+    render_resource_manager: &'a RenderResourceManager,
     repaint_trigger: RepaintTrigger,
     error_sink: UiErrorSink,
 }
@@ -242,7 +242,7 @@ impl<'a> RunFdtd<'a> {
             scene,
             common_config,
             fdtd_config,
-            render_resource_creator,
+            render_resource_manager,
             repaint_trigger,
             error_sink,
         } = self;
@@ -361,7 +361,7 @@ impl<'a> RunFdtd<'a> {
             &mut state,
             scene,
             &lattice_size,
-            render_resource_creator,
+            render_resource_manager,
             repaint_trigger,
         );
 
@@ -694,7 +694,7 @@ impl<P> Observers<P> {
         state: &mut I::State,
         scene: &mut Scene,
         lattice_size: &Vector3<usize>,
-        render_resource_creator: &RenderResourceCreator,
+        render_resource_manager: &RenderResourceManager,
         repaint_trigger: RepaintTrigger,
     ) -> Self
     where
@@ -706,6 +706,7 @@ impl<P> Observers<P> {
         // - transform projection into simulation coordinate space
 
         let mut needs_repaint = false;
+        let mut transaction = render_resource_manager.begin_transaction();
 
         // clippy, i want to chain other options into it later.
         #[allow(clippy::let_and_return)]
@@ -751,7 +752,7 @@ impl<P> Observers<P> {
                     //
                     // todo: can we make so that the RENDER_ATTACHMENT usage is only applied if a
                     // texture for rendering is requested by the backend? and likewise for COPY_DST
-                    let (sender, receiver) = render_resource_creator.create_texture_channel(
+                    let (sender, receiver) = transaction.create_texture_channel(
                         &lattice_size.xy().cast(),
                         wgpu::TextureUsages::RENDER_ATTACHMENT
                             | wgpu::TextureUsages::TEXTURE_BINDING
@@ -776,6 +777,8 @@ impl<P> Observers<P> {
                 display_as_texture
             })
             .collect();
+
+        transaction.commit();
 
         // apply deferred commands
         scene.apply_deferred();

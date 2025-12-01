@@ -132,8 +132,7 @@ impl DebugUi for WgpuContext {
 
         ui.separator();
 
-        ui.label("Staging belt:");
-        ui.indent(egui::Id::NULL, |ui| {
+        ui.collapsing("Staging Belt", |ui| {
             ui.label(format!(
                 "In-flight chunks: {}",
                 staging_belt_info.in_flight_count
@@ -143,6 +142,10 @@ impl DebugUi for WgpuContext {
                 "Total allocations: {} chunks, {}",
                 staging_belt_info.total_allocation_count,
                 format_size(staging_belt_info.total_allocation_bytes)
+            ));
+            ui.label(format!(
+                "Total staged: {}",
+                format_size(staging_belt_info.total_staged_bytes)
             ));
         });
     }

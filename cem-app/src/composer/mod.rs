@@ -164,13 +164,13 @@ pub struct Composer {
 impl Composer {
     pub fn new(context: &CreateAppContext) -> Self {
         let renderer = Renderer::from_app_context(context);
-        let render_resource_creator = renderer.resource_creator();
+        let render_resource_manager = renderer.resource_creator();
 
-        let asset_loader = AssetLoader::new(&render_resource_creator);
+        let asset_loader = AssetLoader::new(render_resource_manager.clone());
 
         let solver_runner = SolverRunner::new(
-            &context.wgpu_context,
-            &render_resource_creator,
+            context.wgpu_context.clone(),
+            render_resource_manager.clone(),
             context.egui_context.repaint_trigger(),
             context.egui_context.error_sink(),
         );
@@ -1258,11 +1258,8 @@ impl DebugUi for Composer {
             self.renderer.show_debug(ui);
 
             if let Some(state) = &self.state {
-                ui.separator();
-
                 for (entity, info) in state.scene.entities.query::<&CameraRenderInfo>().iter() {
-                    ui.label(format!("Camera {entity:?}"));
-                    ui.indent(egui::Id::NULL, |ui| {
+                    ui.collapsing(format!("Camera {entity:?}"), |ui| {
                         ui.label(format!("Total: {:?}", info.total));
                         ui.label(format!("Opaque: {:?}", info.num_opaque));
                         ui.label(format!("Transparent: {:?}", info.num_transparent));

@@ -4,11 +4,7 @@ use std::{
     sync::Arc,
 };
 
-use cem_util::wgpu::buffer::{
-    StagingPool,
-    WriteStagingBelt,
-    WriteStagingTransaction,
-};
+use cem_util::wgpu::buffer::StagingPool;
 use chrono::Local;
 use color_eyre::eyre::{
     Error,
@@ -76,36 +72,6 @@ impl WgpuContext {
             adapter_info,
             staging_pool: StagingPool::new(wgpu::BufferSize::new(0x1000).unwrap(), "staging pool"),
         }
-    }
-
-    /// Convenience method that creates a staging transactions and submits it
-    /// afterwards.
-    ///
-    /// This is useful if you don't want to use the command encoder for other
-    /// purposes.
-    pub fn with_staging<R>(
-        &self,
-        f: impl FnOnce(&mut WriteStagingTransaction<WriteStagingBelt>) -> R,
-    ) -> R {
-        let mut command_encoder =
-            self.device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("render/create_texture_from_image"),
-                });
-
-        let output = {
-            let mut write_staging = WriteStagingTransaction::new(
-                self.staging_pool.start_write(),
-                &self.device,
-                &mut command_encoder,
-            );
-
-            f(&mut write_staging)
-        };
-
-        self.queue.submit([command_encoder.finish()]);
-
-        output
     }
 }
 

@@ -19,7 +19,10 @@ use crate::{
             TextureAndView,
         },
         mesh::LoadMesh,
-        resource::RenderResourceCreator,
+        resource::{
+            RenderResourceManager,
+            RenderResourceManagerTransaction,
+        },
     },
     scene::{
         Changed,
@@ -29,7 +32,7 @@ use crate::{
 
 #[derive(Debug)]
 pub struct AssetLoader {
-    render_resource_creator: RenderResourceCreator,
+    render_resource_manager: RenderResourceManager,
 
     /// Texture cache
     ///
@@ -38,32 +41,40 @@ pub struct AssetLoader {
 }
 
 impl AssetLoader {
-    pub fn new(render_resource_creator: &RenderResourceCreator) -> Self {
+    pub fn new(render_resource_manager: RenderResourceManager) -> Self {
         Self {
-            render_resource_creator: render_resource_creator.clone(),
+            render_resource_manager,
             texture_cache: Default::default(),
         }
     }
 
     pub fn run_all(&mut self, scene: &mut Scene) -> Result<(), Error> {
-        let mut run_loaders = RunLoaders {
-            scene,
-            context: LoaderContext {
-                render_resource_creator: &mut self.render_resource_creator,
-                texture_cache: &mut self.texture_cache,
-            },
-            result: Ok(()),
+        let mut context = LoaderContext {
+            render_resource_manager_transaction: self.render_resource_manager.begin_transaction(),
+            texture_cache: &mut self.texture_cache,
         };
 
-        run_loaders.run::<LoadAlbedoTexture>();
-        run_loaders.run::<LoadMaterialTexture>();
-        run_loaders.run::<LoadMesh>();
+        let result = {
+            let mut run_loaders = RunLoaders {
+                scene,
+                context: &mut context,
+                result: Ok(()),
+            };
 
-        if let Err(error) = &run_loaders.result {
-            tracing::warn!(?error);
-        }
+            run_loaders.run::<LoadAlbedoTexture>();
+            run_loaders.run::<LoadMaterialTexture>();
+            run_loaders.run::<LoadMesh>();
 
-        run_loaders.result
+            if let Err(error) = &run_loaders.result {
+                tracing::warn!(?error);
+            }
+
+            run_loaders.result
+        };
+
+        context.render_resource_manager_transaction.commit();
+
+        result
     }
 }
 
@@ -94,7 +105,7 @@ impl<T> From<Option<T>> for LoadingProgress<T> {
 
 #[derive(Debug)]
 pub struct LoaderContext<'a> {
-    pub render_resource_creator: &'a mut RenderResourceCreator,
+    pub render_resource_manager_transaction: RenderResourceManagerTransaction<'a>,
     texture_cache: &'a mut TextureCache,
 }
 
@@ -118,7 +129,7 @@ impl<'a> LoaderContext<'a> {
             let image = image.into_rgba8();
 
             let texture = self
-                .render_resource_creator
+                .render_resource_manager_transaction
                 .create_texture_from_image(&image, usage, &label)?;
 
             Ok((
@@ -136,23 +147,23 @@ pub struct ImageInfo {
     pub original_color_type: image::ColorType,
 }
 
-struct RunLoaders<'a> {
+struct RunLoaders<'a, 'b> {
     scene: &'a mut Scene,
-    context: LoaderContext<'a>,
+    context: &'a mut LoaderContext<'b>,
     result: Result<(), Error>,
 }
 
-impl<'a> RunLoaders<'a> {
+impl<'a, 'b> RunLoaders<'a, 'b> {
     fn start_loading<L: LoadAsset>(&mut self) -> Result<(), Error> {
         for (entity, loader) in self.scene.entities.query_mut::<&L>() {
             // remove first, so if an error occurs during loading, the loader will still be
             // removed.
             self.scene.command_buffer.remove_one::<L>(entity);
 
-            let mut loading_state = loader.start_loading(&mut self.context)?;
+            let mut loading_state = loader.start_loading(self.context)?;
 
             // try to load it immediately
-            match loading_state.poll(&mut self.context)? {
+            match loading_state.poll(self.context)? {
                 LoadingProgress::Pending => {
                     self.scene
                         .command_buffer
@@ -172,7 +183,7 @@ impl<'a> RunLoaders<'a> {
             .entities
             .query_mut::<&mut LoadingStateContainer<L>>()
         {
-            match loading_state.0.poll(&mut self.context) {
+            match loading_state.0.poll(self.context) {
                 Ok(LoadingProgress::Pending) => {}
                 Ok(LoadingProgress::Ready(loaded)) => {
                     self.scene.command_buffer.remove_one::<L>(entity);

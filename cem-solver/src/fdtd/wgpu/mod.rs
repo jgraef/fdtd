@@ -19,6 +19,8 @@ use cem_util::wgpu::buffer::{
     StagingPool,
     TypedArrayBuffer,
     TypedArrayBufferReadView,
+    WriteStaging,
+    WriteStagingCommit,
     WriteStagingTransaction,
 };
 use nalgebra::{
@@ -363,7 +365,7 @@ impl<'a> UpdatePass for FdtdWgpuUpdatePass<'a> {
                 });
 
         let mut write_staging = WriteStagingTransaction::new(
-            self.instance.backend.staging_pool.start_write(),
+            self.instance.backend.staging_pool.belt(),
             &self.instance.backend.device,
             &mut command_encoder,
         );
@@ -391,7 +393,7 @@ impl<'a> UpdatePass for FdtdWgpuUpdatePass<'a> {
             bytemuck::bytes_of(&config_data),
         );
 
-        drop(write_staging);
+        write_staging.commit();
 
         // compute pass
         {

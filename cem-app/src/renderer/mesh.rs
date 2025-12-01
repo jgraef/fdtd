@@ -342,7 +342,7 @@ impl LoadingState for LoadMesh {
                 let mut mesh_builder = MeshBufferBuilder::new(Some(Renderer::WINDING_ORDER));
                 generator.generate(&mut mesh_builder, *normals, *uvs);
                 // todo: label
-                mesh_builder.finish(context.render_resource_creator.device(), "todo")
+                mesh_builder.finish(context.render_resource_manager_transaction.device(), "todo")
             }
             LoadMesh::File { path: _ } => todo!(),
         };
