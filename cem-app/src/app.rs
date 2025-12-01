@@ -23,8 +23,11 @@ use image::RgbaImage;
 
 use crate::{
     args::Args,
-    clipboard::EguiClipboardPlugin,
-    composer::Composer,
+    build_info::BUILD_INFO,
+    composer::{
+        Composers,
+        loader::AssetLoader,
+    },
     config::AppConfig,
     error::{
         ErrorDialog,
@@ -38,8 +41,10 @@ use crate::{
     },
     renderer::{
         EguiWgpuRenderer,
+        Renderer,
         RendererConfig,
     },
+    solver::runner::SolverRunner,
 };
 
 #[derive(Clone, Debug)]
@@ -63,14 +68,22 @@ pub struct WgpuContext {
 }
 
 impl WgpuContext {
-    pub fn new(adapter: wgpu::Adapter, device: wgpu::Device, queue: wgpu::Queue) -> Self {
+    pub fn new(
+        adapter: wgpu::Adapter,
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+        staging_chunk_size: wgpu::BufferSize,
+    ) -> Self {
         let adapter_info = Arc::new(adapter.get_info());
+        tracing::debug!(?adapter_info);
+        let staging_pool = StagingPool::new(staging_chunk_size, "staging pool");
+
         Self {
             adapter,
             device,
             queue,
             adapter_info,
-            staging_pool: StagingPool::new(wgpu::BufferSize::new(0x1000).unwrap(), "staging pool"),
+            staging_pool,
         }
     }
 }
@@ -105,6 +118,8 @@ pub(super) fn run_app(args: Args) -> Result<(), Error> {
         Some(_) => panic!("Unsupported depth texture format: {depth_texture_format:?}"),
     };
 
+    let memory_hints = config.graphics.memory_hints.clone();
+
     eframe::run_native(
         "cem",
         NativeOptions {
@@ -138,7 +153,8 @@ pub(super) fn run_app(args: Args) -> Result<(), Error> {
                         ..Default::default()
                     }
                     .with_env(),
-                    power_preference: config.graphics.power_preference,
+                    power_preference: wgpu::PowerPreference::from_env()
+                        .unwrap_or(config.graphics.power_preference),
                     device_descriptor: Arc::new(move |adapter| {
                         let adapter_info = adapter.get_info();
                         tracing::debug!(
@@ -176,16 +192,28 @@ pub(super) fn run_app(args: Args) -> Result<(), Error> {
                             label: Some("egui wgpu device"),
                             required_limits,
                             required_features,
-                            ..Default::default()
+                            experimental_features: wgpu::ExperimentalFeatures::disabled(),
+                            memory_hints: memory_hints.clone(),
+                            trace: wgpu::Trace::Off,
                         }
                     }),
-                    ..Default::default()
+                    native_adapter_selector: None,
                 }),
-                ..Default::default()
+                desired_maximum_frame_latency: None,
             },
-            ..Default::default()
+            vsync: false,
+            hardware_acceleration: eframe::HardwareAcceleration::Preferred,
+            renderer: eframe::Renderer::Wgpu,
+            run_and_return: true,
+            event_loop_builder: None,
+            window_builder: None,
+            centered: false,
+            persist_window: true,
+            dithering: false,
         },
-        Box::new(|cc| {
+        Box::new(move |cc| {
+            egui_extras::install_image_loaders(&cc.egui_ctx);
+
             let render_state = cc
                 .wgpu_render_state
                 .as_ref()
@@ -199,11 +227,12 @@ pub(super) fn run_app(args: Args) -> Result<(), Error> {
             };
             tracing::debug!(?renderer_config);
 
-            // pass wgpu context to app (e.g. for compute shaders)
+            // wgpu context. used for setting up the renderer and running compute shaders
             let wgpu_context = WgpuContext::new(
                 render_state.adapter.clone(),
                 render_state.device.clone(),
                 render_state.queue.clone(),
+                config.graphics.staging_chunk_size,
             );
 
             // store wgpu context in egui context
@@ -212,7 +241,7 @@ pub(super) fn run_app(args: Args) -> Result<(), Error> {
             });
 
             // add our custom clipboard extension
-            cc.egui_ctx.add_plugin(EguiClipboardPlugin);
+            //cc.egui_ctx.add_plugin(EguiClipboardPlugin);
 
             let create_app_context = CreateAppContext {
                 wgpu_context,
@@ -234,9 +263,12 @@ pub(super) fn run_app(args: Args) -> Result<(), Error> {
 pub struct App {
     pub app_files: AppFiles,
     pub config: AppConfig,
-    pub composer: Composer,
     pub file_dialog: FileDialog,
     pub show_about: bool,
+    pub renderer: Renderer,
+    pub asset_loader: AssetLoader,
+    pub solver_runner: SolverRunner,
+    pub composers: Composers,
 }
 
 impl App {
@@ -250,6 +282,15 @@ impl App {
             style.compact_menu_style = false;
             // this doesn't seem to work :(
             style.spacing.menu_spacing = 0.0;
+            style.visuals.menu_corner_radius = egui::CornerRadius::same(4);
+
+            style.visuals.window_shadow.offset = [5, 10];
+            style.visuals.window_shadow.blur = 8;
+            style.visuals.window_shadow.spread = 0;
+
+            style.visuals.popup_shadow.offset = [5, 10];
+            style.visuals.popup_shadow.blur = 8;
+            style.visuals.popup_shadow.spread = 0;
         });
 
         // create file dialog for opening and saving files
@@ -258,11 +299,11 @@ impl App {
             .add_file_filter_extensions("NEC", vec!["nec"]);
 
         // create composer ui
-        let mut composer = Composer::new(&context);
+        let mut composers = Composers::default();
 
         if context.args.new_file {
             // command line telling us to directly go to a new file
-            composer.new_file(&context.config);
+            composers.new_file(&context.config);
         }
         else if let Some(path) = &context.args.file {
             // if a file was passed via command line argument, open it
@@ -273,19 +314,27 @@ impl App {
                 context.config.recently_opened_files_limit,
             );
 
-            composer
+            composers
                 .open_file(&context.config, path)
                 .ok_or_handle(&mut error_dialog);
         }
 
         error_dialog.register_in_context(&context.egui_context);
 
+        let renderer = Renderer::from_app_context(&context);
+        let render_resource_manager = renderer.resource_creator();
+        let asset_loader = AssetLoader::new(render_resource_manager.clone());
+        let solver_runner = SolverRunner::from_app_context(&context, render_resource_manager);
+
         Self {
             app_files: context.app_files,
             config: context.config,
-            composer,
             file_dialog,
             show_about: false,
+            renderer,
+            asset_loader,
+            solver_runner,
+            composers,
         }
     }
 
@@ -341,21 +390,34 @@ impl eframe::App for App {
             }
         }
 
-        // show top menubar
-        MenuBar::new(self).show(ctx);
-
-        // show composer UI
-        self.composer.show(ctx);
-
-        egui::Window::new("About")
-            .movable(true)
-            .collapsible(false)
-            .open(&mut self.show_about)
+        egui::Panel::top("top_panel")
+            .frame(
+                egui::Frame::new()
+                    .inner_margin(egui::Margin::symmetric(2, 2))
+                    .fill(ctx.style().visuals.panel_fill),
+            )
             .show(ctx, |ui| {
-                ui.label(format!("Version: {}", std::env!("CARGO_PKG_VERSION")))
-                // todo: display other information (build commit hash, mayve
-                // wgpu info?)
+                ui.horizontal(|ui| {
+                    ui.add_sized(
+                        egui::Vec2::new(32.0, 32.0),
+                        egui::Image::new(egui::include_image!("../../assets/logo.png"))
+                            .fit_to_fraction([0.9; 2].into()),
+                    );
+
+                    ui.vertical(|ui| {
+                        MenuBar::new(self).show(ui);
+                        self.composers.show_tabs(ui);
+                    });
+                });
             });
+
+        // show solver ui window
+        self.solver_runner.show_active_solver_ui(ctx);
+
+        self.composers
+            .show(ctx, &mut self.renderer, &mut self.asset_loader);
+
+        show_about_window(ctx, &mut self.show_about);
 
         self.show_debug_window(ctx);
 
@@ -372,7 +434,7 @@ impl eframe::App for App {
                             self.config.recently_opened_files_limit,
                         );
 
-                        self.composer
+                        self.composers
                             .open_file(&self.config, path)
                             .ok_or_handle(ctx);
                     }
@@ -433,4 +495,30 @@ impl GithubUrls {
     pub fn branch(&self, branch: &str) -> String {
         format!("{}/tree/{branch}", self.repository)
     }
+}
+
+fn show_about_window(ctx: &egui::Context, is_open: &mut bool) {
+    egui::Window::new("About")
+        .movable(true)
+        .collapsible(false)
+        .open(is_open)
+        .show(ctx, |ui| {
+            ui.label(format!("Version: {}", std::env!("CARGO_PKG_VERSION")));
+
+            if let Some(branch) = BUILD_INFO.git_branch {
+                ui.small("Branch:");
+                ui.hyperlink_to(
+                    egui::WidgetText::from(branch).monospace(),
+                    GithubUrls::PACKAGE.branch(branch),
+                );
+            }
+
+            if let Some(commit) = BUILD_INFO.git_commit {
+                ui.small("Commit:");
+                ui.hyperlink_to(
+                    egui::WidgetText::from(commit).monospace(),
+                    GithubUrls::PACKAGE.commit(commit),
+                );
+            }
+        });
 }

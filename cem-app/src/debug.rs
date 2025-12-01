@@ -64,19 +64,29 @@ impl App {
                                 }
                             });
 
-                            ui.collapsing("Settings", |ui| {
-                                ctx.settings_ui(ui);
+                            ui.collapsing("wgpu", |ui| {
+                                self.renderer.wgpu_context().show_debug(ui);
                             });
 
-                            ui.collapsing("Inspection", |ui| {
-                                ctx.inspection_ui(ui);
+                            ui.collapsing("Renderer", |ui| {
+                                self.renderer.show_debug(ui);
                             });
 
-                            ui.collapsing("Memory", |ui| {
-                                ctx.memory_ui(ui);
-                            });
+                            self.composers.show_debug(ui);
 
-                            self.composer.show_debug(ui);
+                            ui.collapsing("egui", |ui| {
+                                ui.collapsing("Settings", |ui| {
+                                    ctx.settings_ui(ui);
+                                });
+
+                                ui.collapsing("Inspection", |ui| {
+                                    ctx.inspection_ui(ui);
+                                });
+
+                                ui.collapsing("Memory", |ui| {
+                                    ctx.memory_ui(ui);
+                                });
+                            });
                         });
                     });
                 ui.take_available_space();
@@ -144,7 +154,7 @@ impl DebugUi for WgpuContext {
                 format_size(staging_belt_info.total_allocation_bytes)
             ));
             ui.label(format!(
-                "Total staged: {}",
+                "Cumulative staged: {}",
                 format_size(staging_belt_info.total_staged_bytes)
             ));
         });

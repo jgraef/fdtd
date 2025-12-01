@@ -30,9 +30,10 @@ eframe = { version = "0.33.0", default-features = false, features = [
     "wgpu",
     "persistence",
 ] }
-egui = { version = "0.33.0", features = ["persistence"] }
+egui = { version = "0.33.2", features = ["persistence"] }
 egui-file-dialog = "0.12.0"
-egui-wgpu = { version = "0.33.0", features = ["default"] }
+egui-wgpu = { version = "0.33.2", features = ["default"] }
+egui_extras = { version = "0.33.2", features = ["all_loaders"] }
 egui_ltreeview = { version = "0.6.0", features = ["persistence"] }
 egui_plot = "0.34.0"
 either = "1.15.0"

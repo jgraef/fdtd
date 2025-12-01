@@ -1,3 +1,5 @@
+#![warn(clippy::todo, unused_qualifications)]
+
 #[cfg(feature = "wgpu")]
 pub mod wgpu;
 

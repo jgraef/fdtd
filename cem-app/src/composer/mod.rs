@@ -8,6 +8,7 @@ pub mod undo;
 pub mod view;
 
 use std::{
+    borrow::Cow,
     convert::Infallible,
     fs::File,
     io::BufReader,
@@ -57,7 +58,6 @@ use serde::{
 
 use crate::{
     Error,
-    app::CreateAppContext,
     composer::{
         entity::EntityPropertiesWindow,
         file_formats::{
@@ -138,49 +138,93 @@ use crate::{
         ui::SolverConfigUiWindow,
     },
     util::egui::{
-        EguiUtilContextExt,
         EguiUtilUiExt,
         probe::PropertiesUi,
     },
 };
 
-/// Scene composer widget.
-///
-/// This is stateful, so `&mut Composer` is the actual widget. It exists whether
-/// a file is open or not and keeps track of that.
-#[derive(Debug)]
-pub struct Composer {
-    /// The state of an open file
-    state: Option<ComposerState>,
-
-    /// The renderer used to render a scene (if a file is open)
-    renderer: Renderer,
-
-    asset_loader: AssetLoader,
-
-    solver_runner: SolverRunner,
+#[derive(Debug, Default)]
+pub struct Composers {
+    composers: Vec<ComposerState>,
+    active: Option<usize>,
 }
 
-impl Composer {
-    pub fn new(context: &CreateAppContext) -> Self {
-        let renderer = Renderer::from_app_context(context);
-        let render_resource_manager = renderer.resource_creator();
-
-        let asset_loader = AssetLoader::new(render_resource_manager.clone());
-
-        let solver_runner = SolverRunner::new(
-            context.wgpu_context.clone(),
-            render_resource_manager.clone(),
-            context.egui_context.repaint_trigger(),
-            context.egui_context.error_sink(),
-        );
-
-        Self {
-            state: None,
-            renderer,
-            solver_runner,
-            asset_loader,
+impl Composers {
+    pub fn show(
+        &mut self,
+        ctx: &egui::Context,
+        renderer: &mut Renderer,
+        asset_loader: &mut AssetLoader,
+    ) {
+        if self.composers.is_empty() {
+            // what is being shown when no file is open
+            egui::CentralPanel::default().show(ctx, |ui| {
+                ui.add_space(100.0);
+                ui.vertical_centered(|ui| {
+                    ui.label(egui::RichText::new("Welcome!").heading());
+                    ui.label(lipsum!(20));
+                });
+            });
         }
+        else if let Some(index) = self.active {
+            if let Some(composer) = self.composers.get_mut(index) {
+                composer.show(ctx, renderer, asset_loader);
+            }
+            else {
+                tracing::error!(index, "invalid active composer");
+                self.active = Some(0);
+            }
+        }
+    }
+
+    pub fn show_tabs(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            // todo: these buttons won't work for our tabs, since we need a small close
+            // button inside of it. we need to roll our own widget *sigh*
+
+            let style = ui.style_mut();
+            style.spacing.item_spacing.x = 1.0;
+            style.spacing.button_padding.x = 10.0;
+            style.visuals.selection.bg_fill = style.visuals.widgets.inactive.weak_bg_fill;
+            style.visuals.selection.stroke = style.visuals.widgets.inactive.fg_stroke;
+            style.visuals.widgets.inactive.bg_fill = style.visuals.panel_fill;
+            style.visuals.widgets.inactive.weak_bg_fill = style.visuals.panel_fill;
+            style.visuals.widgets.active.fg_stroke.color =
+                style.visuals.widgets.inactive.fg_stroke.color;
+
+            for (i, composer) in self.composers.iter().enumerate() {
+                let is_active = self.active.is_some_and(|active| active == i);
+                let title = format!("🗋 {}", composer.title);
+
+                let button = egui::Button::new(title)
+                    .corner_radius(egui::CornerRadius {
+                        nw: 4,
+                        ne: 4,
+                        sw: 0,
+                        se: 0,
+                    })
+                    .selected(is_active)
+                    .frame(true)
+                    .frame_when_inactive(true);
+
+                if ui.add(button).clicked() {
+                    self.active = Some(i);
+                }
+            }
+        });
+    }
+
+    fn open_composer(&mut self, composer: ComposerState) {
+        if let Some(path) = &composer.path {
+            tracing::debug!(path = %path.display(), "open composer");
+        }
+        else {
+            tracing::debug!("open composer (no path)");
+        }
+
+        let index = self.composers.len();
+        self.composers.push(composer);
+        self.active = Some(index);
     }
 
     /// Creates a new file with an example scene
@@ -194,7 +238,7 @@ impl Composer {
         //PresetScene.populate_scene(&mut state.scene).expect("populating example scene
         // failed");
 
-        self.state = Some(state);
+        self.open_composer(state);
     }
 
     /// Opens a file and populate the scene with it.
@@ -223,9 +267,13 @@ impl Composer {
                     .populate_scene(&mut state.scene)?;
 
                     state.path = Some(path.to_owned());
+                    if let Some(file_name) = path.file_name() {
+                        state.title = file_name.to_string_lossy().into_owned().into();
+                    }
+
                     state.camera_mut().fit_to_scene(&Default::default());
 
-                    self.state = Some(state);
+                    self.open_composer(state);
                 }
                 _ => bail!("Unsupported file format: {file_format:?}"),
             }
@@ -237,17 +285,26 @@ impl Composer {
         Ok(())
     }
 
-    pub fn has_file_open(&self) -> bool {
-        self.state.is_some()
+    pub fn close_file(&mut self) {
+        if let Some(index) = self.active {
+            self.active = index.checked_sub(1);
+            self.composers.remove(index);
+        }
     }
 
-    /// Closes currently open file.
-    ///
-    /// # TODO
-    ///
-    /// Check if we need to save and prompt user for it.
-    pub fn close_file(&mut self) {
-        self.state = None;
+    pub fn has_file_open(&self) -> bool {
+        !self.composers.is_empty()
+    }
+
+    fn active_mut(&mut self) -> Option<&mut ComposerState> {
+        self.active.and_then(|index| self.composers.get_mut(index))
+    }
+
+    fn with_active<'a, R>(&'a mut self, f: impl FnOnce(&'a mut ComposerState) -> R) -> Option<R>
+    where
+        R: 'a,
+    {
+        self.active_mut().map(f)
     }
 
     /// todo: do we want to move this into ComposerMenuElements? It's only used
@@ -256,32 +313,20 @@ impl Composer {
         &mut self,
         f: impl FnOnce(&mut ComposerState, Vec<hecs::Entity>) -> R,
     ) -> Option<R> {
-        self.state.as_mut().map(|state| {
-            let selected = state.selection().entities();
-            f(state, selected)
+        self.with_active(|composer| {
+            let selected = composer.selection().entities();
+            f(composer, selected)
         })
     }
 
-    pub fn show(&mut self, ctx: &egui::Context) {
-        self.solver_runner.show_active_solver_ui(ctx);
-
-        if let Some(state) = &mut self.state {
-            state.show(ctx, &mut self.renderer, &mut self.asset_loader);
+    pub fn menu_elements<'a>(
+        &'a mut self,
+        solver_runner: &'a mut SolverRunner,
+    ) -> ComposerMenuElements<'a> {
+        ComposerMenuElements {
+            composers: self,
+            solver_runner,
         }
-        else {
-            // what is being shown when no file is open
-            egui::CentralPanel::default().show(ctx, |ui| {
-                ui.add_space(100.0);
-                ui.vertical_centered(|ui| {
-                    ui.label(egui::RichText::new("Welcome!").heading());
-                    ui.label(lipsum!(20));
-                });
-            });
-        }
-    }
-
-    pub fn menu_elements<'a>(&'a mut self) -> ComposerMenuElements<'a> {
-        ComposerMenuElements { composer: self }
     }
 }
 
@@ -294,6 +339,8 @@ struct ComposerState {
     ///
     /// This might need to keep track of how it's saved (e.g. file format)
     path: Option<PathBuf>,
+
+    title: Cow<'static, str>,
 
     /// Whether the file was modified, since it was loaded or saved.
     modified: bool,
@@ -371,6 +418,7 @@ impl ComposerState {
         Self {
             config,
             path: None,
+            title: "Untitled".into(),
             modified: false,
             scene,
             camera_entity,
@@ -383,9 +431,7 @@ impl ComposerState {
             entity_windows: vec![],
         }
     }
-}
 
-impl ComposerState {
     pub fn show(
         &mut self,
         ctx: &egui::Context,
@@ -446,8 +492,8 @@ impl ComposerState {
             }
         }
 
-        // left panel: shows object tree
-        egui::SidePanel::left(egui::Id::new("left_panel"))
+        // right panel: shows object tree
+        egui::Panel::right(egui::Id::new("right_panel"))
             .resizable(true)
             .show(ctx, |ui| {
                 egui::ScrollArea::both()
@@ -750,9 +796,9 @@ impl PopulateScene for ExampleScene {
     fn populate_scene(&self, scene: &mut Scene) -> Result<(), Self::Error> {
         // device
 
-        let em_material = cem_solver::material::Material {
+        let em_material = Material {
             relative_permittivity: 3.9,
-            ..cem_solver::material::Material::VACUUM
+            ..Material::VACUUM
         };
 
         let cube = scene
@@ -811,7 +857,7 @@ impl PopulateScene for ExampleScene {
                     color_map: test_color_map(1.0, Vector3::z_axis()),
                     half_extents,
                 },
-                material::LoadAlbedoTexture::new("tmp/test_pattern.png"),
+                material::LoadAlbedoTexture::new("assets/test_pattern.png"),
                 material::Material::from(material::presets::OFFICE_PAPER),
                 LocalTransform::identity(),
                 Collider::from(quad),
@@ -1193,80 +1239,78 @@ impl Default for EntityWindow {
     }
 }
 
-impl DebugUi for Composer {
+impl DebugUi for Composers {
     fn show_debug(&self, ui: &mut egui::Ui) {
-        if let Some(state) = &self.state {
-            ui.collapsing("Scene", |ui| {
-                {
-                    // this whole block is just for debugging
-                    state
-                        .selection()
-                        .with_query_iter::<Option<&Label>, _>(|selected| {
-                            let num_selected = selected.len();
-                            if num_selected == 0 {
-                                ui.label("Nothing selected");
-                            }
-                            else {
-                                ui.label("Selected:");
-                                ui.indent(egui::Id::NULL, |ui| {
-                                    for (entity, label) in selected {
-                                        ui.label(EntityDebugLabel {
-                                            entity,
-                                            label: label.cloned(),
-                                            invalid: false,
-                                        });
-                                    }
-                                });
-                            }
+        if !self.composers.is_empty() {
+            ui.collapsing("Composers", |ui| {
+                for (i, composer) in self.composers.iter().enumerate() {
+                    ui.collapsing(format!("#{}", i + 1), |ui| {
+                        composer
+                            .selection()
+                            .with_query_iter::<Option<&Label>, _>(|selected| {
+                                let num_selected = selected.len();
+                                if num_selected == 0 {
+                                    ui.label("Nothing selected");
+                                }
+                                else {
+                                    ui.label("Selected:");
+                                    ui.indent(egui::Id::NULL, |ui| {
+                                        for (entity, label) in selected {
+                                            ui.label(EntityDebugLabel {
+                                                entity,
+                                                label: label.cloned(),
+                                                invalid: false,
+                                            });
+                                        }
+                                    });
+                                }
+                            });
+
+                        if let Some(entity_under_pointer) =
+                            &composer.scene_pointer.entity_under_pointer
+                        {
+                            ui.label("Hovered");
+                            ui.indent(egui::Id::NULL, |ui| {
+                                ui.label(
+                                    composer
+                                        .scene
+                                        .entity_debug_label(entity_under_pointer.entity),
+                                );
+                                ui.label(format!(
+                                    "({:.4}, {:.4}, {:.4})",
+                                    entity_under_pointer.point_hovered.x,
+                                    entity_under_pointer.point_hovered.y,
+                                    entity_under_pointer.point_hovered.z,
+                                ));
+                                ui.label(format!(
+                                    "Distance: {}",
+                                    entity_under_pointer.distance_from_camera
+                                ));
+                            });
+                        }
+                        else {
+                            ui.label("Nothing hovered");
+                        }
+
+                        for (entity, info) in
+                            composer.scene.entities.query::<&CameraRenderInfo>().iter()
+                        {
+                            ui.collapsing(format!("Camera {entity:?}"), |ui| {
+                                ui.label(format!("Total: {:?}", info.total));
+                                ui.label(format!("Opaque: {:?}", info.num_opaque));
+                                ui.label(format!("Transparent: {:?}", info.num_transparent));
+                                ui.label(format!("Outlines: {:?}", info.num_outlines));
+                            });
+                        }
+
+                        ui.collapsing("Undo Buffer", |ui| {
+                            composer.undo_buffer.show_debug(ui);
                         });
 
-                    if let Some(entity_under_pointer) = &state.scene_pointer.entity_under_pointer {
-                        ui.label("Hovered");
-                        ui.indent(egui::Id::NULL, |ui| {
-                            ui.label(state.scene.entity_debug_label(entity_under_pointer.entity));
-                            ui.label(format!(
-                                "({:.4}, {:.4}, {:.4})",
-                                entity_under_pointer.point_hovered.x,
-                                entity_under_pointer.point_hovered.y,
-                                entity_under_pointer.point_hovered.z,
-                            ));
-                            ui.label(format!(
-                                "Distance: {}",
-                                entity_under_pointer.distance_from_camera
-                            ));
-                        });
-                    }
-                    else {
-                        ui.label("Nothing hovered");
-                    }
-                }
-
-                ui.label("Undo Buffer");
-                ui.indent(egui::Id::NULL, |ui| {
-                    state.undo_buffer.show_debug(ui);
-                });
-
-                state.scene.show_debug(ui);
-            });
-        }
-
-        ui.collapsing("wgpu", |ui| {
-            self.renderer.wgpu_context().show_debug(ui);
-        });
-
-        ui.collapsing("Renderer", |ui| {
-            self.renderer.show_debug(ui);
-
-            if let Some(state) = &self.state {
-                for (entity, info) in state.scene.entities.query::<&CameraRenderInfo>().iter() {
-                    ui.collapsing(format!("Camera {entity:?}"), |ui| {
-                        ui.label(format!("Total: {:?}", info.total));
-                        ui.label(format!("Opaque: {:?}", info.num_opaque));
-                        ui.label(format!("Transparent: {:?}", info.num_transparent));
-                        ui.label(format!("Outlines: {:?}", info.num_outlines));
+                        composer.scene.show_debug(ui);
                     });
                 }
-            }
-        });
+            });
+        }
     }
 }

@@ -17,6 +17,7 @@ use crate::{
         FileDialogAction,
         GithubUrls,
     },
+    composer::menubar::ComposerMenuElements,
     error::ResultExt,
     util::format_path,
 };
@@ -30,17 +31,21 @@ impl<'a> MenuBar<'a> {
         Self { app }
     }
 
-    pub fn show(&mut self, ctx: &egui::Context) {
-        egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
-            egui::MenuBar::new().ui(ui, |ui| {
-                self.file_menu(ui);
-                self.edit_menu(ui);
-                self.selection_menu(ui);
-                self.view_menu(ui);
-                self.run_menu(ui);
-                self.help_menu(ui);
-            });
+    pub fn show(&mut self, ui: &mut egui::Ui) {
+        egui::MenuBar::new().ui(ui, |ui| {
+            self.file_menu(ui);
+            self.edit_menu(ui);
+            self.selection_menu(ui);
+            self.view_menu(ui);
+            self.run_menu(ui);
+            self.help_menu(ui);
         });
+    }
+
+    fn composer_menu_elements(&mut self) -> ComposerMenuElements<'_> {
+        self.app
+            .composers
+            .menu_elements(&mut self.app.solver_runner)
     }
 
     fn file_menu(&mut self, ui: &mut egui::Ui) {
@@ -49,7 +54,7 @@ impl<'a> MenuBar<'a> {
 
             if ui.button("New File").clicked() {
                 tracing::debug!("new file");
-                self.app.composer.new_file(&self.app.config);
+                self.app.composers.new_file(&self.app.config);
             }
 
             ui.separator();
@@ -67,7 +72,7 @@ impl<'a> MenuBar<'a> {
                             RecentlyOpenedFiles::move_to_top(ui.ctx(), &path);
 
                             self.app
-                                .composer
+                                .composers
                                 .open_file(&self.app.config, &path)
                                 .ok_or_handle(&*ui);
                         }
@@ -81,14 +86,17 @@ impl<'a> MenuBar<'a> {
             ui.separator();
 
             if ui
-                .add_enabled(self.app.composer.has_file_open(), egui::Button::new("Save"))
+                .add_enabled(
+                    self.app.composers.has_file_open(),
+                    egui::Button::new("Save"),
+                )
                 .clicked()
             {
                 tracing::debug!("todo: save");
             }
             if ui
                 .add_enabled(
-                    self.app.composer.has_file_open(),
+                    self.app.composers.has_file_open(),
                     egui::Button::new("Save As"),
                 )
                 .clicked()
@@ -107,12 +115,12 @@ impl<'a> MenuBar<'a> {
 
             if ui
                 .add_enabled(
-                    self.app.composer.has_file_open(),
+                    self.app.composers.has_file_open(),
                     egui::Button::new("Close File"),
                 )
                 .clicked()
             {
-                self.app.composer.close_file();
+                self.app.composers.close_file();
             }
 
             ui.separator();
@@ -127,28 +135,28 @@ impl<'a> MenuBar<'a> {
     fn edit_menu(&mut self, ui: &mut egui::Ui) {
         ui.menu_button("Edit", |ui| {
             setup_menu(ui);
-            self.app.composer.menu_elements().edit_menu_buttons(ui);
+            self.composer_menu_elements().edit_menu_buttons(ui);
         });
     }
 
     fn selection_menu(&mut self, ui: &mut egui::Ui) {
         ui.menu_button("Selection", |ui| {
             setup_menu(ui);
-            self.app.composer.menu_elements().selection_menu_buttons(ui);
+            self.composer_menu_elements().selection_menu_buttons(ui);
         });
     }
 
     fn view_menu(&mut self, ui: &mut egui::Ui) {
         ui.menu_button("View", |ui| {
             setup_menu(ui);
-            self.app.composer.menu_elements().camera_submenu_button(ui);
+            self.composer_menu_elements().camera_submenu_button(ui);
         });
     }
 
     fn run_menu(&mut self, ui: &mut egui::Ui) {
         ui.menu_button("Run", |ui| {
             setup_menu(ui);
-            let mut composer_menu_elements = self.app.composer.menu_elements();
+            let mut composer_menu_elements = self.composer_menu_elements();
 
             composer_menu_elements.configure_solver_button(ui);
             ui.separator();

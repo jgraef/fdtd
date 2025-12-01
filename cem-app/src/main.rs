@@ -1,5 +1,5 @@
-#![allow(dead_code)]
-#![allow(clippy::explicit_counter_loop)]
+#![allow(dead_code, clippy::explicit_counter_loop)]
+#![warn(unused_qualifications)]
 
 pub mod app;
 pub mod args;
@@ -41,7 +41,7 @@ fn main() -> Result<(), Error> {
 
     let args = Args::parse();
     match args.command {
-        Command::Main(args) => crate::app::run_app(args)?,
+        Command::Main(args) => app::run_app(args)?,
         Command::DumpDefaultConfig { output, format } => {
             let config = AppConfig::default();
             let config = match format.as_str() {
@@ -70,7 +70,7 @@ struct Args {
 #[derive(Debug, Subcommand)]
 enum Command {
     // the main app, the other's are just temporary for testing purposes
-    Main(crate::args::Args),
+    Main(args::Args),
     DumpDefaultConfig {
         #[clap(short, long)]
         output: Option<PathBuf>,

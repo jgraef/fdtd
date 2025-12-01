@@ -60,7 +60,7 @@ use parry3d::{
 
 use crate::{
     Error,
-    app::WgpuContext,
+    app::CreateAppContext,
     error::{
         ErrorHandler,
         UiErrorSink,
@@ -87,7 +87,10 @@ use crate::{
         observer::Observer,
     },
     util::{
-        egui::RepaintTrigger,
+        egui::{
+            EguiUtilContextExt,
+            RepaintTrigger,
+        },
         spawn_thread,
     },
 };
@@ -102,21 +105,19 @@ pub struct SolverRunner {
 }
 
 impl SolverRunner {
-    pub fn new(
-        wgpu_context: WgpuContext,
+    pub fn from_app_context(
+        context: &CreateAppContext,
         render_resource_manager: RenderResourceManager,
-        repaint_trigger: RepaintTrigger,
-        error_sink: UiErrorSink,
     ) -> Self {
         Self {
             fdtd_wgpu: FdtdWgpuBackend::new(
-                wgpu_context.device,
-                wgpu_context.queue,
-                wgpu_context.staging_pool,
+                context.wgpu_context.device.clone(),
+                context.wgpu_context.queue.clone(),
+                context.wgpu_context.staging_pool.clone(),
             ),
             render_resource_manager,
-            repaint_trigger,
-            error_sink,
+            repaint_trigger: context.egui_context.repaint_trigger(),
+            error_sink: context.egui_context.error_sink(),
             active_solver: None,
         }
     }

@@ -215,9 +215,8 @@ where
     }
 
     fn memory_required(&self, config: &FdtdSolverConfig) -> Option<usize> {
-        let per_cell = std::mem::size_of::<UpdateCoefficients>()
-            + 4 * std::mem::size_of::<Vector3<f64>>()
-            + std::mem::size_of::<usize>();
+        let per_cell =
+            size_of::<UpdateCoefficients>() + 4 * size_of::<Vector3<f64>>() + size_of::<usize>();
         Some(per_cell * config.num_cells())
     }
 }

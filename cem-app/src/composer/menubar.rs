@@ -5,37 +5,35 @@ use nalgebra::{
 
 use crate::{
     composer::{
-        Composer,
         ComposerState,
+        Composers,
     },
     error::ResultExt,
     menubar::setup_menu,
-    solver::config::SolverConfig,
+    solver::{
+        config::SolverConfig,
+        runner::SolverRunner,
+    },
 };
 
 /// Composer proxy to build menubar.
 #[derive(Debug)]
 pub struct ComposerMenuElements<'a> {
-    pub composer: &'a mut Composer,
+    pub composers: &'a mut Composers,
+    pub solver_runner: &'a mut SolverRunner,
 }
 
 impl<'a> ComposerMenuElements<'a> {
-    fn has_file_open(&self) -> bool {
-        self.composer.state.is_some()
-    }
-
     /// TODO: We might want to split the edit menu into several methods.
     pub fn edit_menu_buttons(&mut self, ui: &mut egui::Ui) {
         let (has_file_open, can_undo, can_redo, has_selected) = self
-            .composer
-            .state
-            .as_ref()
-            .map(|state| {
+            .composers
+            .with_active(|composer| {
                 (
                     true,
-                    state.has_undos(),
-                    state.has_redos(),
-                    !state.selection().is_empty(),
+                    composer.has_undos(),
+                    composer.has_redos(),
+                    !composer.selection().is_empty(),
                 )
             })
             .unwrap_or_default();
@@ -44,13 +42,13 @@ impl<'a> ComposerMenuElements<'a> {
             .add_enabled(can_undo, egui::Button::new("Undo"))
             .clicked()
         {
-            self.composer.state.as_mut().unwrap().undo();
+            self.composers.with_active(|composer| composer.undo());
         }
         if ui
             .add_enabled(can_redo, egui::Button::new("Redo"))
             .clicked()
         {
-            self.composer.state.as_mut().unwrap().redo();
+            self.composers.with_active(|composer| composer.redo());
         }
 
         ui.separator();
@@ -59,7 +57,7 @@ impl<'a> ComposerMenuElements<'a> {
             .add_enabled(has_selected, egui::Button::new("Cut"))
             .clicked()
         {
-            self.composer.with_selected(|state, entities| {
+            self.composers.with_selected(|state, entities| {
                 state.copy(ui.ctx(), entities.iter().copied());
                 state.delete(entities);
             });
@@ -69,7 +67,7 @@ impl<'a> ComposerMenuElements<'a> {
             .add_enabled(has_selected, egui::Button::new("Copy"))
             .clicked()
         {
-            self.composer
+            self.composers
                 .with_selected(|state, entities| state.copy(ui.ctx(), entities));
         }
 
@@ -89,16 +87,14 @@ impl<'a> ComposerMenuElements<'a> {
             .add_enabled(has_selected, egui::Button::new("Delete"))
             .clicked()
         {
-            self.composer.with_selected(ComposerState::delete);
+            self.composers.with_selected(ComposerState::delete);
         }
     }
 
     pub fn selection_menu_buttons(&mut self, ui: &mut egui::Ui) {
         let mut selection = self
-            .composer
-            .state
-            .as_mut()
-            .map(|state| state.selection_mut());
+            .composers
+            .with_active(|composer| composer.selection_mut());
 
         let has_file_open = selection.is_some();
         let has_anything_selected = selection
@@ -131,7 +127,7 @@ impl<'a> ComposerMenuElements<'a> {
         ui.menu_button("Camera", |ui| {
             setup_menu(ui);
 
-            let mut camera = self.composer.state.as_mut().map(|state| state.camera_mut());
+            let mut camera = self.composers.with_active(|composer| composer.camera_mut());
             let has_file_open = camera.is_some();
             let fit_camera_margin = Vector2::zeros();
 
@@ -211,21 +207,22 @@ impl<'a> ComposerMenuElements<'a> {
                 .add_enabled(has_file_open, egui::Button::new("Configure"))
                 .clicked()
             {
-                self.composer.state.as_mut().unwrap().open_camera_window();
+                self.composers
+                    .with_active(|composer| composer.open_camera_window());
             }
         });
     }
 
     pub fn configure_solver_button(&mut self, ui: &mut egui::Ui) {
         if ui
-            .add_enabled(self.has_file_open(), egui::Button::new("Configure Solvers"))
+            .add_enabled(
+                self.composers.has_file_open(),
+                egui::Button::new("Configure Solvers"),
+            )
             .clicked()
         {
-            self.composer
-                .state
-                .as_mut()
-                .unwrap()
-                .open_solver_config_window();
+            self.composers
+                .with_active(|composer| composer.open_solver_config_window());
         }
     }
 
@@ -234,8 +231,9 @@ impl<'a> ComposerMenuElements<'a> {
             |solver: &SolverConfig| egui::Button::new(("Run ", &solver.label, " Solver"));
 
         let mut i = 0;
-        if let Some(state) = &mut self.composer.state {
-            for solver_config in state.solver_configs.iter() {
+
+        self.composers.with_active(|composer| {
+            for solver_config in composer.solver_configs.iter() {
                 if ui.add(solver_button(solver_config)).clicked() {
                     tracing::debug!(
                         index = i,
@@ -245,14 +243,13 @@ impl<'a> ComposerMenuElements<'a> {
                     );
                     // for now we'll just send the config and scene to the runner to run it. but
                     // we'll need an intermediate step to rasterize/tesselate the scene
-                    self.composer
-                        .solver_runner
-                        .run(solver_config, &mut state.scene)
+                    self.solver_runner
+                        .run(solver_config, &mut composer.scene)
                         .ok_or_handle(&*ui);
                 }
                 i += 1;
             }
-        }
+        });
 
         if i == 0 {
             ui.label("No Solvers configured");

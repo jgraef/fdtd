@@ -1,4 +1,4 @@
-#![warn(clippy::todo)]
+#![warn(clippy::todo, unused_qualifications)]
 
 pub mod fdtd;
 pub mod feec;

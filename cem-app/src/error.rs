@@ -21,6 +21,7 @@ impl<T, E> ResultExt<T> for Result<T, E>
 where
     Error: From<E>,
 {
+    #[track_caller]
     fn ok_or_handle(self, handler: impl ErrorHandler) -> Option<T> {
         match self {
             Ok(value) => Some(value),
@@ -43,6 +44,7 @@ impl ErrorHandler for &mut ErrorDialog {
 }
 
 impl ErrorHandler for &egui::Context {
+    #[track_caller]
     fn handle_error(self, error: Error) {
         tracing::error!("{error}");
 

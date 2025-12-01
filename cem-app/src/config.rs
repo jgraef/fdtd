@@ -128,6 +128,12 @@ pub struct GraphicsConfig {
 
     #[serde(default)]
     pub power_preference: wgpu::PowerPreference,
+
+    #[serde(default)]
+    pub memory_hints: wgpu::MemoryHints,
+
+    #[serde(default = "default_staging_chunk_size")]
+    pub staging_chunk_size: wgpu::BufferSize,
     // this is really limited and hard to tell what works
     //#[serde(default = "default_multisample_count")]
     //pub multisample_count: NonZero<u32>,
@@ -143,6 +149,8 @@ impl Default for GraphicsConfig {
         Self {
             backends: default_wgpu_backends(),
             power_preference: Default::default(),
+            memory_hints: Default::default(),
+            staging_chunk_size: default_staging_chunk_size(),
             //multisample_count: default_multisample_count(),
         }
     }
@@ -154,6 +162,10 @@ fn default_wgpu_backends() -> wgpu::Backends {
 
 fn default_multisample_count() -> NonZero<u32> {
     NonZero::new(4).unwrap()
+}
+
+fn default_staging_chunk_size() -> wgpu::BufferSize {
+    NonZero::new(0x1000).unwrap()
 }
 
 fn default_to_true() -> bool {

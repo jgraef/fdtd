@@ -6,7 +6,6 @@ use std::{
     sync::Arc,
 };
 
-use image::RgbaImage;
 use nalgebra::Vector2;
 use parking_lot::{
     RwLock,
@@ -74,7 +73,7 @@ impl UndecidedTextureSender {
             let mut image_buffer = self.shared.image_buffer.write();
             assert!(image_buffer.is_none(), "image buffer already present");
             *image_buffer = Some(ImageBuffer {
-                buffer: RgbaImage::new(self.shared.size.x, self.shared.size.y),
+                buffer: image::RgbaImage::new(self.shared.size.x, self.shared.size.y),
                 dirty: false,
             });
         }

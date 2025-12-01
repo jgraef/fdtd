@@ -68,7 +68,6 @@ impl CameraProjection {
     /// - `fovy`: Field of view along (camera-local) Y-axis (vertical angle).
     pub fn new(fovy: f32) -> Self {
         let projection = Perspective3::new(1.0, fovy, 0.1, 100.0);
-        tracing::debug!(?projection);
         Self { projection }
     }
 

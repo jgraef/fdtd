@@ -613,8 +613,8 @@ struct StagingBufferAlignment {
 impl StagingBufferAlignment {
     pub fn from_unaligned_buffer_range_typed<T>(index_range: Range<usize>) -> Self {
         let unaligned_copy_source = Range {
-            start: (std::mem::size_of::<T>() * index_range.start) as wgpu::BufferAddress,
-            end: (std::mem::size_of::<T>() * index_range.end) as wgpu::BufferAddress,
+            start: (size_of::<T>() * index_range.start) as wgpu::BufferAddress,
+            end: (size_of::<T>() * index_range.end) as wgpu::BufferAddress,
         };
         Self::from_unaligned_buffer_range(unaligned_copy_source)
     }
@@ -648,7 +648,7 @@ impl StagingBufferAlignment {
 }
 
 pub fn unpadded_buffer_size<T>(num_elements: usize) -> wgpu::BufferAddress {
-    (std::mem::size_of::<T>() * num_elements) as wgpu::BufferAddress
+    (size_of::<T>() * num_elements) as wgpu::BufferAddress
 }
 
 pub const BUFFER_COPY_ALIGN_MASK: wgpu::BufferAddress = wgpu::COPY_BUFFER_ALIGNMENT - 1;

@@ -104,7 +104,7 @@ impl Quad {
 }
 
 impl ComputeAabb for Quad {
-    fn compute_aabb(&self, transform: &nalgebra::Isometry3<f32>) -> Aabb {
+    fn compute_aabb(&self, transform: &Isometry3<f32>) -> Aabb {
         Aabb::from_half_extents(
             Point3::origin(),
             Vector3::new(self.half_extents.x, self.half_extents.y, 0.0),
