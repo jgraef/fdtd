@@ -1,12 +1,13 @@
 use std::sync::Arc;
 
 use cem_util::wgpu::{
+    ImageTextureExt,
+    UnsupportedColorSpace,
     create_texture,
-    create_texture_from_color,
-    create_texture_from_image,
+    create_texture_from_linsrgba,
 };
 use nalgebra::Vector2;
-use palette::Srgba;
+use palette::LinSrgba;
 
 use crate::{
     app::WgpuContext,
@@ -40,9 +41,10 @@ impl RenderResourceCreator {
         &self,
         size: &Vector2<u32>,
         usage: wgpu::TextureUsages,
+        format: wgpu::TextureFormat,
         label: &str,
     ) -> wgpu::Texture {
-        create_texture(&self.wgpu_context.device, size, usage, label)
+        create_texture(&self.wgpu_context.device, size, usage, format, label)
     }
 
     pub fn create_texture_from_image(
@@ -50,29 +52,29 @@ impl RenderResourceCreator {
         image: &image::RgbaImage,
         usage: wgpu::TextureUsages,
         label: &str,
-    ) -> wgpu::Texture {
-        create_texture_from_image(
-            &self.wgpu_context.device,
-            &self.wgpu_context.queue,
-            image,
-            usage,
-            label,
-        )
+    ) -> Result<wgpu::Texture, UnsupportedColorSpace> {
+        // todo: batch these
+        self.wgpu_context.with_staging(|write_staging| {
+            image.create_texture(usage, label, &self.wgpu_context.device, write_staging)
+        })
     }
 
     pub fn create_texture_from_color(
         &self,
-        color: &Srgba,
+        color: LinSrgba<u8>,
         usage: wgpu::TextureUsages,
         label: &str,
     ) -> wgpu::Texture {
-        create_texture_from_color(
-            &self.wgpu_context.device,
-            &self.wgpu_context.queue,
-            &color.into_format(),
-            usage,
-            label,
-        )
+        // todo: batch these
+        self.wgpu_context.with_staging(|write_staging| {
+            create_texture_from_linsrgba(
+                color,
+                usage,
+                label,
+                &self.wgpu_context.device,
+                write_staging,
+            )
+        })
     }
 
     pub fn create_texture_channel(
@@ -81,7 +83,7 @@ impl RenderResourceCreator {
         usage: wgpu::TextureUsages,
         label: &str,
     ) -> (UndecidedTextureSender, TextureReceiver) {
-        let texture = self.create_texture(size, usage, label);
+        let texture = self.create_texture(size, usage, wgpu::TextureFormat::Rgba8Unorm, label);
 
         texture_channel(
             Arc::new(TextureAndView::from_texture(texture, label)),
@@ -89,33 +91,6 @@ impl RenderResourceCreator {
             self.command_sender.clone(),
         )
     }
-
-    /*
-    pub fn load_texture(
-        &mut self,
-        texture_source: &mut TextureSource,
-    ) -> Result<LoadingProgress<Arc<TextureAndView>>, Error> {
-        match texture_source {
-            TextureSource::File { path } => {
-                let texture_and_view = self.texture_cache.get_or_insert(path, || {
-                    Ok::<_, Error>(Arc::new(TextureAndView::from_path(
-                        &self.wgpu_context.device,
-                        &self.wgpu_context.queue,
-                        &path,
-                    )?))
-                })?;
-                Ok(LoadingProgress::Ready(texture_and_view))
-            }
-            TextureSource::Channel { receiver } => {
-                let texture_and_view = receiver.register(
-                    &self.command_sender,
-                    wgpu::TextureFormat::Rgba8Unorm,
-                    |size, label| create_texture(&self.wgpu_context.device, size, label),
-                );
-                Ok(texture_and_view.into())
-            }
-        }
-    } */
 
     pub fn device(&self) -> &wgpu::Device {
         &self.wgpu_context.device

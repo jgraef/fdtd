@@ -26,13 +26,13 @@ use bytemuck::{
 use cem_util::{
     format_size,
     wgpu::{
-        WriteImageToTextureExt,
+        ImageTextureExt,
         buffer::{
             StagedTypedArrayBuffer,
             StagingBufferProvider,
             WriteStagingTransaction,
         },
-        create_texture_from_color,
+        create_texture_from_linsrgba,
         create_texture_view_from_texture,
     },
 };
@@ -369,7 +369,7 @@ impl Renderer {
         let mesh_transparent_pipeline = MeshPipeline::new(
             &context.wgpu_context.device,
             &MeshPipelineDescriptor {
-                label: "render/mesh/opaque",
+                label: "render/mesh/transparent",
                 renderer_config: &context.renderer_config,
                 camera_bind_group_layout: &camera_bind_group_layout,
                 mesh_bind_group_layout: &mesh_bind_group_layout,
@@ -434,7 +434,7 @@ impl Renderer {
         );
         assert!(instance_buffer.buffer.is_allocated());
 
-        let fallbacks = Fallbacks::new(&context.wgpu_context.device, &context.wgpu_context.queue);
+        let fallbacks = Fallbacks::new(&context.wgpu_context);
 
         Self {
             wgpu_context: context.wgpu_context.clone(),
@@ -891,54 +891,46 @@ struct Fallbacks {
     pub white: wgpu::TextureView,
     pub black: wgpu::TextureView,
     pub sampler: wgpu::Sampler,
-    pub vertex_buffer: wgpu::Buffer,
 }
 
 impl Fallbacks {
-    pub fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
-        let white = create_texture_from_color(
-            device,
-            queue,
-            &Srgba::new(255, 255, 255, 255),
-            wgpu::TextureUsages::TEXTURE_BINDING,
-            "white",
-        );
-        let white = create_texture_view_from_texture(&white, "white");
+    pub fn new(wgpu_context: &WgpuContext) -> Self {
+        wgpu_context.with_staging(|write_staging| {
+            let white = create_texture_from_linsrgba(
+                LinSrgba::new(255, 255, 255, 255),
+                wgpu::TextureUsages::TEXTURE_BINDING,
+                "white",
+                &wgpu_context.device,
+                write_staging,
+            );
+            let white = create_texture_view_from_texture(&white, "white");
 
-        let black = create_texture_from_color(
-            device,
-            queue,
-            &Srgba::new(0, 0, 0, 255),
-            wgpu::TextureUsages::TEXTURE_BINDING,
-            "black",
-        );
-        let black = create_texture_view_from_texture(&black, "black");
+            let black = create_texture_from_linsrgba(
+                LinSrgba::new(0, 0, 0, 255),
+                wgpu::TextureUsages::TEXTURE_BINDING,
+                "black",
+                &wgpu_context.device,
+                write_staging,
+            );
+            let black = create_texture_view_from_texture(&black, "black");
 
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("default texture sampler"),
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Nearest,
-            ..Default::default()
-        });
+            let sampler = wgpu_context
+                .device
+                .create_sampler(&wgpu::SamplerDescriptor {
+                    label: Some("default texture sampler"),
+                    address_mode_u: wgpu::AddressMode::ClampToEdge,
+                    address_mode_v: wgpu::AddressMode::ClampToEdge,
+                    mag_filter: wgpu::FilterMode::Linear,
+                    min_filter: wgpu::FilterMode::Nearest,
+                    ..Default::default()
+                });
 
-        let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("uv buffer dummy"),
-            // the shader will expect at least one element in the array:
-            // - uv: vec2f, 8 bytes
-            // - normals: vec3f, 16 bytes (they're padded)
-            size: 16,
-            usage: wgpu::BufferUsages::STORAGE,
-            mapped_at_creation: false,
-        });
-
-        Self {
-            white,
-            black,
-            sampler,
-            vertex_buffer,
-        }
+            Self {
+                white,
+                black,
+                sampler,
+            }
+        })
     }
 }
 

@@ -4,6 +4,9 @@ This app is work-in-progress. It's intended to model electromagnetic behavior. I
 
 # TODO
 
+ - fix transparency:
+  - when overlapping: order-independent transparency?
+  - we can't apply gamma correction / tone map in the pbr shader because the values are later alpha-blended. we would need to do tone map / gamma in a separate render pass.
  - control UI for solver:
   - share a small struct (with CondVar) to control and read stats from the solver thread.
   - i think we could even replace the solver instance if the simulation volume changes, although this was not intended.

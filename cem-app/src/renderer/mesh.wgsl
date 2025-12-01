@@ -60,29 +60,6 @@ const FLAG_CAMERA_AMBIENT_LIGHT: u32 = 0x01;
 const FLAG_CAMERA_POINT_LIGHT: u32   = 0x02;
 const FLAG_CAMERA_TONE_MAP: u32      = 0x04;
 
-struct VertexInput {
-    @builtin(vertex_index) vertex_index: u32,
-    @builtin(instance_index) instance_index: u32,
-}
-
-struct VertexOutputSolid {
-    @builtin(position) fragment_position: vec4f,
-    @location(0) world_position: vec4f,
-    @location(1) world_normal: vec4f,
-    @location(2) texture_position: vec2f,
-    @location(3) @interpolate(flat, either) instance_index: u32,
-    //@location(4) @interpolate(flat, either) vertex_output_flags: u32,
-}
-
-struct VertexOutputFlat {
-    @builtin(position) fragment_position: vec4f,
-    @location(0) color: vec4f,
-}
-
-struct FragmentOutput {
-    @location(0) color: vec4f,
-}
-
 
 // camera
 
@@ -120,6 +97,32 @@ var texture_material: texture_2d<f32>;
 struct VertexData {
     position_uvx: vec4f,
     normal_uvy: vec4f,
+}
+
+
+// vertex input/output, fragment input/output
+
+struct VertexInput {
+    @builtin(vertex_index) vertex_index: u32,
+    @builtin(instance_index) instance_index: u32,
+}
+
+struct VertexOutputSolid {
+    @builtin(position) fragment_position: vec4f,
+    @location(0) world_position: vec4f,
+    @location(1) world_normal: vec4f,
+    @location(2) texture_position: vec2f,
+    @location(3) @interpolate(flat, either) instance_index: u32,
+    //@location(4) @interpolate(flat, either) vertex_output_flags: u32,
+}
+
+struct VertexOutputFlat {
+    @builtin(position) fragment_position: vec4f,
+    @location(0) color: vec4f,
+}
+
+struct FragmentOutput {
+    @location(0) color: vec4f,
 }
 
 
@@ -227,10 +230,11 @@ fn pbr_shader(input: VertexOutputSolid, instance: InstanceData) -> vec4f {
         discard;
     }
 
+    // note: i think we can remove this, since alpha writes are disabled on the opaque pipeline
     // optionally disable transparency
-    if (instance.material.flags & FLAG_MATERIAL_TRANSPARENT) == 0 {
-        alpha = 1.0;
-    }
+    //if (instance.material.flags & FLAG_MATERIAL_TRANSPARENT) == 0 {
+    //    alpha = 1.0;
+    //}
 
     if (instance.material.flags & FLAG_MATERIAL_SHADING) == 0 {
         color = albedo;

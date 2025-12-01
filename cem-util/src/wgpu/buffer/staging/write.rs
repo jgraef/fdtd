@@ -66,6 +66,7 @@ where
             })
     }
 
+    #[must_use]
     pub fn write_buffer(&mut self, destination: wgpu::BufferSlice) -> wgpu::BufferViewMut {
         let offset = destination.offset();
         let size = destination.size();
@@ -100,6 +101,7 @@ where
         view.copy_from_slice(data);
     }
 
+    #[must_use]
     pub fn write_texture(
         &mut self,
         source_layout: TextureSourceLayout,
@@ -282,6 +284,7 @@ impl StagingPool {
         }
     }
 
+    #[must_use]
     pub fn start_write(&self) -> WriteStagingBelt {
         WriteStagingBelt::from_pool(self.clone())
     }

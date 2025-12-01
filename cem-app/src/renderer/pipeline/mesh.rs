@@ -94,7 +94,13 @@ impl MeshPipeline {
                     blend: descriptor
                         .alpha_blending
                         .then_some(wgpu::BlendState::ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
+                    write_mask: {
+                        let mut write_mask = wgpu::ColorWrites::COLOR;
+                        if descriptor.alpha_blending {
+                            write_mask.insert(wgpu::ColorWrites::ALPHA);
+                        }
+                        write_mask
+                    },
                 })],
             }),
             multiview: None,

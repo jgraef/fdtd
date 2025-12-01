@@ -119,7 +119,8 @@ impl<'a> LoaderContext<'a> {
 
             let texture = self
                 .render_resource_creator
-                .create_texture_from_image(&image, usage, &label);
+                .create_texture_from_image(&image, usage, &label)?;
+
             Ok((
                 TextureAndView::from_texture(texture, &label),
                 ImageInfo {

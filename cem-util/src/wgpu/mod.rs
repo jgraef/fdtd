@@ -1,19 +1,24 @@
 pub mod buffer;
 
 use nalgebra::Vector2;
-use palette::Srgba;
-use wgpu::util::DeviceExt;
+use palette::LinSrgba;
 
 #[cfg(feature = "image")]
 pub use self::image::*;
+use crate::wgpu::buffer::{
+    StagingBufferProvider,
+    TextureSourceLayout,
+    WriteStagingTransaction,
+};
 
 pub fn create_texture(
     device: &wgpu::Device,
     size: &Vector2<u32>,
     usage: wgpu::TextureUsages,
+    format: wgpu::TextureFormat,
     label: &str,
 ) -> wgpu::Texture {
-    device.create_texture(&texture_descriptor(size, usage, label))
+    device.create_texture(&texture_descriptor(size, usage, format, label))
 }
 
 pub fn create_texture_view_from_texture(texture: &wgpu::Texture, label: &str) -> wgpu::TextureView {
@@ -23,29 +28,56 @@ pub fn create_texture_view_from_texture(texture: &wgpu::Texture, label: &str) ->
     })
 }
 
-pub fn create_texture_from_color(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    color: &Srgba<u8>,
+/// Creates a 1 by 1 pixel texture from the given color
+pub fn create_texture_from_linsrgba<P>(
+    color: LinSrgba<u8>,
     usage: wgpu::TextureUsages,
     label: &str,
-) -> wgpu::Texture {
-    let color: [u8; 4] = (*color).into();
-    device.create_texture_with_data(
-        queue,
-        &texture_descriptor(
-            &Vector2::repeat(1),
-            usage | wgpu::TextureUsages::COPY_DST,
-            label,
-        ),
-        Default::default(),
-        &color,
-    )
+    device: &wgpu::Device,
+    write_staging: &mut WriteStagingTransaction<P>,
+) -> wgpu::Texture
+where
+    P: StagingBufferProvider,
+{
+    let size = Vector2::repeat(1);
+
+    let texture = create_texture(
+        device,
+        &size,
+        usage | wgpu::TextureUsages::COPY_DST,
+        wgpu::TextureFormat::Rgba8Unorm,
+        label,
+    );
+
+    let mut view = write_staging.write_texture(
+        TextureSourceLayout {
+            // this must be padded
+            bytes_per_row: wgpu::COPY_BYTES_PER_ROW_ALIGNMENT,
+            rows_per_image: None,
+        },
+        wgpu::TexelCopyTextureInfo {
+            texture: &texture,
+            mip_level: 0,
+            origin: Default::default(),
+            aspect: Default::default(),
+        },
+        wgpu::Extent3d {
+            width: 1,
+            height: 1,
+            depth_or_array_layers: 1,
+        },
+    );
+
+    let color: [u8; 4] = color.into();
+    view[..4].copy_from_slice(&color);
+
+    texture
 }
 
 pub fn texture_descriptor<'a>(
     size: &Vector2<u32>,
     usage: wgpu::TextureUsages,
+    format: wgpu::TextureFormat,
     label: &'a str,
 ) -> wgpu::TextureDescriptor<'a> {
     wgpu::TextureDescriptor {
@@ -60,7 +92,7 @@ pub fn texture_descriptor<'a>(
         dimension: wgpu::TextureDimension::D2,
         // todo: need to be able to pick this. but usually we're working with srgba when
         // writing/reading a texture
-        format: wgpu::TextureFormat::Rgba8UnormSrgb,
+        format,
         usage,
         view_formats: &[],
     }
@@ -68,10 +100,7 @@ pub fn texture_descriptor<'a>(
 
 #[cfg(feature = "image")]
 mod image {
-    use std::ops::Deref;
-
     use nalgebra::Vector2;
-    use wgpu::util::DeviceExt;
 
     use crate::{
         image::ImageSizeExt as _,
@@ -84,26 +113,26 @@ mod image {
             texture_descriptor,
         },
     };
-    pub fn create_texture_from_image<Container>(
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        image: &image::ImageBuffer<image::Rgba<u8>, Container>,
-        usage: wgpu::TextureUsages,
-        label: &str,
-    ) -> wgpu::Texture
-    where
-        Container: Deref<Target = [u8]>,
-    {
-        let size = image.size();
-        device.create_texture_with_data(
-            queue,
-            &texture_descriptor(&size, usage | wgpu::TextureUsages::COPY_DST, label),
-            Default::default(),
-            image.as_raw(),
-        )
-    }
 
-    pub trait WriteImageToTextureExt {
+    pub trait ImageTextureExt {
+        fn texture_format(&self) -> Result<wgpu::TextureFormat, UnsupportedColorSpace>;
+
+        fn texture_descriptor<'a>(
+            &self,
+            usage: wgpu::TextureUsages,
+            label: &'a str,
+        ) -> Result<wgpu::TextureDescriptor<'a>, UnsupportedColorSpace>;
+
+        fn create_texture<P>(
+            &self,
+            usage: wgpu::TextureUsages,
+            label: &str,
+            device: &wgpu::Device,
+            write_staging: &mut WriteStagingTransaction<P>,
+        ) -> Result<wgpu::Texture, UnsupportedColorSpace>
+        where
+            P: StagingBufferProvider;
+
         fn write_to_texture<P>(
             &self,
             texture: &wgpu::Texture,
@@ -112,10 +141,56 @@ mod image {
             P: StagingBufferProvider;
     }
 
-    impl<Container> WriteImageToTextureExt for image::ImageBuffer<image::Rgba<u8>, Container>
-    where
-        Container: AsRef<[u8]> + Deref<Target = [u8]>,
-    {
+    impl ImageTextureExt for image::RgbaImage {
+        fn texture_format(&self) -> Result<wgpu::TextureFormat, UnsupportedColorSpace> {
+            let cicp = self.color_space();
+
+            if cicp.primaries == image::metadata::CicpColorPrimaries::SRgb {
+                match cicp.transfer {
+                    image::metadata::CicpTransferCharacteristics::Linear => {
+                        Ok(wgpu::TextureFormat::Rgba8Unorm)
+                    }
+                    image::metadata::CicpTransferCharacteristics::SRgb => {
+                        Ok(wgpu::TextureFormat::Rgba8UnormSrgb)
+                    }
+                    _ => Err(UnsupportedColorSpace { cicp }),
+                }
+            }
+            else {
+                Err(UnsupportedColorSpace { cicp })
+            }
+        }
+
+        fn texture_descriptor<'a>(
+            &self,
+            usage: wgpu::TextureUsages,
+            label: &'a str,
+        ) -> Result<wgpu::TextureDescriptor<'a>, UnsupportedColorSpace> {
+            Ok(texture_descriptor(
+                &self.size(),
+                usage,
+                self.texture_format()?,
+                label,
+            ))
+        }
+
+        fn create_texture<P>(
+            &self,
+            usage: wgpu::TextureUsages,
+            label: &str,
+            device: &wgpu::Device,
+            write_staging: &mut WriteStagingTransaction<P>,
+        ) -> Result<wgpu::Texture, UnsupportedColorSpace>
+        where
+            P: StagingBufferProvider,
+        {
+            let texture = device.create_texture(
+                &self.texture_descriptor(usage | wgpu::TextureUsages::COPY_DST, label)?,
+            );
+            self.write_to_texture(&texture, write_staging);
+            Ok(texture)
+        }
+
         fn write_to_texture<P>(
             &self,
             texture: &wgpu::Texture,
@@ -177,5 +252,11 @@ mod image {
                 destination_offset += bytes_per_row_padded as usize;
             }
         }
+    }
+
+    #[derive(Clone, Copy, Debug, thiserror::Error)]
+    #[error("Unsupported color space: primaries={:?}, transfer={:?}", .cicp.primaries, .cicp.transfer)]
+    pub struct UnsupportedColorSpace {
+        cicp: image::metadata::Cicp,
     }
 }
