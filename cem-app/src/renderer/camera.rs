@@ -43,7 +43,6 @@ use crate::{
     },
     scene::{
         Changed,
-        Scene,
         transform::GlobalTransform,
     },
     util::egui::probe::{
@@ -408,7 +407,8 @@ pub struct CameraRenderInfo {
 }
 
 pub(super) fn update_cameras<S>(
-    scene: &mut Scene,
+    entities: &mut hecs::World,
+    command_buffer: &mut hecs::CommandBuffer,
     device: &wgpu::Device,
     mut write_staging: S,
     camera_bind_group_layout: &wgpu::BindGroupLayout,
@@ -418,13 +418,12 @@ pub(super) fn update_cameras<S>(
     S: WriteStaging,
 {
     // update cameras whose viewports changed
-    for (entity, (camera_projection, viewport)) in scene
-        .entities
+    for (entity, (camera_projection, viewport)) in entities
         .query_mut::<(&mut CameraProjection, &Viewport)>()
         .with::<&Changed<Viewport>>()
     {
         camera_projection.set_viewport(viewport);
-        scene.command_buffer.remove_one::<Changed<Viewport>>(entity);
+        command_buffer.remove_one::<Changed<Viewport>>(entity);
     }
 
     // create uniforms for cameras that don't have them yet
@@ -438,8 +437,7 @@ pub(super) fn update_cameras<S>(
             point_light,
             camera_config,
         ),
-    ) in scene
-        .entities
+    ) in entities
         .query_mut::<(
             &CameraProjection,
             &GlobalTransform,
@@ -473,12 +471,11 @@ pub(super) fn update_cameras<S>(
             &camera_data,
             instance_buffer,
         );
-        scene.command_buffer.insert_one(entity, camera_resources);
+        command_buffer.insert_one(entity, camera_resources);
     }
 
     // remove camera resources for anything that isn't a valid camera anymore
-    for (entity, ()) in scene
-        .entities
+    for (entity, ()) in entities
         .query_mut::<()>()
         .with::<&CameraResources>()
         .without::<hecs::Or<&GlobalTransform, &CameraProjection>>()
@@ -487,7 +484,7 @@ pub(super) fn update_cameras<S>(
             ?entity,
             "not a valid camera anymore. removing `CameraResources`"
         );
-        scene.command_buffer.remove_one::<CameraResources>(entity);
+        command_buffer.remove_one::<CameraResources>(entity);
     }
 
     // update camera buffers
@@ -504,7 +501,7 @@ pub(super) fn update_cameras<S>(
             point_light,
             camera_config,
         ),
-    ) in scene.entities.query_mut::<(
+    ) in entities.query_mut::<(
         &mut CameraResources,
         &CameraProjection,
         &GlobalTransform,

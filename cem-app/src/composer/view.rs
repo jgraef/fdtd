@@ -18,6 +18,7 @@ use crate::{
     scene::{
         Changed,
         Scene,
+        spatial::SceneSpatialExt,
         transform::{
             GlobalTransform,
             LocalTransform,
@@ -280,9 +281,7 @@ impl<'a> egui::Widget for SceneView<'a> {
         if !ui.is_sizing_pass()
             && ui.is_rect_visible(response.rect)
             && let Some(camera_entity) = self.camera_entity
-            && let Some(draw_command) = self
-                .renderer
-                .prepare_frame(self.scene.entities.entity(camera_entity).ok())
+            && let Some(draw_command) = self.renderer.prepare_frame(self.scene, Some(camera_entity))
         {
             // draw frame
             let painter = ui.painter();

@@ -331,8 +331,10 @@ impl DrawCommand {
             );
         }
 
-        let time = time_start.elapsed();
-        self.command_sender.send(DrawCommandInfo {
+        let _time = time_start.elapsed();
+
+        // fixme
+        /*self.command_sender.send(DrawCommandInfo {
             camera_entity: self.camera_entity,
             info: CameraRenderInfo {
                 total: time,
@@ -340,7 +342,7 @@ impl DrawCommand {
                 num_transparent: self.buffer.draw_meshes_transparent.len(),
                 num_outlines: self.buffer.draw_outlines.len(),
             },
-        })
+        })*/
     }
 }
 

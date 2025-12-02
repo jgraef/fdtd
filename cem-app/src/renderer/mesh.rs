@@ -43,7 +43,6 @@ use crate::{
     scene::{
         Changed,
         Label,
-        Scene,
     },
 };
 
@@ -516,7 +515,8 @@ impl IntoGenerateMesh for Cylinder {
 }
 
 pub(super) fn update_mesh_bind_groups(
-    scene: &mut Scene,
+    entities: &mut hecs::World,
+    command_buffer: &mut hecs::CommandBuffer,
     device: &wgpu::Device,
     mesh_bind_group_layout: &wgpu::BindGroupLayout,
     texture_defaults: &Fallbacks,
@@ -541,18 +541,13 @@ pub(super) fn update_mesh_bind_groups(
             texture_defaults,
         );
 
-        scene.command_buffer.remove_one::<Changed<Mesh>>(entity);
-        scene
-            .command_buffer
-            .remove_one::<Changed<AlbedoTexture>>(entity);
-        scene
-            .command_buffer
-            .remove_one::<Changed<MaterialTexture>>(entity);
-        scene.command_buffer.insert_one(entity, mesh_bind_group);
+        command_buffer.remove_one::<Changed<Mesh>>(entity);
+        command_buffer.remove_one::<Changed<AlbedoTexture>>(entity);
+        command_buffer.remove_one::<Changed<MaterialTexture>>(entity);
+        command_buffer.insert_one(entity, mesh_bind_group);
     };
 
-    for (entity, (mesh, albedo_texture, material_texture, label)) in scene
-        .entities
+    for (entity, (mesh, albedo_texture, material_texture, label)) in entities
         .query_mut::<(
             &Mesh,
             Option<&AlbedoTexture>,
@@ -565,8 +560,7 @@ pub(super) fn update_mesh_bind_groups(
         update_mesh_bind_group(entity, mesh, albedo_texture, material_texture, label);
     }
 
-    for (entity, (mesh, albedo_texture, material_texture, label)) in scene
-        .entities
+    for (entity, (mesh, albedo_texture, material_texture, label)) in entities
         .query_mut::<(&Mesh, Option<&AlbedoTexture>, Option<&MaterialTexture>, Option<&Label>)>()
         .with::<&MeshBindGroup>()
         .with::<hecs::Or<&Changed<Mesh>, hecs::Or<&Changed<AlbedoTexture>, &Changed<MaterialTexture>>>>()

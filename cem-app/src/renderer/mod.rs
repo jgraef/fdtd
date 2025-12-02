@@ -214,18 +214,6 @@ pub struct Renderer {
     wireframe_pipeline: MeshPipeline,
     outline_pipeline: MeshPipeline,
 
-    /// The instance buffer.
-    ///
-    /// This holds the handle to the GPU buffer for the instance data, a
-    /// host staging buffer for the instance data, and the bind group for the
-    /// GPU buffer.
-    instance_buffer: StagedTypedArrayBuffer<InstanceData>,
-
-    /// This stores all draw commands that are generated during `prepare_world`.
-    /// Its `finish` method returns the finalized draw command (aggregate) for a
-    /// specific camera.
-    draw_command_buffer: DrawCommandBuffer,
-
     /// Fallbacks for textures and sampler
     fallbacks: Fallbacks,
 
@@ -235,8 +223,6 @@ pub struct Renderer {
     /// are e.g. handed out to
     /// [`TextureSender`s](texture_channel::TextureSender).
     command_queue: CommandQueue,
-
-    info: RendererInfo,
 }
 
 impl Renderer {
@@ -428,14 +414,6 @@ impl Renderer {
             },
         );
 
-        let instance_buffer = StagedTypedArrayBuffer::with_capacity(
-            context.wgpu_context.device.clone(),
-            "instance buffer",
-            wgpu::BufferUsages::STORAGE,
-            128,
-        );
-        assert!(instance_buffer.buffer.is_allocated());
-
         let mut command_encoder =
             context
                 .wgpu_context
@@ -469,11 +447,8 @@ impl Renderer {
             mesh_transparent_pipeline,
             wireframe_pipeline,
             outline_pipeline,
-            instance_buffer,
-            draw_command_buffer: Default::default(),
             fallbacks,
-            command_queue: CommandQueue::new(512),
-            info: Default::default(),
+            command_queue: CommandQueue::default(),
         }
     }
 
@@ -501,10 +476,17 @@ impl Renderer {
     /// views that render the same scene. Internally they're put into a
     /// `Arc<Vec<_>>`, so they're cheap to clone (which is done in
     /// [`Self::prepare_frame`]).
-    pub fn prepare_world(&mut self, scene: &mut Scene) {
+    pub fn prepare_world(&self, scene: &mut Scene) {
         let time_start = Instant::now();
 
-        self.info.prepare_world_staged = Default::default();
+        let state = scene
+            .resources
+            .get_mut_or_insert_with::<RendererState, _>(|| {
+                tracing::debug!(adapter = %self.wgpu_context.adapter_info.name, "creating renderer state");
+                RendererState::new(&self.wgpu_context.device)
+            });
+
+        let mut info = RendererInfo::default();
 
         let mut command_encoder =
             self.wgpu_context
@@ -522,21 +504,23 @@ impl Renderer {
         macro_rules! track_staging {
             ($name:ident) => {
                 write_staging
-                    .track_throughput(&mut self.info.prepare_world_staged.$name)
-                    .track_throughput(&mut self.info.prepare_world_staged.total)
+                    .track_throughput(&mut info.prepare_world_staged.$name)
+                    .track_throughput(&mut info.prepare_world_staged.total)
             };
         }
 
         // handle command queue
-        handle_commands(
+        // fixme: we would need one shared between all render states and one per each
+        /*handle_commands(
             &mut self.command_queue.receiver,
             track_staging!(command_queue),
             scene,
-        );
+        );*/
 
         // generate meshes (for rendering) for objects that don't have them yet.
         mesh::update_mesh_bind_groups(
-            scene,
+            &mut scene.entities,
+            &mut scene.command_buffer,
             &self.wgpu_context.device,
             &self.mesh_bind_group_layout,
             &self.fallbacks,
@@ -550,8 +534,8 @@ impl Renderer {
         let instance_buffer_reallocated = update_instance_buffer_and_draw_command(
             &mut scene.entities,
             &mut scene.command_buffer,
-            &mut self.instance_buffer,
-            &mut self.draw_command_buffer,
+            &mut state.instance_buffer,
+            &mut state.draw_command_buffer,
             track_staging!(instance_buffer),
         );
 
@@ -561,11 +545,12 @@ impl Renderer {
         // know if it was reallocated. the instance buffer is in the camera bind group,
         // and that will need to be recreated in this case.
         camera::update_cameras(
-            scene,
+            &mut scene.entities,
+            &mut scene.command_buffer,
             &self.wgpu_context.device,
             track_staging!(camera_buffers),
             &self.camera_bind_group_layout,
-            self.instance_buffer.buffer.buffer().unwrap(),
+            state.instance_buffer.buffer.buffer().unwrap(),
             instance_buffer_reallocated,
         );
 
@@ -574,9 +559,11 @@ impl Renderer {
         self.wgpu_context.queue.submit([command_encoder.finish()]);
 
         // apply deferred scene commands
-        scene.apply_deferred();
+        scene.command_buffer.run_on(&mut scene.entities);
 
-        self.info.prepare_world_time = time_start.elapsed();
+        info.prepare_world_time = time_start.elapsed();
+
+        scene.resources.insert(info);
     }
 
     /// Prepares rendering a frame for a specific view.
@@ -592,27 +579,28 @@ impl Renderer {
     /// widgets.
     pub fn prepare_frame(
         &mut self,
-        camera_entity: Option<hecs::EntityRef<'_>>,
+        scene: &Scene,
+        camera_entity: Option<hecs::Entity>,
     ) -> Option<DrawCommand> {
-        // fixme: use a fallback camera buffer to call the clear screen
-        // only.
-        //
-        // if we don't have a camera we can't do anything. since we can't
-        // bind a camera bind group, we can't even clear. we
-        // could have a fallback camera bind group that is only
-        // used for clearing. or separate the clear color from
-        // the camera.
+        // todo: pass in clear color as argument. then we can at least clear the screen
+        // if no camera exists
+
         let camera_entity = camera_entity?;
 
         // get bind group and config for our camera
-        let mut query = camera_entity.query::<(
-            &CameraResources,
-            Option<&CameraConfig>,
-            hecs::Satisfies<&ClearColor>,
-            &GlobalTransform,
-        )>();
+        let mut query = scene
+            .entities
+            .query_one::<(
+                &CameraResources,
+                Option<&CameraConfig>,
+                hecs::Satisfies<&ClearColor>,
+                &GlobalTransform,
+            )>(camera_entity)
+            .ok()?;
 
         let (camera_resources, camera_config, has_clear_color, camera_transform) = query.get()?;
+
+        let state = scene.resources.get::<RendererState>()?;
 
         // default to all, then apply configuration, so by default stuff will render and
         // we don't have to debug for 15 minutes to find that we don't enable the
@@ -623,17 +611,45 @@ impl Renderer {
             camera_config.apply_to_draw_command_flags(&mut draw_command_flags);
         }
 
-        Some(self.draw_command_buffer.finish(
+        Some(state.draw_command_buffer.finish(
             self,
             camera_resources.bind_group.clone(),
             camera_transform.position(),
             draw_command_flags,
-            camera_entity.entity(),
+            camera_entity,
         ))
     }
+}
 
-    pub fn info(&self) -> RendererInfo {
-        self.info
+#[derive(Debug)]
+struct RendererState {
+    /// The instance buffer.
+    ///
+    /// This holds the handle to the GPU buffer for the instance data, a
+    /// host staging buffer for the instance data, and the bind group for the
+    /// GPU buffer.
+    instance_buffer: StagedTypedArrayBuffer<InstanceData>,
+
+    /// This stores all draw commands that are generated during `prepare_world`.
+    /// Its `finish` method returns the finalized draw command (aggregate) for a
+    /// specific camera.
+    draw_command_buffer: DrawCommandBuffer,
+}
+
+impl RendererState {
+    pub fn new(device: &wgpu::Device) -> Self {
+        let instance_buffer = StagedTypedArrayBuffer::with_capacity(
+            device.clone(),
+            "render/instance_buffer",
+            wgpu::BufferUsages::STORAGE,
+            128,
+        );
+        assert!(instance_buffer.buffer.is_allocated());
+
+        Self {
+            instance_buffer,
+            draw_command_buffer: Default::default(),
+        }
     }
 }
 
@@ -973,6 +989,33 @@ pub struct RendererInfo {
     pub prepare_world_time: Duration,
 }
 
+impl DebugUi for RendererInfo {
+    fn show_debug(&self, ui: &mut egui::Ui) {
+        egui::CollapsingHeader::new(format!(
+            "Bytes last frame: {}",
+            format_size(self.prepare_world_staged.total),
+        ))
+        .id_salt(ui.id().with("prepare_world_staged"))
+        .default_open(true)
+        .show(ui, |ui| {
+            ui.label(format!(
+                "Command Queue: {}",
+                format_size(self.prepare_world_staged.command_queue),
+            ));
+            ui.label(format!(
+                "Instance Buffer: {}",
+                format_size(self.prepare_world_staged.instance_buffer),
+            ));
+            ui.label(format!(
+                "Camera Buffers: {}",
+                format_size(self.prepare_world_staged.camera_buffers),
+            ));
+        });
+
+        ui.label(format!("Prepare world time: {:?}", self.prepare_world_time));
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 pub struct StagingInfo {
     pub total: u64,
@@ -983,32 +1026,6 @@ pub struct StagingInfo {
 
 impl DebugUi for Renderer {
     fn show_debug(&self, ui: &mut egui::Ui) {
-        egui::CollapsingHeader::new(format!(
-            "Bytes last frame: {}",
-            format_size(self.info.prepare_world_staged.total),
-        ))
-        .id_salt(ui.id().with("prepare_world_staged"))
-        .default_open(true)
-        .show(ui, |ui| {
-            ui.label(format!(
-                "Command Queue: {}",
-                format_size(self.info.prepare_world_staged.command_queue),
-            ));
-            ui.label(format!(
-                "Instance Buffer: {}",
-                format_size(self.info.prepare_world_staged.instance_buffer),
-            ));
-            ui.label(format!(
-                "Camera Buffers: {}",
-                format_size(self.info.prepare_world_staged.camera_buffers),
-            ));
-        });
-
-        ui.label(format!(
-            "Prepare world time: {:?}",
-            self.info.prepare_world_time
-        ));
-
         ui.label(format!(
             "Surface texture: {:?}",
             self.config.target_texture_format

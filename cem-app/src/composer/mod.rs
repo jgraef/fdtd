@@ -97,6 +97,7 @@ use crate::{
         ClearColor,
         Outline,
         Renderer,
+        RendererInfo,
         camera::{
             CameraConfig,
             CameraProjection,
@@ -113,7 +114,10 @@ use crate::{
         Scene,
         Spawn,
         serialize::DeserializeEntity,
-        spatial::Collider,
+        spatial::{
+            Collider,
+            SceneSpatialExt,
+        },
         transform::{
             GlobalTransform,
             LocalTransform,
@@ -689,7 +693,7 @@ impl ComposerState {
 
                 before_deletion(&mut self.scene, entity);
 
-                if let Some(taken_entity) = self.scene.delete(entity) {
+                if let Some(taken_entity) = self.scene.take(entity) {
                     Some(self.undo_buffer.send_to_hades(taken_entity))
                 }
                 else {
@@ -1243,8 +1247,13 @@ impl DebugUi for Composers {
     fn show_debug(&self, ui: &mut egui::Ui) {
         if !self.composers.is_empty() {
             ui.collapsing("Composers", |ui| {
-                for (i, composer) in self.composers.iter().enumerate() {
-                    ui.collapsing(format!("#{}", i + 1), |ui| {
+                for composer in &self.composers {
+                    ui.collapsing(&*composer.title, |ui| {
+                        if let Some(renderer_info) = composer.scene.resources.get::<RendererInfo>()
+                        {
+                            renderer_info.show_debug(ui);
+                        }
+
                         composer
                             .selection()
                             .with_query_iter::<Option<&Label>, _>(|selected| {

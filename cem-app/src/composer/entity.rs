@@ -9,6 +9,7 @@ use crate::{
         EntityDebugLabel,
         Label,
         Scene,
+        components::ComponentRegistry,
     },
     util::egui::probe::PropertiesUi,
 };
@@ -90,8 +91,12 @@ impl<'a> EntityPropertiesWindow<'a> {
                             egui::Button::new("+").small(),
                         )
                         .ui(ui, |ui| {
-                            let addable_components =
-                                self.scene.component_registry.iter().filter(|component| {
+                            let addable_components = self
+                                .scene
+                                .resources
+                                .expect::<ComponentRegistry>()
+                                .iter()
+                                .filter(|component| {
                                     !component.has(entity_ref) && component.can_create()
                                 });
 
@@ -113,7 +118,7 @@ impl<'a> EntityPropertiesWindow<'a> {
                 ui.separator();
 
                 let mut emit_seperator = false;
-                for component in self.scene.component_registry.iter() {
+                for component in self.scene.resources.expect::<ComponentRegistry>().iter() {
                     if emit_seperator {
                         ui.separator();
                         emit_seperator = false;

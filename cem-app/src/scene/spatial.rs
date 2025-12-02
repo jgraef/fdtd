@@ -27,6 +27,7 @@ use crate::{
     impl_register_component,
     scene::{
         Changed,
+        Scene,
         transform::GlobalTransform,
     },
     util::egui::probe::{
@@ -412,6 +413,97 @@ impl PropertiesUi for Aabb {
 }
 
 impl_register_component!(Aabb where ComponentUi);
+
+pub trait SceneSpatialExt {
+    fn aabb(&self) -> Aabb;
+
+    fn cast_ray(
+        &self,
+        ray: &Ray,
+        max_time_of_impact: impl Into<Option<f32>>,
+        filter: impl Fn(hecs::Entity) -> bool,
+    ) -> Option<RayHit>;
+
+    fn point_query(&self, point: &Point3<f32>) -> impl Iterator<Item = hecs::Entity>;
+
+    fn intersect_aabb<'a>(&'a self, aabb: Aabb) -> impl Iterator<Item = hecs::Entity> + 'a;
+
+    /// Computes the scene's AABB relative to an observer.
+    ///
+    /// # Arguments
+    /// - `relative_to`: The individual AABBs of objects in the scene will be
+    ///   relative to this, i.e. they wll be transformed by its inverse.
+    /// - `approximate_relative_aabbs`: Compute the individual AABBs by
+    ///   transforming the pre-computed AABB
+    fn compute_aabb_relative_to_observer(
+        &self,
+        relative_to: &Isometry3<f32>,
+        approximate_relative_aabbs: bool,
+    ) -> Option<Aabb>;
+}
+
+impl SceneSpatialExt for Scene {
+    fn aabb(&self) -> Aabb {
+        self.resources.expect::<SpatialQueries>().root_aabb()
+    }
+
+    fn cast_ray(
+        &self,
+        ray: &Ray,
+        max_time_of_impact: impl Into<Option<f32>>,
+        filter: impl Fn(hecs::Entity) -> bool,
+    ) -> Option<RayHit> {
+        self.resources.expect::<SpatialQueries>().cast_ray(
+            ray,
+            max_time_of_impact,
+            &self.entities,
+            filter,
+        )
+    }
+
+    fn point_query(&self, point: &Point3<f32>) -> impl Iterator<Item = hecs::Entity> {
+        self.resources
+            .expect::<SpatialQueries>()
+            .point_query(*point, &self.entities)
+    }
+
+    fn intersect_aabb<'a>(&'a self, aabb: Aabb) -> impl Iterator<Item = hecs::Entity> + 'a {
+        self.resources
+            .expect::<SpatialQueries>()
+            .intersect_aabb(aabb)
+    }
+
+    /// Computes the scene's AABB relative to an observer.
+    ///
+    /// # Arguments
+    /// - `relative_to`: The individual AABBs of objects in the scene will be
+    ///   relative to this, i.e. they wll be transformed by its inverse.
+    /// - `approximate_relative_aabbs`: Compute the individual AABBs by
+    ///   transforming the pre-computed AABB
+    fn compute_aabb_relative_to_observer(
+        &self,
+        relative_to: &Isometry3<f32>,
+        approximate_relative_aabbs: bool,
+    ) -> Option<Aabb> {
+        let relative_to_inv = relative_to.inverse();
+
+        if approximate_relative_aabbs {
+            let mut query = self.entities.query::<&Aabb>();
+            let aabbs = query
+                .iter()
+                .map(|(_entity, aabb)| aabb.transform_by(&relative_to_inv));
+            merge_aabbs(aabbs)
+        }
+        else {
+            let mut query = self.entities.query::<(&GlobalTransform, &Collider)>();
+            let aabbs = query.iter().map(|(_entity, (transform, collider))| {
+                let transform = relative_to_inv * transform.isometry();
+                collider.compute_aabb(&transform)
+            });
+            merge_aabbs(aabbs)
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {

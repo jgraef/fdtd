@@ -74,17 +74,20 @@ pub struct RegisteredComponent {
     type_id: TypeId,
     type_name: &'static str,
     display_name: Option<Cow<'static, str>>,
-    has: Box<dyn Fn(hecs::EntityRef) -> bool>,
-    create: Option<Box<dyn Fn(&mut hecs::EntityBuilder)>>,
+    has: Box<dyn Fn(hecs::EntityRef) -> bool + Send + Sync + 'static>,
+    create: Option<Box<dyn Fn(&mut hecs::EntityBuilder) + Send + Sync + 'static>>,
     component_ui: Option<
         Box<
             dyn Fn(
-                hecs::EntityRef,
-                &mut hecs::CommandBuffer,
-                &mut egui::Ui,
-                bool,
-                egui::RichText,
-            ) -> Option<egui::Response>,
+                    hecs::EntityRef,
+                    &mut hecs::CommandBuffer,
+                    &mut egui::Ui,
+                    bool,
+                    egui::RichText,
+                ) -> Option<egui::Response>
+                + Send
+                + Sync
+                + 'static,
         >,
     >,
     tag_changed: bool,

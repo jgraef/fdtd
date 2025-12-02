@@ -18,7 +18,10 @@ use serde::{
     Serialize,
 };
 
-use crate::scene::Scene;
+use crate::scene::{
+    Scene,
+    spatial::SceneSpatialExt,
+};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SolverConfig {

@@ -72,7 +72,10 @@ use crate::{
     },
     scene::{
         Scene,
-        spatial::Collider,
+        spatial::{
+            Collider,
+            SceneSpatialExt,
+        },
         transform::GlobalTransform,
     },
     solver::{
@@ -652,7 +655,6 @@ impl<'a, 'b> DomainDescription<Point3<usize>> for SceneDomainDescription<'a, 'b>
 
         let mut pml_coefficients = self
             .scene
-            .spatial_queries
             .intersect_aabb(Aabb {
                 mins: point,
                 maxs: point,

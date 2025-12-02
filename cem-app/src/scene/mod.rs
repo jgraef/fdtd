@@ -1,5 +1,6 @@
 pub mod buffer;
 pub mod components;
+pub mod resources;
 pub mod serialize;
 pub mod spatial;
 pub mod transform;
@@ -18,15 +19,6 @@ use std::{
     },
 };
 
-use nalgebra::{
-    Isometry3,
-    Point3,
-    Vector2,
-};
-use parry3d::{
-    bounding_volume::Aabb,
-    query::Ray,
-};
 use serde::{
     Deserialize,
     Serialize,
@@ -39,7 +31,6 @@ use crate::{
     },
     debug::DebugUi,
     renderer::{
-        grid::GridPlane,
         material::Material,
         mesh::{
             IntoGenerateMesh,
@@ -48,12 +39,11 @@ use crate::{
     },
     scene::{
         components::ComponentRegistry,
+        resources::Resources,
         serialize::SerializeEntity,
         spatial::{
             Collider,
-            RayHit,
             SpatialQueries,
-            merge_aabbs,
         },
         transform::{
             GlobalTransform,
@@ -83,27 +73,30 @@ pub struct Scene {
     #[debug("hecs::CommandBuffer {{ ... }}")]
     pub command_buffer: hecs::CommandBuffer,
 
-    pub spatial_queries: SpatialQueries,
-
     tick: Tick,
 
-    transform_hierarchy_updater: TransformHierarchyUpdater,
-
-    pub component_registry: ComponentRegistry,
+    pub resources: Resources,
 }
 
 impl Default for Scene {
     fn default() -> Self {
+        let mut resources = Resources::default();
+
+        // this and their calls to update should be handled as plugins that register
+        // resources and systems.
+        resources.insert(SpatialQueries::default());
+        resources.insert(TransformHierarchyUpdater::default());
+
+        // not sure whether this should be a resource.
         let mut component_registry = ComponentRegistry::default();
         component_registry.register_builtin();
+        resources.insert(component_registry);
 
         Self {
             entities: Default::default(),
             command_buffer: Default::default(),
-            spatial_queries: Default::default(),
             tick: Tick { tick: 0 },
-            transform_hierarchy_updater: TransformHierarchyUpdater::default(),
-            component_registry,
+            resources,
         }
     }
 }
@@ -131,54 +124,21 @@ impl Scene {
             .tagged::<Selectable>(true)
     }
 
-    pub fn add_grid_plane(
-        &mut self,
-        transform: impl Into<LocalTransform>,
-        line_spacing: Vector2<f32>,
-    ) -> hecs::Entity {
-        self.entities.spawn((
-            transform.into(),
-            //MeshFromShape::from(HalfSpace::new(Vector3::y_axis())),
-            GridPlane { line_spacing },
-            Label::new_static("grid-plane"),
-        ))
-    }
-
-    pub fn cast_ray(
-        &self,
-        ray: &Ray,
-        max_time_of_impact: impl Into<Option<f32>>,
-        filter: impl Fn(hecs::Entity) -> bool,
-    ) -> Option<RayHit> {
-        self.spatial_queries
-            .cast_ray(ray, max_time_of_impact, &self.entities, filter)
-    }
-
-    pub fn point_query(&self, point: &Point3<f32>) -> impl Iterator<Item = hecs::Entity> {
-        self.spatial_queries.point_query(*point, &self.entities)
-    }
-
-    /*pub fn contact_query(
-        &self,
-        shape: &dyn Shape,
-        transform: &Isometry3<f32>,
-    ) -> impl Iterator<Item = (hecs::Entity, Contact)> {
-        self.spatial_queries
-            .contact_query(shape, transform, &self.entities)
-    }*/
-
     /// This needs to be called every frame to update internal state.
     ///
-    /// E.g. this updates the internal octtree used for spatial queries
+    /// E.g. this updates the internal octtree used for spatial queries, and the
+    /// transform hierarrchy
     pub fn prepare(&mut self) {
         self.apply_deferred();
 
         self.tick.tick += 1;
 
-        self.transform_hierarchy_updater
+        self.resources
+            .expect_mut::<TransformHierarchyUpdater>()
             .update(&mut self.entities, &mut self.command_buffer);
 
-        self.spatial_queries
+        self.resources
+            .expect_mut::<SpatialQueries>()
             .update(&mut self.entities, &mut self.command_buffer);
 
         // todo: who is responsible for this?
@@ -194,41 +154,6 @@ impl Scene {
                 .remove_one::<Changed<GlobalTransform>>(entity);
         }
         self.apply_deferred();
-    }
-
-    pub fn aabb(&self) -> Aabb {
-        self.spatial_queries.root_aabb()
-    }
-
-    /// Computes the scene's AABB relative to an observer.
-    ///
-    /// # Arguments
-    /// - `relative_to`: The individual AABBs of objects in the scene will be
-    ///   relative to this, i.e. they wll be transformed by its inverse.
-    /// - `approximate_relative_aabbs`: Compute the individual AABBs by
-    ///   transforming the pre-computed AABB
-    pub fn compute_aabb_relative_to_observer(
-        &self,
-        relative_to: &Isometry3<f32>,
-        approximate_relative_aabbs: bool,
-    ) -> Option<Aabb> {
-        let relative_to_inv = relative_to.inverse();
-
-        if approximate_relative_aabbs {
-            let mut query = self.entities.query::<&Aabb>();
-            let aabbs = query
-                .iter()
-                .map(|(_entity, aabb)| aabb.transform_by(&relative_to_inv));
-            merge_aabbs(aabbs)
-        }
-        else {
-            let mut query = self.entities.query::<(&GlobalTransform, &Collider)>();
-            let aabbs = query.iter().map(|(_entity, (transform, collider))| {
-                let transform = relative_to_inv * transform.isometry();
-                collider.compute_aabb(&transform)
-            });
-            merge_aabbs(aabbs)
-        }
     }
 
     pub fn entity_debug_label(&self, entity: hecs::Entity) -> EntityDebugLabel {
@@ -250,9 +175,12 @@ impl Scene {
         }
     }
 
-    pub fn delete(&mut self, entity: hecs::Entity) -> Option<hecs::TakenEntity<'_>> {
-        self.spatial_queries
-            .remove(entity, &mut self.entities, &mut self.command_buffer);
+    pub fn take(&mut self, entity: hecs::Entity) -> Option<hecs::TakenEntity<'_>> {
+        self.resources.expect_mut::<SpatialQueries>().remove(
+            entity,
+            &mut self.entities,
+            &mut self.command_buffer,
+        );
         self.entities.take(entity).ok()
     }
 
@@ -656,6 +584,6 @@ impl DebugUi for Scene {
         ui.label(format!("Tick: {}", self.tick));
         ui.label(format!("Entities: {}", self.entities.len()));
 
-        self.spatial_queries.show_debug(ui);
+        self.resources.expect::<SpatialQueries>().show_debug(ui);
     }
 }

@@ -46,8 +46,20 @@ pub struct CommandSender {
 
 impl CommandSender {
     pub(super) fn send(&self, command: impl Into<Command>) {
-        if let Err(error) = self.sender.send(command.into()) {
-            tracing::warn!(?error, "Renderer command queue full");
+        match self.sender.try_send(command.into()) {
+            Ok(()) => {}
+            Err(mpsc::TrySendError::Disconnected(_)) => {
+                // when tearing down the applications there might still be a
+                // command sender out there that can send while the renderer is
+                // gone. we should just ignore any commands then.
+            }
+            Err(mpsc::TrySendError::Full(_)) => {
+                // the renderer can't keep up. we could either make the queue unlimited but this
+                // can easily lead to resource exhaustion, if we e.g. forget to read the queue
+                // at all. we should consider this a hard error, because it
+                // likely is a programming mistake
+                panic!("renderer command queue full. are we reading from it?");
+            }
         }
     }
 }
@@ -56,6 +68,14 @@ impl CommandSender {
 pub struct CommandQueue {
     pub sender: CommandSender,
     pub receiver: CommandReceiver,
+}
+
+impl Default for CommandQueue {
+    fn default() -> Self {
+        // we need to make sure this is only reached if there's a bug (e.g. not reading
+        // the queue)
+        Self::new(1024)
+    }
 }
 
 impl CommandQueue {
