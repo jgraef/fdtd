@@ -1,14 +1,23 @@
 use std::sync::mpsc;
 
+use bevy_ecs::{
+    entity::Entity,
+    resource::Resource,
+};
+use cem_util::exclusive::Exclusive;
+
 use crate::renderer::{
     draw_commands::DrawCommandInfo,
-    texture_channel::CopyImageToTextureCommand,
+    texture::channel::CopyImageToTextureCommand,
 };
 
 #[derive(Debug)]
 pub(super) enum Command {
     CopyImageToTexture(CopyImageToTextureCommand),
-    DrawCommandInfo(DrawCommandInfo),
+    DrawCommandInfo {
+        camera_entity: Entity,
+        draw_command_info: DrawCommandInfo,
+    },
 }
 
 impl From<CopyImageToTextureCommand> for Command {
@@ -17,29 +26,23 @@ impl From<CopyImageToTextureCommand> for Command {
     }
 }
 
-impl From<DrawCommandInfo> for Command {
-    fn from(value: DrawCommandInfo) -> Self {
-        Self::DrawCommandInfo(value)
-    }
-}
-
-#[derive(Debug)]
+#[derive(Debug, Resource)]
 pub struct CommandReceiver {
-    receiver: mpsc::Receiver<Command>,
+    receiver: Exclusive<mpsc::Receiver<Command>>,
 }
 
 impl CommandReceiver {
-    pub fn drain(&self) -> mpsc::TryIter<'_, Command> {
+    pub fn drain(&mut self) -> mpsc::TryIter<'_, Command> {
         // will iter over all items until it's empty, or yield nothing if it's closed.
         // the latter should not really happen because the renderer holds onto a sender
         // to hand out.
         //
         // importantly this will never block
-        self.receiver.try_iter()
+        self.receiver.get_mut().try_iter()
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Resource)]
 pub struct CommandSender {
     sender: mpsc::SyncSender<Command>,
 }
@@ -64,26 +67,12 @@ impl CommandSender {
     }
 }
 
-#[derive(Debug)]
-pub struct CommandQueue {
-    pub sender: CommandSender,
-    pub receiver: CommandReceiver,
-}
-
-impl Default for CommandQueue {
-    fn default() -> Self {
-        // we need to make sure this is only reached if there's a bug (e.g. not reading
-        // the queue)
-        Self::new(1024)
-    }
-}
-
-impl CommandQueue {
-    pub fn new(capacity: usize) -> Self {
-        let (sender, receiver) = mpsc::sync_channel(capacity);
-        Self {
-            sender: CommandSender { sender },
-            receiver: CommandReceiver { receiver },
-        }
-    }
+pub fn queue(capacity: usize) -> (CommandSender, CommandReceiver) {
+    let (sender, receiver) = mpsc::sync_channel(capacity);
+    (
+        CommandSender { sender },
+        CommandReceiver {
+            receiver: Exclusive::new(receiver),
+        },
+    )
 }

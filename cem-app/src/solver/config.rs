@@ -1,5 +1,10 @@
 use std::time::Duration;
 
+use bevy_ecs::system::In;
+use cem_scene::{
+    Scene,
+    spatial::queries::WorldAabb,
+};
 use cem_solver::{
     fdtd::Resolution,
     material::{
@@ -16,11 +21,6 @@ use parry3d::bounding_volume::Aabb;
 use serde::{
     Deserialize,
     Serialize,
-};
-
-use crate::scene::{
-    Scene,
-    spatial::SceneSpatialExt,
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -108,7 +108,7 @@ impl Default for Volume {
 }
 
 impl Volume {
-    pub fn aabb(&self, scene: &Scene) -> Aabb {
+    pub fn aabb(&self, scene: &mut Scene) -> Aabb {
         match self {
             Volume::Fixed(fixed_volume) => {
                 Aabb::from_half_extents(
@@ -118,14 +118,25 @@ impl Volume {
             }
             Volume::SceneAabb(scene_aabb_volume) => {
                 scene
-                    .compute_aabb_relative_to_observer(
-                        &Isometry3::from_parts(Default::default(), scene_aabb_volume.rotation),
-                        false,
+                    .world
+                    .run_system_cached_with(
+                        |In(scene_aabb_volume): In<SceneAabbVolume>, mut world_aabb: WorldAabb| {
+                            world_aabb
+                                .relative_to_observer(
+                                    &Isometry3::from_parts(
+                                        Default::default(),
+                                        scene_aabb_volume.rotation,
+                                    ),
+                                    false,
+                                )
+                                .unwrap_or_else(|| {
+                                    // todo: or should we return None instead?
+                                    Aabb::new_invalid()
+                                })
+                        },
+                        *scene_aabb_volume,
                     )
-                    .unwrap_or_else(|| {
-                        // todo: or should we return None instead?
-                        Aabb::new_invalid()
-                    })
+                    .unwrap()
             }
         }
     }

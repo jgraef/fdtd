@@ -1,5 +1,14 @@
 use std::sync::Arc;
 
+use bevy_ecs::{
+    resource::Resource,
+    system::{
+        Commands,
+        Res,
+        ResMut,
+        SystemParam,
+    },
+};
 use cem_util::wgpu::{
     ImageTextureExt,
     UnsupportedColorSpace,
@@ -15,13 +24,15 @@ use cem_util::wgpu::{
 use nalgebra::Vector2;
 use palette::LinSrgba;
 
-use crate::{
-    app::WgpuContext,
+use crate::renderer::{
+    command::CommandSender,
     renderer::{
         Renderer,
-        command::CommandSender,
-        material::TextureAndView,
-        texture_channel::{
+        SharedRenderer,
+    },
+    texture::{
+        TextureAndView,
+        channel::{
             TextureReceiver,
             UndecidedTextureSender,
             texture_channel,
@@ -29,57 +40,20 @@ use crate::{
     },
 };
 
-#[derive(Clone, Debug)]
-pub struct RenderResourceManager {
-    wgpu_context: WgpuContext,
-    command_sender: CommandSender,
+#[derive(derive_more::Debug, SystemParam)]
+pub struct RenderResourceManager<'w, 's> {
+    renderer: Res<'w, SharedRenderer>,
+    transaction: ResMut<'w, RenderResourceTransactionState>,
+    command_sender: Res<'w, CommandSender>,
+    #[debug(skip)]
+    commands: Commands<'w, 's>,
 }
 
-impl RenderResourceManager {
-    pub(super) fn from_renderer(renderer: &Renderer) -> Self {
-        Self {
-            wgpu_context: renderer.wgpu_context.clone(),
-            command_sender: renderer.command_queue.sender.clone(),
-        }
-    }
-
-    pub fn begin_transaction(&self) -> RenderResourceManagerTransaction<'_> {
-        RenderResourceManagerTransaction {
-            device: &self.wgpu_context.device,
-            command_sender: &self.command_sender,
-            write_staging: SubmitOnDrop::new(
-                WriteStagingTransaction::new(
-                    self.wgpu_context.staging_pool.belt(),
-                    &self.wgpu_context.device,
-                    self.wgpu_context.device.create_command_encoder(
-                        &wgpu::CommandEncoderDescriptor {
-                            label: Some("render/resource_manager/transaction"),
-                        },
-                    ),
-                ),
-                &self.wgpu_context.queue,
-            ),
-        }
-    }
-
+impl<'w, 's> RenderResourceManager<'w, 's> {
     pub fn device(&self) -> &wgpu::Device {
-        &self.wgpu_context.device
+        &self.renderer.wgpu_context.device
     }
-}
 
-#[derive(Debug)]
-pub struct RenderResourceManagerTransaction<'a> {
-    // note: this is also in `write_staging`, but we can't borrow it whole also mut-borrrowing the
-    // whole `write_staging` field.
-    device: &'a wgpu::Device,
-    command_sender: &'a CommandSender,
-    write_staging: SubmitOnDrop<
-        WriteStagingTransaction<WriteStagingBelt, &'a wgpu::Device, wgpu::CommandEncoder>,
-        &'a wgpu::Queue,
-    >,
-}
-
-impl<'a> RenderResourceManagerTransaction<'a> {
     pub fn create_texture(
         &mut self,
         size: &Vector2<u32>,
@@ -87,7 +61,13 @@ impl<'a> RenderResourceManagerTransaction<'a> {
         format: wgpu::TextureFormat,
         label: &str,
     ) -> wgpu::Texture {
-        create_texture(size, usage, format, label, self.device)
+        create_texture(
+            size,
+            usage,
+            format,
+            label,
+            &self.renderer.wgpu_context.device,
+        )
     }
 
     pub fn create_texture_from_image(
@@ -96,8 +76,14 @@ impl<'a> RenderResourceManagerTransaction<'a> {
         usage: wgpu::TextureUsages,
         label: &str,
     ) -> Result<wgpu::Texture, UnsupportedColorSpace> {
-        // todo: batch staging
-        image.create_texture(usage, label, self.device, &mut self.write_staging)
+        self.transaction.with(&self.renderer, |transaction| {
+            image.create_texture(
+                usage,
+                label,
+                &self.renderer.wgpu_context.device,
+                &mut transaction.write_staging,
+            )
+        })
     }
 
     pub fn create_texture_from_color(
@@ -106,9 +92,15 @@ impl<'a> RenderResourceManagerTransaction<'a> {
         usage: wgpu::TextureUsages,
         label: &str,
     ) -> wgpu::Texture {
-        // todo: batch staging
-
-        create_texture_from_linsrgba(color, usage, label, self.device, &mut self.write_staging)
+        self.transaction.with(&self.renderer, |transaction| {
+            create_texture_from_linsrgba(
+                color,
+                usage,
+                label,
+                &self.renderer.wgpu_context.device,
+                &mut transaction.write_staging,
+            )
+        })
     }
 
     pub fn create_texture_channel(
@@ -126,8 +118,54 @@ impl<'a> RenderResourceManagerTransaction<'a> {
         )
     }
 
-    pub fn device(&self) -> &wgpu::Device {
-        self.device
+    pub fn write_to_texture(&mut self, image: &image::RgbaImage, texture: &wgpu::Texture) {
+        self.transaction.with(&self.renderer, |transaction| {
+            image.write_to_texture(texture, &mut transaction.write_staging);
+        });
+    }
+}
+
+#[derive(Debug, Default, Resource)]
+pub struct RenderResourceTransactionState(pub Option<RenderResourceTransaction>);
+
+impl RenderResourceTransactionState {
+    pub fn with<R>(
+        &mut self,
+        renderer: &Renderer,
+        f: impl FnOnce(&mut RenderResourceTransaction) -> R,
+    ) -> R {
+        let transaction = self
+            .0
+            .get_or_insert_with(|| RenderResourceTransaction::new(renderer));
+
+        f(transaction)
+    }
+}
+
+#[derive(Debug)]
+pub struct RenderResourceTransaction {
+    pub write_staging: SubmitOnDrop<
+        WriteStagingTransaction<WriteStagingBelt, wgpu::Device, wgpu::CommandEncoder>,
+        wgpu::Queue,
+    >,
+}
+
+impl RenderResourceTransaction {
+    fn new(renderer: &Renderer) -> Self {
+        Self {
+            write_staging: SubmitOnDrop::new(
+                WriteStagingTransaction::new(
+                    renderer.wgpu_context.staging_pool.belt(),
+                    renderer.wgpu_context.device.clone(),
+                    renderer.wgpu_context.device.create_command_encoder(
+                        &wgpu::CommandEncoderDescriptor {
+                            label: Some("render/resource_manager/transaction"),
+                        },
+                    ),
+                ),
+                renderer.wgpu_context.queue.clone(),
+            ),
+        }
     }
 
     pub fn commit(self) {

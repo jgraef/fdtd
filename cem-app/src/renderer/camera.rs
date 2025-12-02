@@ -1,12 +1,28 @@
-use std::{
-    f32::consts::FRAC_PI_4,
-    time::Duration,
-};
+use std::f32::consts::FRAC_PI_4;
 
+use bevy_ecs::{
+    component::Component,
+    reflect::ReflectComponent,
+};
+use bevy_reflect::Reflect;
 use bitflags::bitflags;
 use bytemuck::{
     Pod,
     Zeroable,
+};
+use cem_probe::{
+    PropertiesUi,
+    TrackChanges,
+    label_and_value,
+    label_and_value_with_config,
+    std::NumericPropertyUiConfig,
+};
+use cem_scene::{
+    probe::{
+        ComponentName,
+        ReflectComponentUi,
+    },
+    transform::GlobalTransform,
 };
 use cem_util::wgpu::buffer::WriteStaging;
 use nalgebra::{
@@ -31,30 +47,16 @@ use serde::{
 };
 use wgpu::util::DeviceExt;
 
-use crate::{
-    impl_register_component,
-    renderer::{
-        ClearColor,
-        draw_commands::DrawCommandFlags,
-        light::{
-            AmbientLight,
-            PointLight,
-        },
-    },
-    scene::{
-        Changed,
-        transform::GlobalTransform,
-    },
-    util::egui::probe::{
-        PropertiesUi,
-        TrackChanges,
-        label_and_value,
-        label_and_value_with_config,
-        std::NumericPropertyUiConfig,
+use crate::renderer::{
+    components::ClearColor,
+    draw_commands::DrawCommandFlags,
+    light::{
+        AmbientLight,
+        PointLight,
     },
 };
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, Component)]
 pub struct CameraProjection {
     // note: not public because nalgebra seems to have the z-axis inverted relative to our
     // coordinate systems
@@ -154,7 +156,7 @@ impl Default for CameraProjection {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, Component)]
 pub struct Viewport {
     pub viewport: egui::Rect,
 }
@@ -169,13 +171,13 @@ impl Viewport {
     }
 }
 
-#[derive(Clone, Debug)]
-pub(super) struct CameraResources {
+#[derive(Clone, Debug, Component)]
+pub struct CameraBindGroup {
     pub buffer: wgpu::Buffer,
     pub bind_group: wgpu::BindGroup,
 }
 
-impl CameraResources {
+impl CameraBindGroup {
     pub fn new(
         camera_bind_group_layout: &wgpu::BindGroupLayout,
         device: &wgpu::Device,
@@ -241,7 +243,7 @@ fn create_camera_bind_group(
 
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 #[repr(C)]
-pub(super) struct CameraData {
+pub struct CameraData {
     transform: Matrix4<f32>,
     projection: Matrix4<f32>,
     world_position: Vector4<f32>,
@@ -314,7 +316,8 @@ bitflags! {
     }
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, Component, Reflect)]
+#[reflect(Component, ComponentUi, @ComponentName::new("Camera Config"))]
 pub struct CameraConfig {
     // todo: should this just contain the DrawCommandPipelineEnableFlags?
     pub show_mesh_opaque: bool,
@@ -393,136 +396,5 @@ impl PropertiesUi for CameraConfig {
             .response;
 
         changes.propagated(response)
-    }
-}
-
-impl_register_component!(CameraConfig where ComponentUi, default);
-
-#[derive(Clone, Copy, Debug)]
-pub struct CameraRenderInfo {
-    pub total: Duration,
-    pub num_opaque: usize,
-    pub num_transparent: usize,
-    pub num_outlines: usize,
-}
-
-pub(super) fn update_cameras<S>(
-    entities: &mut hecs::World,
-    command_buffer: &mut hecs::CommandBuffer,
-    device: &wgpu::Device,
-    mut write_staging: S,
-    camera_bind_group_layout: &wgpu::BindGroupLayout,
-    instance_buffer: &wgpu::Buffer,
-    instance_buffer_reallocated: bool,
-) where
-    S: WriteStaging,
-{
-    // update cameras whose viewports changed
-    for (entity, (camera_projection, viewport)) in entities
-        .query_mut::<(&mut CameraProjection, &Viewport)>()
-        .with::<&Changed<Viewport>>()
-    {
-        camera_projection.set_viewport(viewport);
-        command_buffer.remove_one::<Changed<Viewport>>(entity);
-    }
-
-    // create uniforms for cameras that don't have them yet
-    for (
-        entity,
-        (
-            camera_projection,
-            camera_transform,
-            clear_color,
-            ambient_light,
-            point_light,
-            camera_config,
-        ),
-    ) in entities
-        .query_mut::<(
-            &CameraProjection,
-            &GlobalTransform,
-            Option<&ClearColor>,
-            Option<&AmbientLight>,
-            Option<&PointLight>,
-            Option<&CameraConfig>,
-        )>()
-        .without::<&CameraResources>()
-    {
-        tracing::debug!(
-            ?entity,
-            ?camera_projection,
-            ?camera_transform,
-            ?clear_color,
-            ?ambient_light,
-            ?point_light,
-            "creating camera"
-        );
-        let camera_data = CameraData::new(
-            camera_projection,
-            camera_transform,
-            clear_color,
-            ambient_light,
-            point_light,
-            camera_config,
-        );
-        let camera_resources = CameraResources::new(
-            camera_bind_group_layout,
-            device,
-            &camera_data,
-            instance_buffer,
-        );
-        command_buffer.insert_one(entity, camera_resources);
-    }
-
-    // remove camera resources for anything that isn't a valid camera anymore
-    for (entity, ()) in entities
-        .query_mut::<()>()
-        .with::<&CameraResources>()
-        .without::<hecs::Or<&GlobalTransform, &CameraProjection>>()
-    {
-        tracing::warn!(
-            ?entity,
-            "not a valid camera anymore. removing `CameraResources`"
-        );
-        command_buffer.remove_one::<CameraResources>(entity);
-    }
-
-    // update camera buffers
-    let updated_instance_buffer =
-        instance_buffer_reallocated.then_some((camera_bind_group_layout, instance_buffer));
-    for (
-        _,
-        (
-            camera_resources,
-            camera_projection,
-            camera_transform,
-            clear_color,
-            ambient_light,
-            point_light,
-            camera_config,
-        ),
-    ) in entities.query_mut::<(
-        &mut CameraResources,
-        &CameraProjection,
-        &GlobalTransform,
-        Option<&ClearColor>,
-        Option<&AmbientLight>,
-        Option<&PointLight>,
-        Option<&CameraConfig>,
-    )>() {
-        let camera_data = CameraData::new(
-            camera_projection,
-            camera_transform,
-            clear_color,
-            ambient_light,
-            point_light,
-            camera_config,
-        );
-        camera_resources.update(
-            device,
-            &mut write_staging,
-            &camera_data,
-            updated_instance_buffer,
-        );
     }
 }

@@ -4,7 +4,10 @@ use std::{
     sync::Arc,
 };
 
-use cem_util::wgpu::buffer::StagingPool;
+use cem_util::{
+    egui::file_dialog::FileDialog,
+    wgpu::buffer::StagingPool,
+};
 use chrono::Local;
 use color_eyre::eyre::{
     Error,
@@ -12,7 +15,6 @@ use color_eyre::eyre::{
 };
 use eframe::NativeOptions;
 use egui::ViewportBuilder;
-use egui_file_dialog::FileDialog;
 use egui_wgpu::{
     SurfaceErrorAction,
     WgpuConfiguration,
@@ -24,10 +26,7 @@ use image::RgbaImage;
 use crate::{
     args::Args,
     build_info::BUILD_INFO,
-    composer::{
-        Composers,
-        loader::AssetLoader,
-    },
+    composer::Composers,
     config::AppConfig,
     error::{
         ErrorDialog,
@@ -40,9 +39,8 @@ use crate::{
         RecentlyOpenedFiles,
     },
     renderer::{
-        EguiWgpuRenderer,
-        Renderer,
         RendererConfig,
+        plugin::RenderPlugin,
     },
     solver::runner::SolverRunner,
 };
@@ -50,9 +48,8 @@ use crate::{
 #[derive(Clone, Debug)]
 pub struct CreateAppContext {
     pub wgpu_context: WgpuContext,
-    pub egui_context: egui::Context,
     pub renderer_config: RendererConfig,
-    pub egui_wgpu_renderer: EguiWgpuRenderer,
+    pub egui_context: egui::Context,
     pub app_files: AppFiles,
     pub config: AppConfig,
     pub args: Args,
@@ -243,14 +240,18 @@ pub(super) fn run_app(args: Args) -> Result<(), Error> {
             // add our custom clipboard extension
             //cc.egui_ctx.add_plugin(EguiClipboardPlugin);
 
+            // this is the egui-wgpu renderer, which we can use to create egui textures from
+            // wgpu textures and vice versa. in case we ever need it
+            //
+            // render_state.renderer.clone(),
+
             let create_app_context = CreateAppContext {
                 wgpu_context,
+                renderer_config,
                 egui_context: cc.egui_ctx.clone(),
                 app_files,
                 config,
                 args,
-                renderer_config,
-                egui_wgpu_renderer: render_state.renderer.clone().into(),
             };
 
             Ok(Box::new(App::new(create_app_context)))
@@ -265,10 +266,10 @@ pub struct App {
     pub config: AppConfig,
     pub file_dialog: FileDialog,
     pub show_about: bool,
-    pub renderer: Renderer,
-    pub asset_loader: AssetLoader,
     pub solver_runner: SolverRunner,
     pub composers: Composers,
+    pub wgpu_context: WgpuContext,
+    pub renderer_config: RendererConfig,
 }
 
 impl App {
@@ -293,13 +294,15 @@ impl App {
             style.visuals.popup_shadow.spread = 0;
         });
 
+        let render_plugin =
+            RenderPlugin::new(context.wgpu_context.clone(), context.renderer_config);
+        let mut composers = Composers::new(render_plugin);
+        let solver_runner = SolverRunner::from_app_context(&context);
+
         // create file dialog for opening and saving files
         let file_dialog = FileDialog::new()
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .add_file_filter_extensions("NEC", vec!["nec"]);
-
-        // create composer ui
-        let mut composers = Composers::default();
 
         if context.args.new_file {
             // command line telling us to directly go to a new file
@@ -321,20 +324,15 @@ impl App {
 
         error_dialog.register_in_context(&context.egui_context);
 
-        let renderer = Renderer::from_app_context(&context);
-        let render_resource_manager = renderer.resource_creator();
-        let asset_loader = AssetLoader::new(render_resource_manager.clone());
-        let solver_runner = SolverRunner::from_app_context(&context, render_resource_manager);
-
         Self {
             app_files: context.app_files,
             config: context.config,
             file_dialog,
             show_about: false,
-            renderer,
-            asset_loader,
             solver_runner,
             composers,
+            wgpu_context: context.wgpu_context,
+            renderer_config: context.renderer_config,
         }
     }
 
@@ -414,8 +412,7 @@ impl eframe::App for App {
         // show solver ui window
         self.solver_runner.show_active_solver_ui(ctx);
 
-        self.composers
-            .show(ctx, &mut self.renderer, &mut self.asset_loader);
+        self.composers.show(ctx);
 
         show_about_window(ctx, &mut self.show_about);
 

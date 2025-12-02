@@ -7,6 +7,28 @@ use std::{
     },
 };
 
+use bevy_ecs::{
+    entity::Entity,
+    system::{
+        Commands,
+        In,
+        InMut,
+        InRef,
+        Query,
+    },
+    world::World,
+};
+use cem_scene::{
+    Scene,
+    spatial::{
+        Collider,
+        queries::{
+            IntersectAabb,
+            PointQuery,
+        },
+    },
+    transform::GlobalTransform,
+};
 use cem_solver::{
     DomainDescription,
     SolverBackend,
@@ -38,7 +60,13 @@ use cem_solver::{
     },
     source::Source,
 };
-use cem_util::format_size;
+use cem_util::{
+    egui::{
+        EguiUtilContextExt,
+        RepaintTrigger,
+    },
+    format_size,
+};
 use color_eyre::eyre::bail;
 use nalgebra::{
     Isometry3,
@@ -68,15 +96,7 @@ use crate::{
     renderer::{
         material,
         resource::RenderResourceManager,
-        texture_channel::UndecidedTextureSender,
-    },
-    scene::{
-        Scene,
-        spatial::{
-            Collider,
-            SceneSpatialExt,
-        },
-        transform::GlobalTransform,
+        texture::channel::UndecidedTextureSender,
     },
     solver::{
         config::{
@@ -89,38 +109,27 @@ use crate::{
         },
         observer::Observer,
     },
-    util::{
-        egui::{
-            EguiUtilContextExt,
-            RepaintTrigger,
-        },
-        spawn_thread,
-    },
+    util::spawn_thread,
 };
 
 #[derive(Debug)]
 pub struct SolverRunner {
     fdtd_wgpu: FdtdWgpuBackend,
-    render_resource_manager: RenderResourceManager,
     repaint_trigger: RepaintTrigger,
     error_sink: UiErrorSink,
     active_solver: Option<Solver>,
 }
 
 impl SolverRunner {
-    pub fn from_app_context(
-        context: &CreateAppContext,
-        render_resource_manager: RenderResourceManager,
-    ) -> Self {
+    pub fn from_app_context(context: &CreateAppContext) -> Self {
         Self {
             fdtd_wgpu: FdtdWgpuBackend::new(
                 context.wgpu_context.device.clone(),
                 context.wgpu_context.queue.clone(),
                 context.wgpu_context.staging_pool.clone(),
             ),
-            render_resource_manager,
             repaint_trigger: context.egui_context.repaint_trigger(),
-            error_sink: context.egui_context.error_sink(),
+            error_sink: UiErrorSink::from(&context.egui_context),
             active_solver: None,
         }
     }
@@ -174,7 +183,6 @@ impl SolverRunner {
             scene,
             common_config,
             fdtd_config,
-            render_resource_manager: &self.render_resource_manager,
             repaint_trigger: self.repaint_trigger.clone(),
             error_sink: self.error_sink.clone(),
         };
@@ -223,7 +231,6 @@ struct RunFdtd<'a> {
     scene: &'a mut Scene,
     common_config: &'a SolverConfigCommon,
     fdtd_config: &'a SolverConfigFdtd,
-    render_resource_manager: &'a RenderResourceManager,
     repaint_trigger: RepaintTrigger,
     error_sink: UiErrorSink,
 }
@@ -246,7 +253,6 @@ impl<'a> RunFdtd<'a> {
             scene,
             common_config,
             fdtd_config,
-            render_resource_manager,
             repaint_trigger,
             error_sink,
         } = self;
@@ -324,7 +330,7 @@ impl<'a> RunFdtd<'a> {
         );
 
         let materials = SceneDomainDescription::new(
-            scene,
+            &mut scene.world,
             &config.resolution,
             &config.physical_constants,
             &coordinate_transformations,
@@ -341,7 +347,7 @@ impl<'a> RunFdtd<'a> {
         // todo: from scene. this is blocked by the fact that this specific source needs
         // config parameters.
 
-        let sources = Sources::from_scene(scene, &coordinate_transformations);
+        let sources = Sources::from_scene(&mut scene.world, &coordinate_transformations);
         //let mut sources = Sources::default();
         /*let source = fdtd::source::ContinousWave {
             electric_current_density_amplitude: Vector3::z() / config.resolution.temporal,
@@ -363,9 +369,8 @@ impl<'a> RunFdtd<'a> {
         let observers = Observers::from_scene(
             &instance,
             &mut state,
-            scene,
+            &mut scene.world,
             &lattice_size,
-            render_resource_manager,
             repaint_trigger,
         );
 
@@ -573,115 +578,111 @@ impl Solver {
 }
 
 #[derive(derive_more::Debug)]
-struct SceneDomainDescription<'a, 'b> {
-    scene: &'a Scene,
-
+struct SceneDomainDescription<'a> {
+    world: &'a mut World,
     resolution: &'a Resolution,
     physical_constants: &'a PhysicalConstants,
-
-    #[debug("hecs::ViewBorrow {{ ... }}")]
-    materials: hecs::ViewBorrow<'a, &'b Material>,
-
-    #[debug("hecs::ViewBorrow {{ ... }}")]
-    pmls: hecs::ViewBorrow<'a, (&'b GradedPml, &'b Collider, &'b Aabb, &'a GlobalTransform)>,
-
     coordinate_transformations: &'a CoordinateTransformations,
-
     default_material: &'a Material,
 }
 
-impl<'a, 'b> SceneDomainDescription<'a, 'b> {
+impl<'a> SceneDomainDescription<'a> {
     pub fn new(
-        scene: &'a Scene,
+        world: &'a mut World,
         resolution: &'a Resolution,
         physical_constants: &'a PhysicalConstants,
         coordinate_transformations: &'a CoordinateTransformations,
         default_material: &'a Material,
     ) -> Self {
-        // access to the material properties
-        let mut materials = scene.entities.view::<&Material>();
-        let mut any_materials = false;
-        for (entity, material) in materials.iter_mut() {
-            if let Ok(collider) = scene.entities.get::<&Collider>(entity) {
-                tracing::debug!(?entity, ?collider, ?material, "found material");
-                any_materials = true;
-            }
-        }
-
-        if !any_materials {
-            tracing::warn!("Did not find any materials in the simulation volume");
-        }
-
-        let mut pmls = scene
-            .entities
-            .view::<(&GradedPml, &Collider, &Aabb, &GlobalTransform)>();
-        for (entity, (pml, collider, _, _)) in pmls.iter_mut() {
-            tracing::debug!(?entity, ?pml, ?collider, "found pml");
-        }
-
         Self {
-            scene,
+            world,
             resolution,
             physical_constants,
-            materials,
-            pmls,
             coordinate_transformations,
             default_material,
         }
     }
 }
 
-impl<'a, 'b> DomainDescription<Point3<usize>> for SceneDomainDescription<'a, 'b> {
-    fn material(&self, point: &Point3<usize>) -> Material {
+impl<'a> DomainDescription<Point3<usize>> for SceneDomainDescription<'a> {
+    fn material(&mut self, point: &Point3<usize>) -> Material {
         let point = self
             .coordinate_transformations
             .transform_point_from_solver_to_world(point);
 
-        let mut materials = self
-            .scene
-            .point_query(&point)
-            .filter_map(|entity| self.materials.get(entity))
-            .copied();
+        self.world
+            .run_system_cached_with(
+                |In(point): In<Point3<f32>>,
+                 point_query: PointQuery,
+                 materials: Query<&Material>| {
+                    let mut materials = point_query
+                        .point_query(point)
+                        .filter_map(|entity| materials.get(entity).ok())
+                        .cloned();
 
-        // for now we'll just use the first material we find.
-        // if nothing is found, use the default
-        materials.next().unwrap_or(*self.default_material)
+                    // for now we'll just use the first material we find.
+                    // if nothing is found, use the default
+                    materials.next()
+                },
+                point,
+            )
+            .unwrap()
+            .unwrap_or(*self.default_material)
     }
 
-    fn pml(&self, point: &Point3<usize>) -> Option<PmlCoefficients> {
+    fn pml(&mut self, point: &Point3<usize>) -> Option<PmlCoefficients> {
         let point = self
             .coordinate_transformations
             .transform_point_from_solver_to_world(point);
 
-        let mut pml_coefficients = self
-            .scene
-            .intersect_aabb(Aabb {
-                mins: point,
-                maxs: point,
-            })
-            .filter_map(|entity| {
-                let (pml, collider, aabb, transform) = self.pmls.get(entity)?;
+        self.world
+            .run_system_cached_with(
+                |In((point, resolution, physical_constants)): In<(
+                    Point3<f32>,
+                    Resolution,
+                    PhysicalConstants,
+                )>,
+                 intersect_aabb: IntersectAabb,
+                 pmls: Query<(&GradedPml, &Collider, &GlobalTransform)>| {
+                    let mut pmls = intersect_aabb
+                        .intersect_aabb(Aabb {
+                            mins: point,
+                            maxs: point,
+                        })
+                        .filter_map(move |(entity, aabb)| {
+                            pmls.get(entity)
+                                .ok()
+                                .and_then(|(pml, collider, global_transform)| {
+                                    let max_depth = nalgebra::distance(&aabb.mins, &aabb.maxs);
+                                    let ray = Ray::new(point, *pml.normal);
 
-                let max_depth = nalgebra::distance(&aabb.mins, &aabb.maxs);
-                let ray = Ray::new(point, *pml.normal);
+                                    let depth = collider.cast_ray(
+                                        global_transform.isometry(),
+                                        &ray,
+                                        max_depth,
+                                        false,
+                                    )?;
 
-                let depth = collider.cast_ray(transform.isometry(), &ray, max_depth, false)?;
+                                    Some(PmlCoefficients::new_graded(
+                                        &resolution,
+                                        &physical_constants,
+                                        pml.m,
+                                        pml.m_a,
+                                        pml.sigma_max,
+                                        pml.kappa_max,
+                                        pml.a_max,
+                                        depth as f64,
+                                        -pml.normal.cast(),
+                                    ))
+                                })
+                        });
 
-                Some(PmlCoefficients::new_graded(
-                    self.resolution,
-                    self.physical_constants,
-                    pml.m,
-                    pml.m_a,
-                    pml.sigma_max,
-                    pml.kappa_max,
-                    pml.a_max,
-                    depth as f64,
-                    -pml.normal.cast(),
-                ))
-            });
-
-        // for now only one
-        pml_coefficients.next()
+                    // todo: merge pmls present at this point
+                    pmls.next()
+                },
+                (point, *self.resolution, *self.physical_constants),
+            )
+            .unwrap()
     }
 }
 
@@ -695,101 +696,26 @@ impl<P> Observers<P> {
     pub fn from_scene<I>(
         instance: &I,
         state: &mut I::State,
-        scene: &mut Scene,
+        world: &mut World,
         lattice_size: &Vector3<usize>,
-        render_resource_manager: &RenderResourceManager,
         repaint_trigger: RepaintTrigger,
     ) -> Self
     where
-        I: CreateProjection<UndecidedTextureSender, Projection = P>,
+        I: CreateProjection<UndecidedTextureSender, Projection = P> + 'static,
+        I::State: 'static,
+        P: 'static,
         for<'a> <I as BeginProjectionPass>::ProjectionPass<'a>: ProjectionPassAdd<'a, P>,
     {
         // todo:
         // - derive projection from observer and transform
         // - transform projection into simulation coordinate space
 
-        let mut needs_repaint = false;
-        let mut transaction = render_resource_manager.begin_transaction();
-
-        // clippy, i want to chain other options into it later.
-        #[allow(clippy::let_and_return)]
-        let projections = scene
-            .entities
-            .query_mut::<&Observer>()
-            .into_iter()
-            .flat_map(|(entity, observer)| {
-                tracing::debug!(?observer, "creating observer");
-
-                let display_as_texture = observer.display_as_texture.then(|| {
-                    needs_repaint = true;
-
-                    let parameters = ProjectionParameters {
-                        projection: Matrix4::identity(), // todo
-                        field: observer.field,
-                        color_map: observer.color_map,
-                        color_map_code: Some(
-                            r#"
-                        // color and alpha scaling
-                        const s_c: f32 = 10.0;
-                        const s_a: f32 = 100.0;
-
-                        var color: vec4f;
-                        var x = value.z;
-                        if x > 0.0 {
-                            color.r = min(s_c * x, 1.0);
-                            color.a = min(s_a * x, 1.0);
-                        }
-                        else {
-                            color.g = min(-s_c * x, 1.0);
-                            color.a = min(-s_a * x, 1.0);
-                        }
-                        return color;
-                        "#
-                            .to_owned(),
-                        ),
-                    };
-
-                    // create a texture channel. the sender is still undecided whether it will share
-                    // a image buffer in host memory with the renderer, or request a gpu texture
-                    // directly.
-                    //
-                    // todo: can we make so that the RENDER_ATTACHMENT usage is only applied if a
-                    // texture for rendering is requested by the backend? and likewise for COPY_DST
-                    let (sender, receiver) = transaction.create_texture_channel(
-                        &lattice_size.xy().cast(),
-                        wgpu::TextureUsages::RENDER_ATTACHMENT
-                            | wgpu::TextureUsages::TEXTURE_BINDING
-                            | wgpu::TextureUsages::COPY_DST,
-                        "observer",
-                    );
-
-                    scene.command_buffer.insert(
-                        entity,
-                        (
-                            material::LoadAlbedoTexture::new(receiver).with_transparency(false),
-                            material::Material {
-                                transparent: true,
-                                ..Default::default()
-                            },
-                        ),
-                    );
-
-                    instance.create_projection(state, sender, &parameters)
-                });
-
-                display_as_texture
-            })
-            .collect();
-
-        transaction.commit();
-
-        // apply deferred commands
-        scene.apply_deferred();
-
-        Self {
-            projections,
-            repaint_trigger: needs_repaint.then_some(repaint_trigger),
-        }
+        world
+            .run_system_cached_with(
+                setup_observers_system::<I, P>,
+                (instance, state, *lattice_size, repaint_trigger),
+            )
+            .unwrap()
     }
 
     pub fn run<I>(&mut self, instance: &I, state: &I::State) -> Result<(), Error>
@@ -813,6 +739,92 @@ impl<P> Observers<P> {
     }
 }
 
+fn setup_observers_system<I, P>(
+    (InRef(instance), InMut(state), In(lattice_size), In(repaint_trigger)): (
+        InRef<I>,
+        InMut<I::State>,
+        In<Vector3<usize>>,
+        In<RepaintTrigger>,
+    ),
+    mut render_resource_manager: RenderResourceManager,
+    observers: Query<(Entity, &Observer)>,
+    mut commands: Commands,
+) -> Observers<P>
+where
+    I: CreateProjection<UndecidedTextureSender, Projection = P>,
+    for<'a> <I as BeginProjectionPass>::ProjectionPass<'a>: ProjectionPassAdd<'a, P>,
+{
+    let mut needs_repaint = false;
+
+    let projections = observers
+        .iter()
+        .filter_map(|(entity, observer)| {
+            tracing::debug!(?observer, "creating observer");
+
+            observer.display_as_texture.then(|| {
+                needs_repaint = true;
+
+                let parameters = ProjectionParameters {
+                    projection: Matrix4::identity(), // todo
+                    field: observer.field,
+                    color_map: observer.color_map,
+                    color_map_code: Some(
+                        r#"
+                    // color and alpha scaling
+                    const s_c: f32 = 10.0;
+                    const s_a: f32 = 100.0;
+
+                    var color: vec4f;
+                    var x = value.z;
+                    if x > 0.0 {
+                        color.r = min(s_c * x, 1.0);
+                        color.a = min(s_a * x, 1.0);
+                    }
+                    else {
+                        color.g = min(-s_c * x, 1.0);
+                        color.a = min(-s_a * x, 1.0);
+                    }
+                    return color;
+                    "#
+                        .to_owned(),
+                    ),
+                };
+
+                // create a texture channel. the sender is still undecided whether it
+                // will share a image buffer in host memory
+                // with the renderer, or request a gpu texture
+                // directly.
+                //
+                // todo: can we make so that the RENDER_ATTACHMENT usage is only applied
+                // if a texture for rendering is requested
+                // by the backend? and likewise for COPY_DST
+                let (sender, receiver) = render_resource_manager.create_texture_channel(
+                    &lattice_size.xy().cast(),
+                    wgpu::TextureUsages::RENDER_ATTACHMENT
+                        | wgpu::TextureUsages::TEXTURE_BINDING
+                        | wgpu::TextureUsages::COPY_DST,
+                    "observer",
+                );
+
+                commands.entity(entity).insert((
+                    material::LoadAlbedoTexture::new(receiver).with_transparency(false),
+                    material::Material {
+                        transparent: true,
+                        ..Default::default()
+                    },
+                ));
+
+                instance.create_projection(state, sender, &parameters)
+            })
+        })
+        .collect();
+
+    Observers {
+        projections,
+        repaint_trigger: needs_repaint.then_some(repaint_trigger),
+    }
+}
+
 #[derive(Debug, Default)]
 struct Sources {
     sources: Vec<(Point3<usize>, Source)>,
@@ -820,24 +832,12 @@ struct Sources {
 
 impl Sources {
     pub fn from_scene(
-        scene: &mut Scene,
+        world: &mut World,
         coordinate_transformations: &CoordinateTransformations,
     ) -> Self {
-        let sources = scene
-            .entities
-            .query_mut::<(&GlobalTransform, &Source)>()
-            .into_iter()
-            .flat_map(|(_entity, (transform, source))| {
-                let world_point = transform.position();
-                let sim_point = coordinate_transformations
-                    .transform_point_from_world_to_solver(&world_point)?;
-                tracing::debug!(?world_point, ?sim_point, ?source, "creating source");
-
-                Some((sim_point, source.clone()))
-            })
-            .collect();
-
-        Self { sources }
+        world
+            .run_system_cached_with(setup_sources_system, coordinate_transformations)
+            .unwrap()
     }
 
     pub fn push(&mut self, point: Point3<usize>, source: impl Into<Source>) {
@@ -855,6 +855,25 @@ impl Sources {
             update_pass.set_forcing(point, &values);
         }
     }
+}
+
+fn setup_sources_system(
+    InRef(coordinate_transformations): InRef<CoordinateTransformations>,
+    sources: Query<(&GlobalTransform, &Source)>,
+) -> Sources {
+    let sources = sources
+        .iter()
+        .filter_map(|(global_transform, source)| {
+            let world_point = global_transform.position();
+            let sim_point =
+                coordinate_transformations.transform_point_from_world_to_solver(&world_point)?;
+            tracing::debug!(?world_point, ?sim_point, ?source, "creating source");
+
+            Some((sim_point, source.clone()))
+        })
+        .collect();
+
+    Sources { sources }
 }
 
 /// TODO: This should be created by the backend and probably be a trait

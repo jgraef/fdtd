@@ -7,7 +7,7 @@ use bytemuck::{
     Pod,
     Zeroable,
 };
-use cem_util::WeakCache;
+use cem_util::cache::WeakCache;
 use nalgebra::Matrix4;
 use parking_lot::Mutex;
 use wgpu::util::DeviceExt;

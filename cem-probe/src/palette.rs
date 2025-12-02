@@ -7,7 +7,7 @@ use palette::{
     },
 };
 
-use crate::util::egui::probe::PropertiesUi;
+use crate::PropertiesUi;
 
 impl PropertiesUi for Srgba {
     type Config = ();

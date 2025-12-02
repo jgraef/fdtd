@@ -3,16 +3,16 @@ use std::{
     path::PathBuf,
 };
 
-use egui::emath;
-
-use crate::util::{
-    Moo,
+use cem_util::{
+    boo::Moo,
     egui::{
         EguiUtilUiExt,
         FilePickerConfig,
-        probe::PropertiesUi,
     },
 };
+use egui::emath;
+
+use crate::PropertiesUi;
 
 #[derive(Clone, Debug)]
 pub enum NumericPropertyUiConfig<T> {

@@ -92,13 +92,11 @@ impl<'a> ComposerMenuElements<'a> {
     }
 
     pub fn selection_menu_buttons(&mut self, ui: &mut egui::Ui) {
-        let mut selection = self
-            .composers
-            .with_active(|composer| composer.selection_mut());
+        let mut selection = self.composers.with_active(|composer| composer.selection());
 
         let has_file_open = selection.is_some();
         let has_anything_selected = selection
-            .as_ref()
+            .as_mut()
             .map(|selection| !selection.is_empty())
             .unwrap_or_default();
 
@@ -127,7 +125,7 @@ impl<'a> ComposerMenuElements<'a> {
         ui.menu_button("Camera", |ui| {
             setup_menu(ui);
 
-            let mut camera = self.composers.with_active(|composer| composer.camera_mut());
+            let mut camera = self.composers.with_active(|composer| composer.camera());
             let has_file_open = camera.is_some();
             let fit_camera_margin = Vector2::zeros();
 

@@ -2,6 +2,11 @@
 
 use std::convert::Infallible;
 
+use cem_scene::{
+    PopulateScene,
+    Scene,
+    transform::LocalTransform,
+};
 use nalgebra::{
     Translation3,
     UnitQuaternion,
@@ -17,11 +22,9 @@ use parry3d::shape::Cylinder;
 
 use crate::{
     renderer::material::Material,
-    scene::{
-        PopulateScene,
-        Scene,
-        Spawn,
-        transform::LocalTransform,
+    util::scene::{
+        EntityBuilderExt,
+        SceneExt,
     },
 };
 
@@ -66,10 +69,7 @@ impl<'a> PopulateScene for PopulateWithNec<'a> {
                                     ),
                                 );
 
-                                scene
-                                    .add_object(transform, shape)
-                                    .material(self.material)
-                                    .spawn(scene);
+                                scene.add_object(transform, shape).material(self.material);
                             }
                             WireSegmentDimensions::Tapered { .. } => todo!("truncated cone shape"),
                         }

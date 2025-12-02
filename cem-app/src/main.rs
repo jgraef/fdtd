@@ -12,7 +12,6 @@ pub mod error;
 pub mod files;
 pub mod menubar;
 pub mod renderer;
-pub mod scene;
 pub mod solver;
 pub mod util;
 

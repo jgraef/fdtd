@@ -1,17 +1,41 @@
-use std::{
-    path::{
-        Path,
-        PathBuf,
-    },
-    sync::Arc,
-};
+use std::sync::Arc;
 
+use bevy_ecs::{
+    component::Component,
+    lifecycle::HookContext,
+    reflect::ReflectComponent,
+    world::DeferredWorld,
+};
+use bevy_reflect::{
+    Reflect,
+    prelude::ReflectDefault,
+};
 use bitflags::bitflags;
 use bytemuck::{
     Pod,
     Zeroable,
 };
-use cem_util::wgpu::create_texture_view_from_texture;
+use cem_probe::{
+    HasChangeValue,
+    PropertiesUi,
+    TrackChanges,
+    label_and_value,
+    label_and_value_with_config,
+    std::NumericPropertyUiConfig,
+};
+use cem_scene::{
+    assets::{
+        AssetError,
+        LoadAsset,
+        LoadingProgress,
+        LoadingState,
+    },
+    probe::{
+        ComponentName,
+        ReflectComponentUi,
+    },
+};
+use cem_util::palette::ColorExt;
 use palette::{
     LinSrgba,
     Srgb,
@@ -23,28 +47,12 @@ use serde::{
     Serialize,
 };
 
-use crate::{
-    Error,
-    composer::loader::{
-        AndChanged,
-        ImageInfo,
-        LoadAsset,
-        LoaderContext,
-        LoadingProgress,
-        LoadingState,
-    },
-    impl_register_component,
-    renderer::texture_channel::TextureReceiver,
-    util::{
-        egui::probe::{
-            HasChangeValue,
-            PropertiesUi,
-            TrackChanges,
-            label_and_value,
-            label_and_value_with_config,
-            std::NumericPropertyUiConfig,
-        },
-        palette::ColorExt,
+use crate::renderer::{
+    systems::UpdateMeshBindGroupMessage,
+    texture::{
+        TextureAndView,
+        TextureLoaderContext,
+        TextureSource,
     },
 };
 
@@ -87,9 +95,11 @@ pub mod presets {
 ///   default to black or white, depending of a texture is used for that
 ///   material (see [`MaterialData::new`]). But this requires some work with the
 ///   serde-integration (we can use the `serde_with` crate).
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, Component, Reflect)]
+#[reflect(Component, ComponentUi, @ComponentName::new("Material"), Default)]
 pub struct Material {
     #[serde(with = "crate::util::serde::palette")]
+    #[reflect(ignore)]
     pub albedo: Srgba,
 
     pub metalness: f32,
@@ -284,10 +294,10 @@ impl PropertiesUi for Material {
     }
 }
 
-impl_register_component!(Material where Changed, ComponentUi, default);
-
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Component, Reflect)]
+#[reflect(Component, ComponentUi, @ComponentName::new("Wireframe"), Default)]
 pub struct Wireframe {
+    #[reflect(ignore)]
     pub color: Srgba,
 }
 
@@ -316,19 +326,43 @@ impl PropertiesUi for Wireframe {
     }
 }
 
-impl_register_component!(Wireframe where Changed, ComponentUi, default);
-
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Component)]
+#[component(on_add = albedo_texture_added, on_insert = albedo_texture_added, on_remove = albedo_texture_removed)]
 pub struct AlbedoTexture {
     pub texture: Arc<TextureAndView>,
     pub transparent: bool,
 }
 
+fn albedo_texture_added(mut world: DeferredWorld, context: HookContext) {
+    world.write_message(UpdateMeshBindGroupMessage::AlbedoTextureAdded {
+        entity: context.entity,
+    });
+}
+
+fn albedo_texture_removed(mut world: DeferredWorld, context: HookContext) {
+    world.write_message(UpdateMeshBindGroupMessage::AlbedoTextureRemoved {
+        entity: context.entity,
+    });
+}
+
 /// Combined ambient occlusion, roughness, metalness map
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Component)]
+#[component(on_add = material_texture_added, on_insert = material_texture_added, on_remove = material_texture_removed)]
 pub struct MaterialTexture {
     pub texture: Arc<TextureAndView>,
     pub flags: MaterialTextureFlags,
+}
+
+fn material_texture_added(mut world: DeferredWorld, context: HookContext) {
+    world.write_message(UpdateMeshBindGroupMessage::MaterialTextureAdded {
+        entity: context.entity,
+    });
+}
+
+fn material_texture_removed(mut world: DeferredWorld, context: HookContext) {
+    world.write_message(UpdateMeshBindGroupMessage::MaterialTextureRemoved {
+        entity: context.entity,
+    });
 }
 
 bitflags! {
@@ -443,7 +477,7 @@ impl MaterialData {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Component)]
 pub struct LoadAlbedoTexture {
     pub source: TextureSource,
     pub transparency: Option<bool>,
@@ -472,20 +506,20 @@ impl From<TextureSource> for LoadAlbedoTexture {
 impl LoadAsset for LoadAlbedoTexture {
     type State = Self;
 
-    fn start_loading(&self, context: &mut LoaderContext) -> Result<Self, Error> {
-        let _ = context;
+    fn start_loading(&self) -> Result<Self, AssetError> {
         Ok(self.clone())
     }
 }
 
 impl LoadingState for LoadAlbedoTexture {
-    type Output = AndChanged<AlbedoTexture>;
+    type Output = AlbedoTexture;
+    type Context = TextureLoaderContext<'static, 'static>;
 
-    fn poll(
+    fn poll<'w, 's>(
         &mut self,
-        context: &mut LoaderContext,
-    ) -> Result<LoadingProgress<AndChanged<AlbedoTexture>>, Error> {
-        let loaded_texture = self.source.load_with(context)?;
+        context: &mut TextureLoaderContext<'w, 's>,
+    ) -> Result<LoadingProgress<AlbedoTexture>, AssetError> {
+        let loaded_texture = self.source.load(context).map_err(AssetError::custom)?;
 
         let transparent = self
             .transparency
@@ -506,7 +540,7 @@ impl LoadingState for LoadAlbedoTexture {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Component)]
 pub struct LoadMaterialTexture {
     pub source: TextureSource,
     pub flags: MaterialTextureFlags,
@@ -524,20 +558,20 @@ impl LoadMaterialTexture {
 impl LoadAsset for LoadMaterialTexture {
     type State = Self;
 
-    fn start_loading(&self, context: &mut LoaderContext) -> Result<Self, Error> {
-        let _ = context;
+    fn start_loading(&self) -> Result<Self, AssetError> {
         Ok(self.clone())
     }
 }
 
 impl LoadingState for LoadMaterialTexture {
-    type Output = AndChanged<MaterialTexture>;
+    type Output = MaterialTexture;
+    type Context = TextureLoaderContext<'static, 'static>;
 
-    fn poll(
+    fn poll<'w, 's>(
         &mut self,
-        context: &mut LoaderContext,
-    ) -> Result<LoadingProgress<AndChanged<MaterialTexture>>, Error> {
-        let loaded_texture = self.source.load(context)?;
+        context: &mut TextureLoaderContext<'w, 's>,
+    ) -> Result<LoadingProgress<MaterialTexture>, AssetError> {
+        let loaded_texture = self.source.load(context).map_err(AssetError::custom)?;
 
         Ok(LoadingProgress::Ready(
             MaterialTexture {
@@ -546,82 +580,5 @@ impl LoadingState for LoadMaterialTexture {
             }
             .into(),
         ))
-    }
-}
-
-#[derive(Clone, Debug)]
-pub enum TextureSource {
-    File { path: PathBuf },
-    Channel { receiver: TextureReceiver },
-}
-
-impl TextureSource {
-    pub fn load_with(&self, context: &mut LoaderContext) -> Result<LoadedTexture, Error> {
-        match self {
-            TextureSource::File { path } => {
-                // todo: this should not be implied here
-                let usage = wgpu::TextureUsages::TEXTURE_BINDING;
-
-                let (texture_and_view, info) = context.load_texture_from_file(path, usage)?;
-
-                Ok(LoadedTexture {
-                    texture_and_view,
-                    info: Some(info),
-                })
-            }
-            TextureSource::Channel { receiver } => {
-                Ok(LoadedTexture {
-                    texture_and_view: receiver.inner.clone(),
-                    info: None,
-                })
-            }
-        }
-    }
-
-    pub fn load(&self, context: &mut LoaderContext) -> Result<LoadedTexture, Error> {
-        self.load_with(context)
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct LoadedTexture {
-    texture_and_view: Arc<TextureAndView>,
-    info: Option<ImageInfo>,
-}
-
-impl From<PathBuf> for TextureSource {
-    fn from(value: PathBuf) -> Self {
-        Self::File { path: value }
-    }
-}
-
-impl From<&Path> for TextureSource {
-    fn from(value: &Path) -> Self {
-        Self::from(PathBuf::from(value))
-    }
-}
-
-impl From<&str> for TextureSource {
-    fn from(value: &str) -> Self {
-        Self::from(PathBuf::from(value))
-    }
-}
-
-impl From<TextureReceiver> for TextureSource {
-    fn from(value: TextureReceiver) -> Self {
-        Self::Channel { receiver: value }
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct TextureAndView {
-    pub texture: wgpu::Texture,
-    pub view: wgpu::TextureView,
-}
-
-impl TextureAndView {
-    pub fn from_texture(texture: wgpu::Texture, label: &str) -> Self {
-        let view = create_texture_view_from_texture(&texture, label);
-        Self { texture, view }
     }
 }

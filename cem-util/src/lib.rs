@@ -1,28 +1,32 @@
 #![warn(clippy::todo, unused_qualifications)]
 
-#[cfg(feature = "wgpu")]
-pub mod wgpu;
+#[cfg(feature = "egui")]
+pub mod egui;
 
 #[cfg(feature = "image")]
 pub mod image;
 
+#[cfg(feature = "palette")]
+pub mod palette;
+
+#[cfg(feature = "wgpu")]
+pub mod wgpu;
+
+pub mod boo;
+pub mod cache;
+pub mod exclusive;
 pub mod oneshot;
+pub mod path;
 
 use std::{
-    collections::{
-        HashMap,
-        hash_map,
-    },
-    hash::Hash,
     ops::{
         Bound,
+        Deref,
+        DerefMut,
         Range,
         RangeBounds,
     },
-    sync::{
-        Arc,
-        Weak,
-    },
+    sync::Arc,
 };
 
 pub fn format_size<T>(value: T) -> humansize::SizeFormatter<T, humansize::FormatSizeOptions>
@@ -50,40 +54,57 @@ pub fn normalize_index_bounds(range: impl RangeBounds<usize>, len: usize) -> Ran
     Range { start, end }
 }
 
-#[derive(Clone, Debug)]
-pub struct WeakCache<K, V> {
-    hash_map: HashMap<K, Weak<V>>,
+#[derive(Debug, Default)]
+pub struct ReusableSharedBuffer<T> {
+    value: Arc<T>,
 }
 
-impl<K, V> Default for WeakCache<K, V> {
-    fn default() -> Self {
+impl<T> ReusableSharedBuffer<T> {
+    pub fn new(value: T) -> Self {
         Self {
-            hash_map: HashMap::new(),
+            value: Arc::new(value),
         }
+    }
+
+    pub fn get(&self) -> Arc<T> {
+        self.value.clone()
+    }
+
+    pub fn write(&mut self, allocate: impl FnOnce() -> T) -> ReusableSharedBufferGuard<'_, T> {
+        let mut reallocated = false;
+        if Arc::get_mut(&mut self.value).is_none() {
+            self.value = Arc::new(allocate());
+            reallocated = true;
+        }
+
+        let value = Arc::get_mut(&mut self.value).unwrap();
+
+        ReusableSharedBufferGuard { value, reallocated }
     }
 }
 
-impl<K, V> WeakCache<K, V>
-where
-    K: Eq + Hash,
-{
-    pub fn get_or_insert_with(&mut self, key: K, init: impl FnOnce() -> Arc<V>) -> Arc<V> {
-        match self.hash_map.entry(key) {
-            hash_map::Entry::Occupied(mut occupied_entry) => {
-                if let Some(value) = occupied_entry.get().upgrade() {
-                    value
-                }
-                else {
-                    let value = init();
-                    occupied_entry.insert(Arc::downgrade(&value));
-                    value
-                }
-            }
-            hash_map::Entry::Vacant(vacant_entry) => {
-                let value = init();
-                vacant_entry.insert(Arc::downgrade(&value));
-                value
-            }
-        }
+#[derive(Debug)]
+pub struct ReusableSharedBufferGuard<'a, T> {
+    value: &'a mut T,
+    reallocated: bool,
+}
+
+impl<'a, T> ReusableSharedBufferGuard<'a, T> {
+    pub fn reallocated(&self) -> bool {
+        self.reallocated
+    }
+}
+
+impl<'a, T> Deref for ReusableSharedBufferGuard<'a, T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &*self.value
+    }
+}
+
+impl<'a, T> DerefMut for ReusableSharedBufferGuard<'a, T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.value
     }
 }

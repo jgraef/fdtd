@@ -152,7 +152,7 @@ impl FdtdWgpuSolverInstance {
     fn new(
         backend: &FdtdWgpuBackend,
         config: &FdtdSolverConfig,
-        domain_description: impl DomainDescription<Point3<usize>>,
+        mut domain_description: impl DomainDescription<Point3<usize>>,
     ) -> Self {
         let strider = config.strider();
         let num_cells = strider.len();

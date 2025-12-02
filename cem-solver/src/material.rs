@@ -1,11 +1,7 @@
 use std::fmt::Debug;
 
-use serde::{
-    Deserialize,
-    Serialize,
-};
-
-#[derive(Clone, Copy, Serialize, Deserialize)]
+#[derive(Clone, Copy)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct PhysicalConstants {
     pub vacuum_permittivity: f64,
     pub vacuum_permeability: f64,
@@ -52,8 +48,9 @@ impl PhysicalConstants {
 }
 
 // todo: good cc-0 database: https://github.com/polyanskiy/refractiveindex.info-database/
-// todo: this belongs into a crate shared by solvers
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "bevy_ecs", derive(bevy_ecs::component::Component))]
 pub struct Material {
     /// mu_r
     pub relative_permeability: f64,

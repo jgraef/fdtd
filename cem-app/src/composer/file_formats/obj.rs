@@ -3,19 +3,17 @@ use std::{
     path::Path,
 };
 
+use bevy_ecs::name::Name;
+use cem_scene::{
+    PopulateScene,
+    Scene,
+    transform::LocalTransform,
+};
 use nalgebra::Point3;
 use parry3d::shape::TriMesh;
 use tobj::LoadOptions;
 
-use crate::{
-    renderer::material::Material,
-    scene::{
-        Label,
-        PopulateScene,
-        Scene,
-        transform::LocalTransform,
-    },
-};
+use crate::renderer::material::Material;
 
 pub type Error = tobj::LoadError;
 
@@ -61,8 +59,6 @@ impl<'a> PopulateScene for PopulateSceneWithObjFile<'a> {
         // with z axis inverted).
 
         for model in &self.obj_file.models {
-            let label = Label::from(format!("tobj.{}", model.name));
-
             assert!(model.mesh.face_arities.is_empty(), "non-triangular mesh");
             assert!(
                 model.mesh.positions.len() % 3 == 0,
@@ -91,11 +87,11 @@ impl<'a> PopulateScene for PopulateSceneWithObjFile<'a> {
             // fixme: this should be integrated with the loader API
             let _tri_mesh = TriMesh::new(vertices, indices).expect("invalid triangle mesh");
 
-            scene.entities.spawn((
+            scene.world.spawn((
                 self.transform,
                 self.material,
                 //MeshFromShape::from(tri_mesh),
-                label,
+                Name::new(model.name.clone()),
             ));
         }
 

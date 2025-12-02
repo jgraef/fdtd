@@ -97,6 +97,7 @@ where
 }
 
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "bevy_ecs", derive(bevy_ecs::component::Component))]
 pub struct Source(pub Arc<dyn SourceFunction<Output = SourceValues>>);
 
 impl<F> From<F> for Source

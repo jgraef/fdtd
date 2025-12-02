@@ -1,0 +1,16 @@
+[package]
+name = "cem-probe"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+cem-util = { workspace = true, features = ["egui"] }
+egui = { version = "0.33.2", default-features = false }
+nalgebra = { version = "0.34.1", optional = true }
+palette = { version = "0.7.6", optional = true }
+
+[features]
+default = []
+full = ["nalgebra", "palette"]
+nalgebra = ["dep:nalgebra"]
+palette = ["dep:palette"]

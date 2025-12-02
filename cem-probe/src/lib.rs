@@ -1,8 +1,10 @@
+#[cfg(feature = "nalgebra")]
 pub mod nalgebra;
+#[cfg(feature = "palette")]
 pub mod palette;
 pub mod std;
 
-use crate::util::Boo;
+use cem_util::boo::Boo;
 
 /// TODO: should pass in IDs?
 pub trait PropertiesUi {

@@ -6,10 +6,21 @@ use std::{
     sync::Arc,
 };
 
+use bevy_ecs::{
+    component::Component,
+    lifecycle::HookContext,
+    world::DeferredWorld,
+};
 use bitflags::bitflags;
 use bytemuck::{
     Pod,
     Zeroable,
+};
+use cem_scene::assets::{
+    AssetError,
+    LoadAsset,
+    LoadingProgress,
+    LoadingState,
 };
 use cem_util::format_size;
 use nalgebra::{
@@ -24,29 +35,21 @@ use parry3d::shape::{
 };
 use wgpu::util::DeviceExt;
 
-use crate::{
-    Error,
-    composer::loader::{
-        LoadAsset,
-        LoaderContext,
-        LoadingProgress,
-        LoadingState,
+use crate::renderer::{
+    material::{
+        AlbedoTexture,
+        MaterialTexture,
     },
     renderer::{
         Fallbacks,
         Renderer,
-        material::{
-            AlbedoTexture,
-            MaterialTexture,
-        },
     },
-    scene::{
-        Changed,
-        Label,
-    },
+    resource::RenderResourceManager,
+    systems::UpdateMeshBindGroupMessage,
 };
 
-#[derive(Debug)]
+#[derive(Debug, Component)]
+#[component(on_add = mesh_added, on_insert = mesh_added, on_remove = mesh_removed)]
 pub struct Mesh {
     pub index_buffer: wgpu::Buffer,
     pub vertex_buffer: wgpu::Buffer,
@@ -54,6 +57,18 @@ pub struct Mesh {
     pub base_vertex: u32,
     pub winding_order: WindingOrder,
     pub flags: MeshFlags,
+}
+
+fn mesh_added(mut world: DeferredWorld, context: HookContext) {
+    world.write_message(UpdateMeshBindGroupMessage::MeshAdded {
+        entity: context.entity,
+    });
+}
+
+fn mesh_removed(mut world: DeferredWorld, context: HookContext) {
+    world.write_message(UpdateMeshBindGroupMessage::MeshRemoved {
+        entity: context.entity,
+    });
 }
 
 bitflags! {
@@ -77,8 +92,8 @@ impl Vertex {
     }
 }
 
-#[derive(Debug)]
-pub(super) struct MeshBindGroup {
+#[derive(Debug, Component)]
+pub struct MeshBindGroup {
     pub bind_group: wgpu::BindGroup,
 }
 
@@ -244,16 +259,6 @@ impl MeshBuilder for MeshBufferBuilder {
     }
 }
 
-#[derive(Clone, Debug)]
-#[deprecated]
-pub struct SurfaceMesh {
-    pub indices: Vec<[u32; 3]>,
-    pub vertices: Vec<Point3<f32>>,
-    pub normals: Vec<Vector3<f32>>,
-    pub uvs: Vec<Point2<f32>>,
-    pub winding_order: WindingOrder,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum WindingOrder {
     Clockwise,
@@ -276,7 +281,7 @@ impl WindingOrder {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Component)]
 pub enum LoadMesh {
     Generator {
         generator: Arc<dyn GenerateMeshTraits>,
@@ -319,19 +324,19 @@ impl LoadMesh {
 impl LoadAsset for LoadMesh {
     type State = Self;
 
-    fn start_loading(&self, context: &mut LoaderContext) -> Result<Self, Error> {
-        let _ = context;
+    fn start_loading(&self) -> Result<Self, AssetError> {
         Ok(self.clone())
     }
 }
 
 impl LoadingState for LoadMesh {
-    type Output = (Mesh, Changed<Mesh>);
+    type Output = Mesh;
+    type Context = RenderResourceManager<'static, 'static>;
 
     fn poll(
         &mut self,
-        context: &mut LoaderContext,
-    ) -> Result<LoadingProgress<(Mesh, Changed<Mesh>)>, Error> {
+        context: &mut RenderResourceManager,
+    ) -> Result<LoadingProgress<Mesh>, AssetError> {
         let mesh = match self {
             LoadMesh::Generator {
                 generator,
@@ -340,13 +345,12 @@ impl LoadingState for LoadMesh {
             } => {
                 let mut mesh_builder = MeshBufferBuilder::new(Some(Renderer::WINDING_ORDER));
                 generator.generate(&mut mesh_builder, *normals, *uvs);
-                // todo: label
-                mesh_builder.finish(context.render_resource_manager_transaction.device(), "todo")
+                mesh_builder.finish(context.device(), &format!("{generator:?}"))
             }
             LoadMesh::File { path: _ } => todo!(),
         };
 
-        Ok(LoadingProgress::Ready((mesh, Changed::default())))
+        Ok(LoadingProgress::Ready(mesh))
     }
 }
 
@@ -511,61 +515,5 @@ impl IntoGenerateMesh for Cylinder {
             cylinder: self,
             config,
         })
-    }
-}
-
-pub(super) fn update_mesh_bind_groups(
-    entities: &mut hecs::World,
-    command_buffer: &mut hecs::CommandBuffer,
-    device: &wgpu::Device,
-    mesh_bind_group_layout: &wgpu::BindGroupLayout,
-    texture_defaults: &Fallbacks,
-) {
-    let mut update_mesh_bind_group = |entity: hecs::Entity,
-                                      mesh: &Mesh,
-                                      albedo_texture: Option<&AlbedoTexture>,
-                                      material_texture: Option<&MaterialTexture>,
-                                      label: Option<&Label>| {
-        if !mesh.flags.contains(MeshFlags::UVS)
-            && (albedo_texture.is_some() || material_texture.is_some())
-        {
-            tracing::warn!(?label, "Mesh with textures, but no UV buffer");
-        }
-
-        let mesh_bind_group = MeshBindGroup::new(
-            device,
-            mesh_bind_group_layout,
-            mesh,
-            albedo_texture,
-            material_texture,
-            texture_defaults,
-        );
-
-        command_buffer.remove_one::<Changed<Mesh>>(entity);
-        command_buffer.remove_one::<Changed<AlbedoTexture>>(entity);
-        command_buffer.remove_one::<Changed<MaterialTexture>>(entity);
-        command_buffer.insert_one(entity, mesh_bind_group);
-    };
-
-    for (entity, (mesh, albedo_texture, material_texture, label)) in entities
-        .query_mut::<(
-            &Mesh,
-            Option<&AlbedoTexture>,
-            Option<&MaterialTexture>,
-            Option<&Label>,
-        )>()
-        .without::<&MeshBindGroup>()
-    {
-        tracing::debug!(?label, "creating mesh bind group");
-        update_mesh_bind_group(entity, mesh, albedo_texture, material_texture, label);
-    }
-
-    for (entity, (mesh, albedo_texture, material_texture, label)) in entities
-        .query_mut::<(&Mesh, Option<&AlbedoTexture>, Option<&MaterialTexture>, Option<&Label>)>()
-        .with::<&MeshBindGroup>()
-        .with::<hecs::Or<&Changed<Mesh>, hecs::Or<&Changed<AlbedoTexture>, &Changed<MaterialTexture>>>>()
-    {
-        tracing::debug!(?label, "updating mesh bind group");
-        update_mesh_bind_group(entity, mesh, albedo_texture, material_texture, label);
     }
 }

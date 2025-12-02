@@ -9,6 +9,7 @@ use crate::{
 };
 
 #[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "bevy_ecs", derive(bevy_ecs::component::Component))]
 pub struct GradedPml {
     pub m: f64,
     pub m_a: f64,

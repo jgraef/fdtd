@@ -6,27 +6,32 @@ use std::{
         Range,
     },
     sync::Arc,
-    time::Instant,
+    time::{
+        Duration,
+        Instant,
+    },
 };
 
+use bevy_ecs::{
+    component::Component,
+    entity::Entity,
+};
 use bitflags::bitflags;
+use cem_util::{
+    ReusableSharedBuffer,
+    ReusableSharedBufferGuard,
+};
 use nalgebra::Point3;
 
-use crate::{
-    renderer::{
-        Renderer,
-        Stencil,
-        camera::CameraRenderInfo,
-        command::CommandSender,
-        mesh::{
-            Mesh,
-            MeshBindGroup,
-        },
+use crate::renderer::{
+    Command,
+    command::CommandSender,
+    mesh::{
+        Mesh,
+        MeshBindGroup,
     },
-    util::{
-        ReusableSharedBuffer,
-        ReusableSharedBufferGuard,
-    },
+    pipeline::Stencil,
+    renderer::Renderer,
 };
 
 #[derive(Debug, Default)]
@@ -54,7 +59,7 @@ impl DrawCommandBuffer {
         camera_bind_group: wgpu::BindGroup,
         camera_position: Point3<f32>,
         flags: DrawCommandFlags,
-        camera_entity: hecs::Entity,
+        draw_command_info_sink: DrawCommandInfoSink,
     ) -> DrawCommand {
         DrawCommand {
             camera_bind_group,
@@ -76,8 +81,7 @@ impl DrawCommandBuffer {
                 .contains(DrawCommandFlags::OUTLINE)
                 .then(|| renderer.outline_pipeline.pipeline.clone()),
             buffer: self.buffer.get(),
-            camera_entity,
-            command_sender: renderer.command_queue.sender.clone(),
+            draw_command_info_sink,
         }
     }
 }
@@ -221,9 +225,7 @@ pub struct DrawCommand {
 
     buffer: Arc<DrawCommandBuilderBuffer>,
 
-    // for recording timings
-    camera_entity: hecs::Entity,
-    command_sender: CommandSender,
+    draw_command_info_sink: DrawCommandInfoSink,
 }
 
 impl DrawCommand {
@@ -331,36 +333,38 @@ impl DrawCommand {
             );
         }
 
-        let _time = time_start.elapsed();
-
-        // fixme
-        /*self.command_sender.send(DrawCommandInfo {
-            camera_entity: self.camera_entity,
-            info: CameraRenderInfo {
-                total: time,
-                num_opaque: self.buffer.draw_meshes_opaque.len(),
-                num_transparent: self.buffer.draw_meshes_transparent.len(),
-                num_outlines: self.buffer.draw_outlines.len(),
-            },
-        })*/
+        let total = time_start.elapsed();
+        let draw_command_info = DrawCommandInfo {
+            total,
+            num_opaque: self.buffer.draw_meshes_opaque.len(),
+            num_transparent: self.buffer.draw_meshes_transparent.len(),
+            num_outlines: self.buffer.draw_outlines.len(),
+        };
+        self.draw_command_info_sink.send(draw_command_info);
     }
 }
 
-impl egui_wgpu::CallbackTrait for DrawCommand {
-    fn paint(
-        &self,
-        _info: egui::PaintCallbackInfo,
-        render_pass: &mut wgpu::RenderPass<'static>,
-        _callback_resources: &egui_wgpu::CallbackResources,
-    ) {
-        self.render(render_pass);
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Component)]
 pub struct DrawCommandInfo {
-    pub camera_entity: hecs::Entity,
-    pub info: CameraRenderInfo,
+    pub total: Duration,
+    pub num_opaque: usize,
+    pub num_transparent: usize,
+    pub num_outlines: usize,
+}
+
+#[derive(Clone, Debug)]
+pub struct DrawCommandInfoSink {
+    pub command_sender: CommandSender,
+    pub camera_entity: Entity,
+}
+
+impl DrawCommandInfoSink {
+    pub fn send(&self, draw_command_info: DrawCommandInfo) {
+        self.command_sender.send(Command::DrawCommandInfo {
+            camera_entity: self.camera_entity,
+            draw_command_info,
+        })
+    }
 }
 
 /// Wrapper around [`wgpu::RenderPass`] for convenience.

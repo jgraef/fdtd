@@ -1,6 +1,13 @@
 [workspace]
 resolver = "2"
-members = ["cem-solver", "cem-util", "cem-app", "nec-file"]
+members = [
+    "cem-solver",
+    "cem-util",
+    "cem-app",
+    "nec-file",
+    "cem-scene",
+    "cem-probe",
+]
 
 [patch.crates-io]
 eframe = { git = "https://github.com/jgraef/egui.git", branch = "switch/wgpu-stencil-buffer" }
@@ -11,6 +18,8 @@ egui-winit = { git = "https://github.com/jgraef/egui.git", branch = "switch/wgpu
 emath = { git = "https://github.com/jgraef/egui.git", branch = "switch/wgpu-stencil-buffer" }
 
 [workspace.dependencies]
+cem-scene = { path = "cem-scene" }
 cem-solver = { path = "cem-solver" }
 cem-util = { path = "cem-util" }
+cem-probe = { path = "cem-probe" }
 nec-file = { path = "nec-file" }

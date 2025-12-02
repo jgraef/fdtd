@@ -1,6 +1,19 @@
+use bevy_ecs::{
+    component::Component,
+    reflect::ReflectComponent,
+};
+use bevy_reflect::{
+    Reflect,
+    prelude::ReflectDefault,
+};
 use bytemuck::{
     Pod,
     Zeroable,
+};
+use cem_probe::PropertiesUi;
+use cem_scene::probe::{
+    ComponentName,
+    ReflectComponentUi,
 };
 use palette::{
     LinSrgba,
@@ -10,15 +23,6 @@ use palette::{
 use serde::{
     Deserialize,
     Serialize,
-};
-
-use crate::{
-    impl_register_component,
-    util::egui::probe::{
-        PropertiesUi,
-        TrackChanges,
-        label_and_value,
-    },
 };
 
 /// A point light source.
@@ -36,9 +40,11 @@ use crate::{
 /// light's) is already sent to the shader. The diffuse and specular light
 /// components can be modulated by the camera as well. So there is no need for
 /// this right now.
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, Component, Reflect)]
+#[reflect(Component, ComponentUi, @ComponentName::new("Point Light"), Default)]
 pub struct PointLight {
     #[serde(with = "crate::util::serde::palette")]
+    #[reflect(ignore)]
     pub color: Srgb,
 }
 
@@ -72,23 +78,15 @@ impl PropertiesUi for PointLight {
     type Config = ();
 
     fn properties_ui(&mut self, ui: &mut egui::Ui, _config: &Self::Config) -> egui::Response {
-        let mut changes = TrackChanges::default();
-
-        let response = egui::Frame::new()
-            .show(ui, |ui: &mut egui::Ui| {
-                label_and_value(ui, "Color", &mut changes, &mut self.color);
-            })
-            .response;
-
-        changes.propagated(response)
+        self.color.properties_ui(ui, &())
     }
 }
 
-impl_register_component!(PointLight where ComponentUi, default);
-
-#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, Component, Reflect)]
+#[reflect(Component, ComponentUi, @ComponentName::new("Ambient Light"), Default)]
 pub struct AmbientLight {
     #[serde(with = "crate::util::serde::palette")]
+    #[reflect(ignore)]
     pub color: Srgb,
 }
 
@@ -104,19 +102,9 @@ impl PropertiesUi for AmbientLight {
     type Config = ();
 
     fn properties_ui(&mut self, ui: &mut egui::Ui, _config: &Self::Config) -> egui::Response {
-        let mut changes = TrackChanges::default();
-
-        let response = egui::Frame::new()
-            .show(ui, |ui| {
-                label_and_value(ui, "Color", &mut changes, &mut self.color);
-            })
-            .response;
-
-        changes.propagated(response)
+        self.color.properties_ui(ui, &())
     }
 }
-
-impl_register_component!(AmbientLight where ComponentUi, default);
 
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 #[repr(C)]

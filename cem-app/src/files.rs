@@ -6,8 +6,8 @@ use std::{
     sync::Arc,
 };
 
+use cem_util::path::ProjectDirs;
 use color_eyre::eyre::Context;
-use directories::ProjectDirs;
 use serde::{
     Serialize,
     de::DeserializeOwned,
