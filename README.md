@@ -4,9 +4,9 @@ This app is work-in-progress. It's intended to model electromagnetic behavior. I
 
 # TODO
 
- - make Renderer immutable:
-  - this is so that it can be shared between multiple scenes
-  - at least the draw command buffer needs to be stored in the Scene. maybe the instance buffer as well.
+ - use bevy-ecs
+  - reflect feature seems to work with older version of wgpu-types
+ - use types from nonmax crate in half-edge graph and maybe fdtd impl?
  - fix transparency:
   - when overlapping: order-independent transparency?
   - we can't apply gamma correction / tone map in the pbr shader because the values are later alpha-blended. we would need to do tone map / gamma in a separate render pass.

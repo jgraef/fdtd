@@ -1,0 +1,18 @@
+[package]
+name = "cem-scene"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bevy_ecs = { version = "0.17.3", default-features = false, features = [
+    "backtrace",
+    "std",
+    "trace",
+    "track_location",
+] }
+bevy_tasks = { version = "0.17.3", default-features = false, features = [] }
+bevy_utils = { version = "0.17.3", default-features = false, features = [] }
+derive_more = { version = "2.0.1", features = ["debug"] }
+nalgebra = "0.34.1"
+parry3d = { version = "0.25.3", default-features = false, features = ["dim3", "f32", "std"] }
+tracing = "0.1.43"

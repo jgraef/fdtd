@@ -13,6 +13,7 @@ multi-threading = ["cem-solver/rayon"]
 base64 = "0.22.1"
 bitflags = { version = "2.10.0", features = ["bytemuck", "serde"] }
 bytemuck = "1.24.0"
+cem-scene = { workspace = true }
 cem-solver = { workspace = true, features = ["full"] }
 cem-util = { workspace = true, features = ["full"] }
 chrono = { version = "0.4.42", features = ["serde"] }
