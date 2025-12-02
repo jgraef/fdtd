@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 arrayvec = "0.7.6"
+bevy_ecs = { version = "0.17.3", default-features = false, optional = true }
 bytemuck = { version = "1.24.0", optional = true }
 cem-util = { workspace = true }
 derive_more = { version = "2.0.1", features = ["debug"] }
@@ -21,6 +22,7 @@ wgpu = { version = "27.0.1", optional = true }
 
 [features]
 default = []
-full = ["rayon", "wgpu"]
+full = ["rayon", "wgpu", "bevy_ecs"]
 rayon = ["dep:rayon"]
 wgpu = ["dep:wgpu", "cem-util/wgpu", "dep:bytemuck", "nalgebra/bytemuck"]
+bevy_ecs = ["dep:bevy_ecs"]

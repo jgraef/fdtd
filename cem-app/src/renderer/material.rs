@@ -6,6 +6,7 @@ use std::{
     sync::Arc,
 };
 
+use bevy_ecs::component::Component;
 use bitflags::bitflags;
 use bytemuck::{
     Pod,
@@ -87,7 +88,7 @@ pub mod presets {
 ///   default to black or white, depending of a texture is used for that
 ///   material (see [`MaterialData::new`]). But this requires some work with the
 ///   serde-integration (we can use the `serde_with` crate).
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, Component)]
 pub struct Material {
     #[serde(with = "crate::util::serde::palette")]
     pub albedo: Srgba,
@@ -286,7 +287,7 @@ impl PropertiesUi for Material {
 
 impl_register_component!(Material where Changed, ComponentUi, default);
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Component)]
 pub struct Wireframe {
     pub color: Srgba,
 }
@@ -318,14 +319,14 @@ impl PropertiesUi for Wireframe {
 
 impl_register_component!(Wireframe where Changed, ComponentUi, default);
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Component)]
 pub struct AlbedoTexture {
     pub texture: Arc<TextureAndView>,
     pub transparent: bool,
 }
 
 /// Combined ambient occlusion, roughness, metalness map
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Component)]
 pub struct MaterialTexture {
     pub texture: Arc<TextureAndView>,
     pub flags: MaterialTextureFlags,
@@ -443,7 +444,7 @@ impl MaterialData {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Component)]
 pub struct LoadAlbedoTexture {
     pub source: TextureSource,
     pub transparency: Option<bool>,
@@ -506,7 +507,7 @@ impl LoadingState for LoadAlbedoTexture {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Component)]
 pub struct LoadMaterialTexture {
     pub source: TextureSource,
     pub flags: MaterialTextureFlags,

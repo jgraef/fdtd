@@ -1,9 +1,13 @@
 use crate::renderer::{
-    DepthState,
-    Renderer,
-    RendererConfig,
-    Stencil,
-    StencilTest,
+    pipeline::{
+        DepthState,
+        Stencil,
+        StencilTest,
+    },
+    renderer::{
+        Renderer,
+        RendererConfig,
+    },
 };
 
 pub struct MeshPipelineDescriptor<'a> {

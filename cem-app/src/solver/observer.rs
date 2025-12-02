@@ -4,6 +4,7 @@ use std::{
     path::PathBuf,
 };
 
+use bevy_ecs::component::Component;
 use cem_solver::{
     FieldComponent,
     fdtd::{
@@ -47,7 +48,7 @@ use crate::{
     },
 };
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Component)]
 pub struct Observer {
     pub write_to_gif: Option<PathBuf>,
     pub display_as_texture: bool,

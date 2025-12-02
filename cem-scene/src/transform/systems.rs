@@ -11,6 +11,7 @@ use crate::transform::{
 /// their descendants have a changed `Transform`. If this component is *not*
 /// marked `is_changed()`, propagation will halt.
 #[derive(Clone, Copy, Default, PartialEq, Debug, Component)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub(super) struct TransformTreeChanged;
 
 /// Update [`GlobalTransform`] component of entities that aren't in the

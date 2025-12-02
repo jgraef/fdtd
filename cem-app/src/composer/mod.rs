@@ -1,4 +1,4 @@
-pub mod entity;
+//pub mod entity;
 pub mod file_formats;
 pub mod loader;
 pub mod menubar;
@@ -18,7 +18,27 @@ use std::{
     },
 };
 
-use base64::engine::Engine;
+use bevy_ecs::{
+    component::Component,
+    entity::Entity,
+    query::With,
+    system::{
+        Commands,
+        In,
+        Populated,
+        Query,
+    },
+    world::World,
+};
+use cem_scene::{
+    Scene,
+    SceneBuilder,
+    builtin_plugins,
+    spatial::{
+        Collider,
+        queries::WorldAabb,
+    },
+};
 use cem_solver::{
     FieldComponent,
     fdtd::{
@@ -36,7 +56,6 @@ use cem_solver::{
     },
 };
 use color_eyre::eyre::bail;
-use hecs_hierarchy::HierarchyMut;
 use nalgebra::{
     Isometry3,
     Point3,
@@ -59,7 +78,6 @@ use serde::{
 use crate::{
     Error,
     composer::{
-        entity::EntityPropertiesWindow,
         file_formats::{
             FileFormat,
             guess_file_format_from_path,
@@ -89,35 +107,26 @@ use crate::{
         AppConfig,
         ComposerConfig,
     },
-    debug::DebugUi,
-    error::ResultExt,
     impl_register_component,
     lipsum,
     renderer::{
-        ClearColor,
-        Outline,
         Renderer,
-        RendererInfo,
         camera::{
             CameraConfig,
             CameraProjection,
-            CameraRenderInfo,
+        },
+        components::{
+            ClearColor,
+            Outline,
         },
         material,
         mesh::LoadMesh,
     },
     scene::{
-        Changed,
-        EntityDebugLabel,
+        EntityBuilderExt,
         Label,
         PopulateScene,
-        Scene,
-        Spawn,
-        serialize::DeserializeEntity,
-        spatial::{
-            Collider,
-            SceneSpatialExt,
-        },
+        SceneExt,
         transform::{
             GlobalTransform,
             LocalTransform,
@@ -315,10 +324,10 @@ impl Composers {
     /// there at the moment
     fn with_selected<R>(
         &mut self,
-        f: impl FnOnce(&mut ComposerState, Vec<hecs::Entity>) -> R,
+        f: impl FnOnce(&mut ComposerState, Vec<Entity>) -> R,
     ) -> Option<R> {
         self.with_active(|composer| {
-            let selected = composer.selection().entities();
+            let selected = composer.selection_mut().entities();
             f(composer, selected)
         })
     }
@@ -355,7 +364,7 @@ struct ComposerState {
     /// The camera used to render the scene.
     ///
     /// There will be one per view eventually
-    camera_entity: hecs::Entity,
+    camera_entity: Entity,
 
     /// Stores where in the scene our mouse is pointing.
     ///
@@ -366,7 +375,7 @@ struct ComposerState {
     object_tree: ObjectTreeState,
 
     /// If an context menu is open, which entity is it about
-    context_menu_object: Option<hecs::Entity>,
+    context_menu_object: Option<Entity>,
 
     /// Buffer storing undo and redo commands
     undo_buffer: UndoBuffer,
@@ -376,34 +385,38 @@ struct ComposerState {
 
     // note: only used as a temporary scratch buffer. this is queries from the scene right before
     // the windows are rendered
-    entity_windows: Vec<(hecs::Entity, EntityWindow)>,
+    entity_windows: Vec<(Entity, EntityWindow)>,
 }
 
 impl ComposerState {
     fn new(config: ComposerConfig) -> Self {
-        let mut scene = Scene::default();
+        let mut scene_builder = SceneBuilder::default();
+        scene_builder.register_plugins(builtin_plugins());
 
         // the only view we have right now
         // todo: don't create camera here. for a proper project file it will be
         // populated by it.
         let view_config = &config.views.view_3d;
-        let camera_entity = scene.entities.spawn((
-            LocalTransform::look_at(
-                &Point3::new(0.0, 0.0, -1.5),
-                &Point3::origin(),
-                &Vector3::y_axis(),
-            ),
-            ClearColor::from(view_config.background_color),
-            CameraProjection::new(view_config.fovy.to_radians()),
-            CameraConfig {
-                tone_map: view_config.tone_map,
-                gamma: view_config.gamma,
-                ..Default::default()
-            },
-            view_config.ambient_light,
-            view_config.point_light,
-            Label::new_static("camera"),
-        ));
+        let camera_entity = scene_builder
+            .world
+            .spawn((
+                LocalTransform::look_at(
+                    &Point3::new(0.0, 0.0, -1.5),
+                    &Point3::origin(),
+                    &Vector3::y_axis(),
+                ),
+                ClearColor::from(view_config.background_color),
+                CameraProjection::new(view_config.fovy.to_radians()),
+                CameraConfig {
+                    tone_map: view_config.tone_map,
+                    gamma: view_config.gamma,
+                    ..Default::default()
+                },
+                view_config.ambient_light,
+                view_config.point_light,
+                Label::new_static("camera"),
+            ))
+            .id();
 
         let undo_buffer = UndoBuffer::new(config.undo_limit, config.redo_limit);
 
@@ -418,6 +431,8 @@ impl ComposerState {
                 make_config("GPU", Some(Parallelization::Wgpu)),
             ]
         };
+
+        let scene = scene_builder.build();
 
         Self {
             config,
@@ -443,10 +458,11 @@ impl ComposerState {
         asset_loader: &mut AssetLoader,
     ) {
         // prepare world
-        self.scene.prepare();
+        self.scene.update();
 
-        asset_loader.run_all(&mut self.scene).ok_or_handle(ctx);
-        renderer.prepare_world(&mut self.scene);
+        //asset_loader.run_all(&mut self.scene).ok_or_handle(ctx);
+        //renderer.prepare_world(&mut self.scene);
+        self.scene.render();
 
         // todo: give a RepaintTrigger to the solver runner
         //ctx.request_repaint_after(Duration::from_millis(1000 / 60));
@@ -478,7 +494,7 @@ impl ComposerState {
             });
 
             if copy || cut {
-                let selection = self.selection().entities();
+                let selection = self.selection_mut().entities();
                 if !selection.is_empty() {
                     self.copy(ctx, selection.iter().copied());
                     if cut {
@@ -550,21 +566,26 @@ impl ComposerState {
 
             {
                 assert!(self.entity_windows.is_empty());
-                for (entity, window) in self.scene.entities.query_mut::<&EntityWindow>() {
+                for (entity, window) in self
+                    .scene
+                    .world
+                    .query::<(Entity, &EntityWindow)>()
+                    .iter(&mut self.scene.world)
+                {
                     self.entity_windows.push((entity, *window));
                 }
 
                 for (entity, window) in &self.entity_windows {
-                    EntityPropertiesWindow::new(
+                    /*EntityPropertiesWindow::new(
                         egui::Id::new("entity_properties").with(entity),
                         &mut self.scene,
                         *entity,
                     )
                     .deletable(window.despawn_button)
-                    .show(ctx, entity::default_title);
+                    .show(ctx, entity::default_title);*/
                 }
 
-                self.scene.apply_deferred();
+                //self.scene.apply_deferred();
 
                 self.entity_windows.clear();
             }
@@ -593,7 +614,8 @@ impl ComposerState {
         };
 
         let response = egui::Popup::context_menu(response).show(|ui| {
-            ui.label(self.scene.entity_debug_label(entity));
+            //ui.label(self.scene.entity_debug_label(entity));
+            ui.label(format!("{entity:?}"));
             ui.separator();
 
             if ui.button("Cut").clicked() {
@@ -620,8 +642,9 @@ impl ComposerState {
             if ui.button("Properties").clicked() {
                 let _ = self
                     .scene
-                    .entities
-                    .insert_one(entity, EntityWindow::default());
+                    .world
+                    .entity_mut(entity)
+                    .insert(EntityWindow::default());
             }
         });
 
@@ -639,22 +662,16 @@ impl ComposerState {
     }
 
     pub fn undo(&mut self) {
-        self.undo_buffer.undo_most_recent(&mut self.scene);
+        //self.undo_buffer.undo_most_recent(&mut self.scene);
     }
 
     pub fn redo(&mut self) {
         tracing::debug!("todo: redo");
     }
 
-    pub fn selection(&self) -> Selection<'_> {
-        Selection {
-            world: &self.scene.entities,
-        }
-    }
-
     pub fn selection_mut(&mut self) -> SelectionMut<'_> {
         SelectionMut {
-            scene: &mut self.scene,
+            world: &mut self.scene.world,
             outline: &self.config.views.selection_outline,
         }
     }
@@ -668,10 +685,10 @@ impl ComposerState {
     }
 
     pub fn open_camera_window(&mut self) {
-        let _ = self
-            .scene
-            .entities
-            .insert_one(self.camera_entity, EntityWindow::default());
+        self.scene
+            .world
+            .entity_mut(self.camera_entity)
+            .insert(EntityWindow::default());
     }
 
     pub fn open_solver_config_window(&mut self) {
@@ -680,37 +697,39 @@ impl ComposerState {
 
     fn send_to_hades(
         &mut self,
-        entities: impl IntoIterator<Item = hecs::Entity>,
-        mut before_deletion: impl FnMut(&mut Scene, hecs::Entity),
+        entities: impl IntoIterator<Item = Entity>,
+        mut before_deletion: impl FnMut(&mut Scene, Entity),
     ) -> Vec<HadesId> {
-        entities
-            .into_iter()
-            .filter_map(|entity| {
-                // removes selection from to-be-removed entity. thus when the delete/cut is
-                // undone, it isn't auto-selected. not sure what is a good behavior.
-                let _ = self.scene.entities.remove_one::<Outline>(entity);
-                let _ = self.scene.entities.remove_one::<Selected>(entity);
+        /*entities
+        .into_iter()
+        .filter_map(|entity| {
+            // removes selection from to-be-removed entity. thus when the delete/cut is
+            // undone, it isn't auto-selected. not sure what is a good behavior.
+            let _ = self.scene.entities.remove_one::<Outline>(entity);
+            let _ = self.scene.entities.remove_one::<Selected>(entity);
 
-                before_deletion(&mut self.scene, entity);
+            before_deletion(&mut self.scene, entity);
 
-                if let Some(taken_entity) = self.scene.take(entity) {
-                    Some(self.undo_buffer.send_to_hades(taken_entity))
-                }
-                else {
-                    tracing::warn!(?entity, "Selected entity doesn't exist");
-                    None
-                }
-            })
-            .collect()
+            if let Some(taken_entity) = self.scene.take(entity) {
+                Some(self.undo_buffer.send_to_hades(taken_entity))
+            }
+            else {
+                tracing::warn!(?entity, "Selected entity doesn't exist");
+                None
+            }
+        })
+        .collect()*/
+        todo!();
     }
 
-    pub fn delete(&mut self, entities: impl IntoIterator<Item = hecs::Entity>) {
+    pub fn delete(&mut self, entities: impl IntoIterator<Item = Entity>) {
         let hades_ids = self.send_to_hades(entities, |_, _| {});
         self.undo_buffer
             .push_undo(UndoAction::DeleteEntity { hades_ids });
     }
 
-    pub fn copy(&mut self, ctx: &egui::Context, entities: impl IntoIterator<Item = hecs::Entity>) {
+    pub fn copy(&mut self, ctx: &egui::Context, entities: impl IntoIterator<Item = Entity>) {
+        /*
         // this is rather hacky, doesn't use our local buffer/clipboard extension and
         // pollutes the OS clipboard.
         // todo: error handling
@@ -735,10 +754,12 @@ impl ComposerState {
         // send to OS clipboard
         tracing::debug!("copying entities to clipboard: {} bytes", encoded.len());
         ctx.copy_text(encoded);
+         */
+        todo!();
     }
 
     pub fn paste(&mut self, text: &str) {
-        if let Some(encoded) = text.strip_prefix(CLIPBOARD_PREFIX) {
+        /*if let Some(encoded) = text.strip_prefix(CLIPBOARD_PREFIX) {
             let mut compressed = Vec::with_capacity(encoded.len());
             base64::engine::general_purpose::URL_SAFE
                 .decode_vec(encoded, &mut compressed)
@@ -758,7 +779,8 @@ impl ComposerState {
                     }
                 }
             }
-        }
+        }*/
+        todo!();
     }
 }
 
@@ -811,15 +833,16 @@ impl PopulateScene for ExampleScene {
                 Cuboid::new(Vector3::repeat(0.1)),
             )
             .material(material::presets::BRASS)
-            .component(em_material)
-            .spawn(scene);
+            .insert(em_material)
+            .id();
 
         let ball = scene
             .add_object(Point3::new(0.4, 0.0, 0.0), Ball::new(0.1))
             .material(material::presets::BLACKBOARD)
-            .component(em_material)
-            .spawn(scene);
-        scene.entities.attach::<()>(ball, cube).unwrap();
+            .insert(em_material)
+            .id();
+
+        scene.world.entity_mut(cube).add_child(ball);
 
         // pml (wip)
 
@@ -835,7 +858,7 @@ impl PopulateScene for ExampleScene {
                 a_max: 0.1,
                 normal,
             };
-            scene.entities.spawn((
+            scene.world.spawn((
                 Label::new_static("PML"),
                 pml,
                 transform,
@@ -852,7 +875,7 @@ impl PopulateScene for ExampleScene {
         {
             let half_extents = Vector2::repeat(0.5);
             let quad = Quad::new(half_extents);
-            scene.entities.spawn((
+            scene.world.spawn((
                 Label::new_static("Observer"),
                 Observer {
                     write_to_gif: None,
@@ -875,7 +898,7 @@ impl PopulateScene for ExampleScene {
 
         {
             let shape = Ball::new(0.01);
-            scene.entities.spawn((
+            scene.world.spawn((
                 Label::new_static("Source"),
                 Source::from(
                     //GaussianPulse::new(0.05, 0.01)
@@ -911,8 +934,7 @@ impl PopulateScene for PresetScene {
             scene
                 .add_object(Point3::new(x as f32, y as f32, -5.0), Ball::new(0.25))
                 .material(**preset)
-                .label(preset.name)
-                .spawn(scene);
+                .label(preset.name);
 
             x += 1;
             if x == per_line {
@@ -926,7 +948,7 @@ impl PopulateScene for PresetScene {
 }
 
 /// Tag for entities that are selected.
-#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, Component)]
 pub struct Selected;
 
 impl PropertiesUi for Selected {
@@ -948,138 +970,80 @@ enum SceneClipboard<E> {
     },
 }
 
-#[derive(Clone, Copy, derive_more::Debug)]
-pub struct Selection<'a> {
-    #[debug("hecs::World {{ ... }}")]
-    world: &'a hecs::World,
-}
-
-impl<'a> Selection<'a> {
-    pub fn is_empty(&self) -> bool {
-        self.world.query::<()>().with::<&Selected>().iter().len() == 0
-    }
-
-    pub fn query<Q>(&self) -> hecs::QueryBorrow<'_, hecs::With<Q, &Selected>>
-    where
-        Q: hecs::Query,
-    {
-        self.world.query::<Q>().with::<&Selected>()
-    }
-
-    pub fn with_query_iter<Q, R>(
-        &self,
-        f: impl FnOnce(hecs::QueryIter<'_, hecs::With<Q, &Selected>>) -> R,
-    ) -> R
-    where
-        Q: hecs::Query,
-    {
-        let mut query = self.query::<Q>();
-        f(query.iter())
-    }
-
-    pub fn entities(&self) -> Vec<hecs::Entity> {
-        self.with_query_iter::<(), _>(|selected| selected.map(|(entity, ())| entity).collect())
-    }
-}
-
 pub const CLIPBOARD_PREFIX: &str = "data:application/x-fdtd;base64,";
 
+// todo: bevy-migrate: this should probably also be systems that update a small
+// state resource to enable certain buttons and read actions from a message
+// queue
 #[derive(derive_more::Debug)]
 pub struct SelectionMut<'a> {
-    scene: &'a mut Scene,
+    world: &'a mut World,
     outline: &'a Outline,
 }
 
 impl<'a> SelectionMut<'a> {
     pub fn clear(&mut self) {
-        for (entity, ()) in self.scene.entities.query_mut::<()>().with::<&Selected>() {
-            self.scene.command_buffer.remove_one::<Selected>(entity);
-            self.scene.command_buffer.remove_one::<Outline>(entity);
+        self.world.run_system_cached(
+            |selection: Query<Entity, With<Selected>>, mut commands: Commands| {
+                selection.iter().for_each(|entity| {
+                    commands.entity(entity).remove::<Selected>();
+                });
+            },
+        );
+    }
+
+    pub fn select(&mut self, entity: Entity) {
+        let mut entity = self.world.entity_mut(entity);
+        if entity.contains::<Selectable>() {
+            entity.insert((Selected, *self.outline));
         }
     }
 
-    pub fn select(&mut self, entity: hecs::Entity) {
-        if self
-            .scene
-            .entities
-            .satisfies::<&Selectable>(entity)
-            .unwrap_or_default()
-        {
-            self.scene
-                .command_buffer
-                .insert(entity, (Selected, *self.outline));
+    pub fn unselect(&mut self, entity: Entity) {
+        self.world
+            .entity_mut(entity)
+            .remove::<(Selected, Outline)>();
+    }
+
+    pub fn toggle(&mut self, entity: Entity) {
+        let mut entity = self.world.entity_mut(entity);
+        if entity.contains::<Selected>() {
+            entity.remove::<(Selected, Outline)>();
         }
-    }
-
-    pub fn unselect(&mut self, entity: hecs::Entity) {
-        self.scene.command_buffer.remove_one::<Selected>(entity);
-        self.scene.command_buffer.remove_one::<Outline>(entity);
-    }
-
-    pub fn toggle(&mut self, entity: hecs::Entity) {
-        if let Ok(entity_ref) = self.scene.entities.entity(entity) {
-            if entity_ref.satisfies::<&Selected>() {
-                self.scene.command_buffer.remove_one::<Selected>(entity);
-                self.scene.command_buffer.remove_one::<Outline>(entity);
-            }
-            else if entity_ref.satisfies::<&Selectable>() {
-                self.scene
-                    .command_buffer
-                    .insert(entity, (Selected, *self.outline));
-            }
+        else {
+            entity.insert((Selected, *self.outline));
         }
     }
 
     pub fn select_all(&mut self) {
-        // todo: we should add a tag for selectable entities
-        for (entity, ()) in self.scene.entities.query_mut::<()>().with::<&Selectable>() {
-            self.scene
-                .command_buffer
-                .insert(entity, (Selected, *self.outline));
-        }
+        self.world.run_system_cached_with(
+            |In(outline): In<Outline>,
+             selectable: Query<Entity, With<Selectable>>,
+             mut commands: Commands| {
+                selectable.iter().for_each(|entity| {
+                    commands.entity(entity).insert((Selected, outline));
+                });
+            },
+            *self.outline,
+        );
     }
 
-    // not great to replicate all these. is there a better way?
-    pub fn is_empty(&self) -> bool {
-        self.scene
-            .entities
-            .query::<()>()
-            .with::<&Selected>()
-            .iter()
-            .len()
-            == 0
+    pub fn is_empty(&mut self) -> bool {
+        self.world
+            .run_system_cached(|_: Populated<(), With<Selected>>| true)
+            .unwrap()
     }
 
-    pub fn query<Q>(&self) -> hecs::QueryBorrow<'_, hecs::With<Q, &Selected>>
-    where
-        Q: hecs::Query,
-    {
-        self.scene.entities.query::<Q>().with::<&Selected>()
-    }
-
-    pub fn with_query_iter<Q, R>(
-        &self,
-        f: impl FnOnce(hecs::QueryIter<'_, hecs::With<Q, &Selected>>) -> R,
-    ) -> R
-    where
-        Q: hecs::Query,
-    {
-        let mut query = self.query::<Q>();
-        f(query.iter())
-    }
-
-    pub fn entities(&self) -> Vec<hecs::Entity> {
-        self.with_query_iter::<(), _>(|selected| selected.map(|(entity, ())| entity).collect())
+    pub fn entities(&mut self) -> Vec<Entity> {
+        self.world
+            .run_system_cached(|query: Query<Entity, With<Selected>>| {
+                query.iter().collect::<Vec<_>>()
+            })
+            .unwrap()
     }
 }
 
-impl<'a> Drop for SelectionMut<'a> {
-    fn drop(&mut self) {
-        self.scene.apply_deferred();
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, Component)]
 pub struct Selectable;
 
 impl PropertiesUi for Selectable {
@@ -1093,10 +1057,12 @@ impl PropertiesUi for Selectable {
 
 impl_register_component!(Selectable where ComponentUi, default);
 
-#[derive(derive_more::Debug)]
+// todo: bevy-migrate: turn these into systems. they can just read a message
+// queue. (one or multiple systems)
+#[derive(Debug)]
 pub struct CameraMut<'a> {
     scene: &'a mut Scene,
-    camera_entity: hecs::Entity,
+    camera_entity: Entity,
 }
 
 impl<'a> CameraMut<'a> {
@@ -1107,41 +1073,39 @@ impl<'a> CameraMut<'a> {
     /// AABB is calculated relative to the camera orientation. The camera will
     /// also be translated laterally to its view axis to center to the AABB.
     pub fn fit_to_scene(&mut self, margin: &Vector2<f32>) {
-        // get camera transform and projection
-        // note: we could use another transform if we want to reposition the camera e.g.
-        // along a coordinate axis.
-        let Ok((camera_transform, camera_projection)) = self
-            .scene
-            .entities
-            .query_one_mut::<(&GlobalTransform, &CameraProjection)>(self.camera_entity)
-            .map(|(t, p)| (*t, *p))
-        else {
-            return;
-        };
+        self.scene.world.run_system_cached_with(
+            |In((camera_entity, margin)): In<(Entity, Vector2<f32>)>,
+             mut cameras: Query<(&GlobalTransform, &mut LocalTransform, &CameraProjection)>,
+             mut world_aabb: WorldAabb| {
+                // todo
 
-        // compute scene AABB relative to camera
-        let Some(scene_aabb) = self
-            .scene
-            .compute_aabb_relative_to_observer(camera_transform.isometry(), false)
-        else {
-            return;
-        };
+                // get camera transform and projection
+                // note: we could use another transform if we want to reposition the camera e.g.
+                // along a coordinate axis.
+                let Ok((camera_global_transform, mut camera_local_transform, camera_projection)) =
+                    cameras.get_mut(camera_entity)
+                else {
+                    return;
+                };
 
-        // center camera on aabb
-        let mut translation = scene_aabb.center().coords;
-        translation.z -= camera_projection.distance_to_fit_aabb_into_fov(&scene_aabb, margin);
+                // compute scene AABB relative to camera
+                let Some(scene_aabb) =
+                    world_aabb.relative_to_observer(camera_global_transform.isometry(), false)
+                else {
+                    return;
+                };
 
-        // apply translation to camera
-        let camera_transform = self
-            .scene
-            .entities
-            .query_one_mut::<&mut LocalTransform>(self.camera_entity)
-            .expect("camera should still exist");
-        camera_transform.translate_local(&Translation3::from(translation));
+                // center camera on aabb
+                let mut translation = scene_aabb.center().coords;
+                translation.z -=
+                    camera_projection.distance_to_fit_aabb_into_fov(&scene_aabb, &margin);
 
-        self.scene
-            .command_buffer
-            .insert_one(self.camera_entity, Changed::<LocalTransform>::default());
+                // apply translation to camera
+                // todo bevy-migrate - or should we mutate it directly?
+                camera_local_transform.translate_local(&Translation3::from(translation));
+            },
+            (self.camera_entity, *margin),
+        );
     }
 
     /// Fit the camera to the scene looking along a specified axis.
@@ -1155,82 +1119,86 @@ impl<'a> CameraMut<'a> {
         up: &Vector3<f32>,
         margin: &Vector2<f32>,
     ) {
-        let scene_aabb = self.scene.aabb();
-
-        let Ok((camera_transform, camera_projection)) =
-            self.scene
-                .entities
-                .query_one_mut::<(&mut LocalTransform, &CameraProjection)>(self.camera_entity)
-        else {
-            return;
-        };
-
-        let rotation = UnitQuaternion::face_towards(axis, up);
-
-        let reference_transform = Isometry3::from_parts(Translation3::identity(), rotation);
-
-        let scene_aabb = scene_aabb.transform_by(&reference_transform);
-
-        let distance = camera_projection.distance_to_fit_aabb_into_fov(&scene_aabb, margin);
-
-        let mut new_local = LocalTransform::from(Isometry3::from_parts(
-            Translation3::from(scene_aabb.center().coords),
-            rotation,
-        ));
-        new_local.translate_local(&Translation3::from(-Vector3::z() * distance));
-
-        // FIXME: this doesn't work anymore if the camera has a parent
-        *camera_transform = new_local;
-
         self.scene
-            .command_buffer
-            .insert_one(self.camera_entity, Changed::<LocalTransform>::default());
+            .world
+            .run_system_cached_with(
+                |In((camera_entity, axis, up, margin)): In<(
+                    Entity,
+                    Vector3<f32>,
+                    Vector3<f32>,
+                    Vector2<f32>,
+                )>,
+                 mut cameras: Query<(&mut LocalTransform, &CameraProjection)>,
+                 world_aabb: WorldAabb| {
+                    let scene_aabb = world_aabb.root_aabb();
+
+                    let Ok((mut camera_local_transform, camera_projection)) =
+                        cameras.get_mut(camera_entity)
+                    else {
+                        return;
+                    };
+
+                    let rotation = UnitQuaternion::face_towards(&axis, &up);
+
+                    let reference_transform =
+                        Isometry3::from_parts(Translation3::identity(), rotation);
+
+                    let scene_aabb = scene_aabb.transform_by(&reference_transform);
+
+                    let distance =
+                        camera_projection.distance_to_fit_aabb_into_fov(&scene_aabb, &margin);
+
+                    let mut new_local = LocalTransform::from(Isometry3::from_parts(
+                        Translation3::from(scene_aabb.center().coords),
+                        rotation,
+                    ));
+                    new_local.translate_local(&Translation3::from(-Vector3::z() * distance));
+
+                    // FIXME: this doesn't work anymore if the camera has a parent
+                    *camera_local_transform = new_local;
+                },
+                (self.camera_entity, *axis, *up, *margin),
+            )
+            .unwrap();
     }
 
     pub fn point_to_scene_center(&mut self) {
-        let scene_center = self.scene.aabb().center();
-
-        let Ok(camera_transform) = self
-            .scene
-            .entities
-            .query_one_mut::<&mut LocalTransform>(self.camera_entity)
-        else {
-            return;
-        };
-
-        let eye = camera_transform.position();
-
-        // normally up is always +Y
-        let mut up = Vector3::y();
-
-        // but we need to take into account when we're directly above the scene center
-        const COLLINEAR_THRESHOLD: f32 = 0.01f32.to_radians();
-        if (eye - scene_center).cross(&up).norm_squared() < COLLINEAR_THRESHOLD {
-            // we would be looking straight up or down, so keep the up vector from the
-            // camera
-            up = camera_transform.isometry.rotation.transform_vector(&up);
-            tracing::debug!(?eye, ?scene_center, ?up, "looking straight up or down");
-        }
-
-        *camera_transform = LocalTransform::look_at(&eye, &scene_center, &up);
-
         self.scene
-            .command_buffer
-            .insert_one(self.camera_entity, Changed::<LocalTransform>::default());
-    }
+            .world
+            .run_system_cached_with(
+                |In(camera_entity): In<Entity>,
+                 world_aabb: WorldAabb,
+                 mut cameras: Query<&mut LocalTransform>| {
+                    let scene_center = world_aabb.root_aabb().center();
 
-    pub fn query<Q>(&mut self) -> Option<Q::Item<'_>>
-    where
-        Q: hecs::Query,
-    {
-        self.scene
-            .entities
-            .query_one_mut::<Q>(self.camera_entity)
-            .ok()
+                    let Ok(mut camera_transform) = cameras.get_mut(camera_entity)
+                    else {
+                        return;
+                    };
+
+                    let eye = camera_transform.position();
+
+                    // normally up is always +Y
+                    let mut up = Vector3::y();
+
+                    // but we need to take into account when we're directly above the scene center
+                    const COLLINEAR_THRESHOLD: f32 = 0.01f32.to_radians();
+                    if (eye - scene_center).cross(&up).norm_squared() < COLLINEAR_THRESHOLD {
+                        // we would be looking straight up or down, so keep the up vector from the
+                        // camera
+                        up = camera_transform.isometry.rotation.transform_vector(&up);
+                        tracing::debug!(?eye, ?scene_center, ?up, "looking straight up or down");
+                    }
+
+                    *camera_transform = LocalTransform::look_at(&eye, &scene_center, &up);
+                },
+                self.camera_entity,
+            )
+            .unwrap();
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Component)]
 pub struct EntityWindow {
     pub despawn_button: bool,
 }
@@ -1243,6 +1211,8 @@ impl Default for EntityWindow {
     }
 }
 
+// todo: bevy-migrate
+/*
 impl DebugUi for Composers {
     fn show_debug(&self, ui: &mut egui::Ui) {
         if !self.composers.is_empty() {
@@ -1255,7 +1225,7 @@ impl DebugUi for Composers {
                         }
 
                         composer
-                            .selection()
+                            .selection_mut()
                             .with_query_iter::<Option<&Label>, _>(|selected| {
                                 let num_selected = selected.len();
                                 if num_selected == 0 {
@@ -1323,3 +1293,4 @@ impl DebugUi for Composers {
         }
     }
 }
+ */

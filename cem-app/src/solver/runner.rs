@@ -7,6 +7,7 @@ use std::{
     },
 };
 
+use cem_scene::Scene;
 use cem_solver::{
     DomainDescription,
     SolverBackend,
@@ -19,10 +20,7 @@ use cem_solver::{
         FdtdSolverConfig,
         Resolution,
         cpu::FdtdCpuBackend,
-        pml::{
-            GradedPml,
-            PmlCoefficients,
-        },
+        pml::PmlCoefficients,
         wgpu::FdtdWgpuBackend,
     },
     material::{
@@ -32,7 +30,6 @@ use cem_solver::{
     project::{
         BeginProjectionPass,
         CreateProjection,
-        ProjectionParameters,
         ProjectionPass,
         ProjectionPassAdd,
     },
@@ -53,10 +50,7 @@ use parking_lot::{
     Mutex,
     MutexGuard,
 };
-use parry3d::{
-    bounding_volume::Aabb,
-    query::Ray,
-};
+use parry3d::bounding_volume::Aabb;
 
 use crate::{
     Error,
@@ -66,28 +60,16 @@ use crate::{
         UiErrorSink,
     },
     renderer::{
-        material,
         resource::RenderResourceManager,
         texture_channel::UndecidedTextureSender,
     },
-    scene::{
-        Scene,
-        spatial::{
-            Collider,
-            SceneSpatialExt,
-        },
-        transform::GlobalTransform,
-    },
-    solver::{
-        config::{
-            Parallelization,
-            SolverConfig,
-            SolverConfigCommon,
-            SolverConfigFdtd,
-            SolverConfigSpecifics,
-            StopCondition,
-        },
-        observer::Observer,
+    solver::config::{
+        Parallelization,
+        SolverConfig,
+        SolverConfigCommon,
+        SolverConfigFdtd,
+        SolverConfigSpecifics,
+        StopCondition,
     },
     util::{
         egui::{
@@ -573,24 +555,23 @@ impl Solver {
 }
 
 #[derive(derive_more::Debug)]
-struct SceneDomainDescription<'a, 'b> {
+struct SceneDomainDescription<'a> {
     scene: &'a Scene,
 
     resolution: &'a Resolution,
     physical_constants: &'a PhysicalConstants,
 
-    #[debug("hecs::ViewBorrow {{ ... }}")]
-    materials: hecs::ViewBorrow<'a, &'b Material>,
+    //#[debug("hecs::ViewBorrow {{ ... }}")]
+    //materials: hecs::ViewBorrow<'a, &'b Material>,
 
-    #[debug("hecs::ViewBorrow {{ ... }}")]
-    pmls: hecs::ViewBorrow<'a, (&'b GradedPml, &'b Collider, &'b Aabb, &'a GlobalTransform)>,
-
+    //#[debug("hecs::ViewBorrow {{ ... }}")]
+    //pmls: hecs::ViewBorrow<'a, (&'b GradedPml, &'b Collider, &'b Aabb, &'a GlobalTransform)>,
     coordinate_transformations: &'a CoordinateTransformations,
 
     default_material: &'a Material,
 }
 
-impl<'a, 'b> SceneDomainDescription<'a, 'b> {
+impl<'a> SceneDomainDescription<'a> {
     pub fn new(
         scene: &'a Scene,
         resolution: &'a Resolution,
@@ -598,11 +579,12 @@ impl<'a, 'b> SceneDomainDescription<'a, 'b> {
         coordinate_transformations: &'a CoordinateTransformations,
         default_material: &'a Material,
     ) -> Self {
+        /*
         // access to the material properties
-        let mut materials = scene.entities.view::<&Material>();
+        let mut materials = scene.world.query::<(Entity, &Material)>();
         let mut any_materials = false;
-        for (entity, material) in materials.iter_mut() {
-            if let Ok(collider) = scene.entities.get::<&Collider>(entity) {
+        for (entity, material) in materials.iter_mut(&mut scene.world) {
+            if let Ok(collider) = scene.world.get::<&Collider>(entity) {
                 tracing::debug!(?entity, ?collider, ?material, "found material");
                 any_materials = true;
             }
@@ -613,27 +595,27 @@ impl<'a, 'b> SceneDomainDescription<'a, 'b> {
         }
 
         let mut pmls = scene
-            .entities
-            .view::<(&GradedPml, &Collider, &Aabb, &GlobalTransform)>();
-        for (entity, (pml, collider, _, _)) in pmls.iter_mut() {
+            .world
+            .query::<(Entity, &GradedPml, &Collider, &Aabb, &GlobalTransform)>();
+        for (entity, pml, collider, _, _) in pmls.iter_mut() {
             tracing::debug!(?entity, ?pml, ?collider, "found pml");
-        }
+        } */
 
         Self {
             scene,
             resolution,
             physical_constants,
-            materials,
-            pmls,
+            //materials,
+            //pmls,
             coordinate_transformations,
             default_material,
         }
     }
 }
 
-impl<'a, 'b> DomainDescription<Point3<usize>> for SceneDomainDescription<'a, 'b> {
+impl<'a> DomainDescription<Point3<usize>> for SceneDomainDescription<'a> {
     fn material(&self, point: &Point3<usize>) -> Material {
-        let point = self
+        /*let point = self
             .coordinate_transformations
             .transform_point_from_solver_to_world(point);
 
@@ -645,11 +627,12 @@ impl<'a, 'b> DomainDescription<Point3<usize>> for SceneDomainDescription<'a, 'b>
 
         // for now we'll just use the first material we find.
         // if nothing is found, use the default
-        materials.next().unwrap_or(*self.default_material)
+        materials.next().unwrap_or(*self.default_material)*/
+        *self.default_material
     }
 
     fn pml(&self, point: &Point3<usize>) -> Option<PmlCoefficients> {
-        let point = self
+        /*let point = self
             .coordinate_transformations
             .transform_point_from_solver_to_world(point);
 
@@ -681,7 +664,8 @@ impl<'a, 'b> DomainDescription<Point3<usize>> for SceneDomainDescription<'a, 'b>
             });
 
         // for now only one
-        pml_coefficients.next()
+        pml_coefficients.next()*/
+        None
     }
 }
 
@@ -713,22 +697,23 @@ impl<P> Observers<P> {
 
         // clippy, i want to chain other options into it later.
         #[allow(clippy::let_and_return)]
-        let projections = scene
-            .entities
-            .query_mut::<&Observer>()
-            .into_iter()
-            .flat_map(|(entity, observer)| {
-                tracing::debug!(?observer, "creating observer");
+        let projections = vec![];
+        /*let projections = scene
+        .entities
+        .query_mut::<&Observer>()
+        .into_iter()
+        .flat_map(|(entity, observer)| {
+            tracing::debug!(?observer, "creating observer");
 
-                let display_as_texture = observer.display_as_texture.then(|| {
-                    needs_repaint = true;
+            let display_as_texture = observer.display_as_texture.then(|| {
+                needs_repaint = true;
 
-                    let parameters = ProjectionParameters {
-                        projection: Matrix4::identity(), // todo
-                        field: observer.field,
-                        color_map: observer.color_map,
-                        color_map_code: Some(
-                            r#"
+                let parameters = ProjectionParameters {
+                    projection: Matrix4::identity(), // todo
+                    field: observer.field,
+                    color_map: observer.color_map,
+                    color_map_code: Some(
+                        r#"
                         // color and alpha scaling
                         const s_c: f32 = 10.0;
                         const s_a: f32 = 100.0;
@@ -745,46 +730,46 @@ impl<P> Observers<P> {
                         }
                         return color;
                         "#
-                            .to_owned(),
-                        ),
-                    };
+                        .to_owned(),
+                    ),
+                };
 
-                    // create a texture channel. the sender is still undecided whether it will share
-                    // a image buffer in host memory with the renderer, or request a gpu texture
-                    // directly.
-                    //
-                    // todo: can we make so that the RENDER_ATTACHMENT usage is only applied if a
-                    // texture for rendering is requested by the backend? and likewise for COPY_DST
-                    let (sender, receiver) = transaction.create_texture_channel(
-                        &lattice_size.xy().cast(),
-                        wgpu::TextureUsages::RENDER_ATTACHMENT
-                            | wgpu::TextureUsages::TEXTURE_BINDING
-                            | wgpu::TextureUsages::COPY_DST,
-                        "observer",
-                    );
+                // create a texture channel. the sender is still undecided whether it will share
+                // a image buffer in host memory with the renderer, or request a gpu texture
+                // directly.
+                //
+                // todo: can we make so that the RENDER_ATTACHMENT usage is only applied if a
+                // texture for rendering is requested by the backend? and likewise for COPY_DST
+                let (sender, receiver) = transaction.create_texture_channel(
+                    &lattice_size.xy().cast(),
+                    wgpu::TextureUsages::RENDER_ATTACHMENT
+                        | wgpu::TextureUsages::TEXTURE_BINDING
+                        | wgpu::TextureUsages::COPY_DST,
+                    "observer",
+                );
 
-                    scene.command_buffer.insert(
-                        entity,
-                        (
-                            material::LoadAlbedoTexture::new(receiver).with_transparency(false),
-                            material::Material {
-                                transparent: true,
-                                ..Default::default()
-                            },
-                        ),
-                    );
+                scene.command_buffer.insert(
+                    entity,
+                    (
+                        material::LoadAlbedoTexture::new(receiver).with_transparency(false),
+                        material::Material {
+                            transparent: true,
+                            ..Default::default()
+                        },
+                    ),
+                );
 
-                    instance.create_projection(state, sender, &parameters)
-                });
+                instance.create_projection(state, sender, &parameters)
+            });
 
-                display_as_texture
-            })
-            .collect();
+            display_as_texture
+        })
+        .collect();*/
 
         transaction.commit();
 
         // apply deferred commands
-        scene.apply_deferred();
+        //scene.apply_deferred();
 
         Self {
             projections,
@@ -823,19 +808,20 @@ impl Sources {
         scene: &mut Scene,
         coordinate_transformations: &CoordinateTransformations,
     ) -> Self {
-        let sources = scene
-            .entities
-            .query_mut::<(&GlobalTransform, &Source)>()
-            .into_iter()
-            .flat_map(|(_entity, (transform, source))| {
-                let world_point = transform.position();
-                let sim_point = coordinate_transformations
-                    .transform_point_from_world_to_solver(&world_point)?;
-                tracing::debug!(?world_point, ?sim_point, ?source, "creating source");
+        /*let sources = scene
+        .entities
+        .query_mut::<(&GlobalTransform, &Source)>()
+        .into_iter()
+        .flat_map(|(_entity, (transform, source))| {
+            let world_point = transform.position();
+            let sim_point = coordinate_transformations
+                .transform_point_from_world_to_solver(&world_point)?;
+            tracing::debug!(?world_point, ?sim_point, ?source, "creating source");
 
-                Some((sim_point, source.clone()))
-            })
-            .collect();
+            Some((sim_point, source.clone()))
+        })
+        .collect();*/
+        let sources = vec![];
 
         Self { sources }
     }

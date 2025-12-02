@@ -40,9 +40,8 @@ use crate::{
         RecentlyOpenedFiles,
     },
     renderer::{
-        EguiWgpuRenderer,
-        Renderer,
         RendererConfig,
+        plugin::RenderPluginBuilder,
     },
     solver::runner::SolverRunner,
 };
@@ -51,8 +50,7 @@ use crate::{
 pub struct CreateAppContext {
     pub wgpu_context: WgpuContext,
     pub egui_context: egui::Context,
-    pub renderer_config: RendererConfig,
-    pub egui_wgpu_renderer: EguiWgpuRenderer,
+    pub render_plugin_builder: RenderPluginBuilder,
     pub app_files: AppFiles,
     pub config: AppConfig,
     pub args: Args,
@@ -243,14 +241,21 @@ pub(super) fn run_app(args: Args) -> Result<(), Error> {
             // add our custom clipboard extension
             //cc.egui_ctx.add_plugin(EguiClipboardPlugin);
 
+            // this is the egui-wgpu renderer, which we can use to create egui textures from
+            // wgpu textures and vice versa. in case we ever need it
+            //
+            // render_state.renderer.clone(),
+
+            let render_plugin_builder =
+                RenderPluginBuilder::new(wgpu_context.clone(), renderer_config);
+
             let create_app_context = CreateAppContext {
                 wgpu_context,
                 egui_context: cc.egui_ctx.clone(),
                 app_files,
                 config,
                 args,
-                renderer_config,
-                egui_wgpu_renderer: render_state.renderer.clone().into(),
+                render_plugin_builder,
             };
 
             Ok(Box::new(App::new(create_app_context)))

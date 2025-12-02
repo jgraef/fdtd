@@ -1,3 +1,8 @@
+use bevy_ecs::entity::Entity;
+use cem_scene::{
+    Scene,
+    transform::LocalTransform,
+};
 use nalgebra::{
     Point2,
     Point3,
@@ -7,30 +12,16 @@ use nalgebra::{
 };
 use parry3d::query::Ray;
 
-use crate::{
-    renderer::{
-        Renderer,
-        camera::{
-            CameraProjection,
-            Viewport,
-        },
-    },
-    scene::{
-        Changed,
-        Scene,
-        spatial::SceneSpatialExt,
-        transform::{
-            GlobalTransform,
-            LocalTransform,
-        },
-    },
+use crate::renderer::{
+    Renderer,
+    camera::Viewport,
 };
 
 #[derive(derive_more::Debug)]
 pub struct SceneView<'a> {
     scene: &'a mut Scene,
     renderer: &'a mut Renderer,
-    camera_entity: Option<hecs::Entity>,
+    camera_entity: Option<Entity>,
     scene_pointer: Option<&'a mut ScenePointer>,
 }
 
@@ -44,7 +35,7 @@ impl<'a> SceneView<'a> {
         }
     }
 
-    pub fn with_camera(mut self, camera: hecs::Entity) -> Self {
+    pub fn with_camera(mut self, camera: Entity) -> Self {
         self.camera_entity = Some(camera);
         self
     }
@@ -67,30 +58,19 @@ impl<'a> SceneView<'a> {
             return;
         };
 
+        let mut camera_entity = self.scene.world.entity_mut(camera_entity);
+
         // update camera's viewport
-        if let Ok(viewport) = self
-            .scene
-            .entities
-            .query_one_mut::<&mut Viewport>(camera_entity)
-        {
+        if let Some(mut viewport) = camera_entity.get_mut::<Viewport>() {
             if viewport.viewport != response.rect {
                 tracing::debug!(viewport = ?response.rect, "viewport changed");
                 viewport.viewport = response.rect;
-                self.scene
-                    .command_buffer
-                    .insert_one(camera_entity, Changed::<Viewport>::default());
             }
         }
         else {
-            self.scene.command_buffer.insert(
-                camera_entity,
-                (
-                    Viewport {
-                        viewport: response.rect,
-                    },
-                    Changed::<Viewport>::default(),
-                ),
-            );
+            camera_entity.insert(Viewport {
+                viewport: response.rect,
+            });
         }
 
         // some events (i.e. mouse wheel) we have to read manually, but we only want to
@@ -106,20 +86,14 @@ impl<'a> SceneView<'a> {
                             modifiers: _,
                             phase: _,
                         } => {
-                            if let Ok(camera_transform) = self
-                                .scene
-                                .entities
-                                .query_one_mut::<&mut LocalTransform>(camera_entity)
+                            if let Some(mut camera_transform) =
+                                camera_entity.get_mut::<LocalTransform>()
                             {
                                 camera_transform.translate_local(&Translation3::new(
                                     0.0,
                                     0.0,
                                     camera_translation_speed.z * *delta,
                                 ));
-                                self.scene.command_buffer.insert_one(
-                                    camera_entity,
-                                    Changed::<LocalTransform>::default(),
-                                );
                             }
                         }
                         egui::Event::Zoom(zoom) => {
@@ -178,7 +152,7 @@ impl<'a> SceneView<'a> {
             }
         };
 
-        if response.dragged_by(egui::PointerButton::Primary) {
+        /*if response.dragged_by(egui::PointerButton::Primary) {
             if let Ok((camera_transform, camera_projection)) =
                 self.scene
                     .entities
@@ -237,22 +211,25 @@ impl<'a> SceneView<'a> {
 
                 scene_pointer.ray = Some(ray);
             }
-        }
+        }*/
 
         // apply any buffered commands to scene
-        self.scene.apply_deferred();
+        //self.scene.apply_deferred();
     }
 
     pub fn shoot_ray_from_camera(&self, pointer_position: Point2<f32>) -> Option<Ray> {
         self.camera_entity.and_then(|camera_entity| {
-            shoot_ray_from_camera(self.scene, camera_entity, pointer_position)
+            // todo: bevy-migrate
+            //shoot_ray_from_camera(self.scene, camera_entity, pointer_position)
+            None
         })
     }
 }
 
+/*
 fn shoot_ray_from_camera(
     scene: &Scene,
-    camera_entity: hecs::Entity,
+    camera_entity: Entity,
     pointer_position: Point2<f32>,
 ) -> Option<Ray> {
     scene
@@ -267,6 +244,7 @@ fn shoot_ray_from_camera(
             })
         })
 }
+ */
 
 impl<'a> egui::Widget for SceneView<'a> {
     fn ui(mut self, ui: &mut egui::Ui) -> egui::Response {
@@ -303,7 +281,7 @@ pub struct ScenePointer {
 
 #[derive(Clone, Copy, Debug)]
 pub struct EntityUnderPointer {
-    pub entity: hecs::Entity,
+    pub entity: Entity,
     pub distance_from_camera: f32,
     pub point_hovered: Point3<f32>,
 }

@@ -3,11 +3,13 @@ use std::{
     time::Duration,
 };
 
+use bevy_ecs::component::Component;
 use bitflags::bitflags;
 use bytemuck::{
     Pod,
     Zeroable,
 };
+use cem_scene::transform::GlobalTransform;
 use cem_util::wgpu::buffer::WriteStaging;
 use nalgebra::{
     Matrix4,
@@ -34,16 +36,12 @@ use wgpu::util::DeviceExt;
 use crate::{
     impl_register_component,
     renderer::{
-        ClearColor,
+        components::ClearColor,
         draw_commands::DrawCommandFlags,
         light::{
             AmbientLight,
             PointLight,
         },
-    },
-    scene::{
-        Changed,
-        transform::GlobalTransform,
     },
     util::egui::probe::{
         PropertiesUi,
@@ -54,7 +52,7 @@ use crate::{
     },
 };
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, Component)]
 pub struct CameraProjection {
     // note: not public because nalgebra seems to have the z-axis inverted relative to our
     // coordinate systems
@@ -154,7 +152,7 @@ impl Default for CameraProjection {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Component)]
 pub struct Viewport {
     pub viewport: egui::Rect,
 }
@@ -169,13 +167,13 @@ impl Viewport {
     }
 }
 
-#[derive(Clone, Debug)]
-pub(super) struct CameraResources {
+#[derive(Clone, Debug, Component)]
+pub(super) struct CameraBindGroup {
     pub buffer: wgpu::Buffer,
     pub bind_group: wgpu::BindGroup,
 }
 
-impl CameraResources {
+impl CameraBindGroup {
     pub fn new(
         camera_bind_group_layout: &wgpu::BindGroupLayout,
         device: &wgpu::Device,
@@ -314,7 +312,7 @@ bitflags! {
     }
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, Component)]
 pub struct CameraConfig {
     // todo: should this just contain the DrawCommandPipelineEnableFlags?
     pub show_mesh_opaque: bool,
@@ -404,125 +402,4 @@ pub struct CameraRenderInfo {
     pub num_opaque: usize,
     pub num_transparent: usize,
     pub num_outlines: usize,
-}
-
-pub(super) fn update_cameras<S>(
-    entities: &mut hecs::World,
-    command_buffer: &mut hecs::CommandBuffer,
-    device: &wgpu::Device,
-    mut write_staging: S,
-    camera_bind_group_layout: &wgpu::BindGroupLayout,
-    instance_buffer: &wgpu::Buffer,
-    instance_buffer_reallocated: bool,
-) where
-    S: WriteStaging,
-{
-    // update cameras whose viewports changed
-    for (entity, (camera_projection, viewport)) in entities
-        .query_mut::<(&mut CameraProjection, &Viewport)>()
-        .with::<&Changed<Viewport>>()
-    {
-        camera_projection.set_viewport(viewport);
-        command_buffer.remove_one::<Changed<Viewport>>(entity);
-    }
-
-    // create uniforms for cameras that don't have them yet
-    for (
-        entity,
-        (
-            camera_projection,
-            camera_transform,
-            clear_color,
-            ambient_light,
-            point_light,
-            camera_config,
-        ),
-    ) in entities
-        .query_mut::<(
-            &CameraProjection,
-            &GlobalTransform,
-            Option<&ClearColor>,
-            Option<&AmbientLight>,
-            Option<&PointLight>,
-            Option<&CameraConfig>,
-        )>()
-        .without::<&CameraResources>()
-    {
-        tracing::debug!(
-            ?entity,
-            ?camera_projection,
-            ?camera_transform,
-            ?clear_color,
-            ?ambient_light,
-            ?point_light,
-            "creating camera"
-        );
-        let camera_data = CameraData::new(
-            camera_projection,
-            camera_transform,
-            clear_color,
-            ambient_light,
-            point_light,
-            camera_config,
-        );
-        let camera_resources = CameraResources::new(
-            camera_bind_group_layout,
-            device,
-            &camera_data,
-            instance_buffer,
-        );
-        command_buffer.insert_one(entity, camera_resources);
-    }
-
-    // remove camera resources for anything that isn't a valid camera anymore
-    for (entity, ()) in entities
-        .query_mut::<()>()
-        .with::<&CameraResources>()
-        .without::<hecs::Or<&GlobalTransform, &CameraProjection>>()
-    {
-        tracing::warn!(
-            ?entity,
-            "not a valid camera anymore. removing `CameraResources`"
-        );
-        command_buffer.remove_one::<CameraResources>(entity);
-    }
-
-    // update camera buffers
-    let updated_instance_buffer =
-        instance_buffer_reallocated.then_some((camera_bind_group_layout, instance_buffer));
-    for (
-        _,
-        (
-            camera_resources,
-            camera_projection,
-            camera_transform,
-            clear_color,
-            ambient_light,
-            point_light,
-            camera_config,
-        ),
-    ) in entities.query_mut::<(
-        &mut CameraResources,
-        &CameraProjection,
-        &GlobalTransform,
-        Option<&ClearColor>,
-        Option<&AmbientLight>,
-        Option<&PointLight>,
-        Option<&CameraConfig>,
-    )>() {
-        let camera_data = CameraData::new(
-            camera_projection,
-            camera_transform,
-            clear_color,
-            ambient_light,
-            point_light,
-            camera_config,
-        );
-        camera_resources.update(
-            device,
-            &mut write_staging,
-            &camera_data,
-            updated_instance_buffer,
-        );
-    }
 }

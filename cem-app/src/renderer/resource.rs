@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use cem_util::wgpu::{
     ImageTextureExt,
     UnsupportedColorSpace,
@@ -18,13 +16,10 @@ use palette::LinSrgba;
 use crate::{
     app::WgpuContext,
     renderer::{
-        Renderer,
-        command::CommandSender,
-        material::TextureAndView,
+        renderer::Renderer,
         texture_channel::{
             TextureReceiver,
             UndecidedTextureSender,
-            texture_channel,
         },
     },
 };
@@ -32,21 +27,22 @@ use crate::{
 #[derive(Clone, Debug)]
 pub struct RenderResourceManager {
     wgpu_context: WgpuContext,
-    command_sender: CommandSender,
+    // todo: bevy-migrate
+    //command_sender: CommandSender,
 }
 
 impl RenderResourceManager {
     pub(super) fn from_renderer(renderer: &Renderer) -> Self {
         Self {
             wgpu_context: renderer.wgpu_context.clone(),
-            command_sender: renderer.command_queue.sender.clone(),
+            //command_sender: renderer.command_queue.sender.clone(),
         }
     }
 
     pub fn begin_transaction(&self) -> RenderResourceManagerTransaction<'_> {
         RenderResourceManagerTransaction {
             device: &self.wgpu_context.device,
-            command_sender: &self.command_sender,
+            //command_sender: &self.command_sender,
             write_staging: SubmitOnDrop::new(
                 WriteStagingTransaction::new(
                     self.wgpu_context.staging_pool.belt(),
@@ -72,7 +68,8 @@ pub struct RenderResourceManagerTransaction<'a> {
     // note: this is also in `write_staging`, but we can't borrow it whole also mut-borrrowing the
     // whole `write_staging` field.
     device: &'a wgpu::Device,
-    command_sender: &'a CommandSender,
+    // todo: bevy-migrate
+    //command_sender: &'a CommandSender,
     write_staging: SubmitOnDrop<
         WriteStagingTransaction<WriteStagingBelt, &'a wgpu::Device, wgpu::CommandEncoder>,
         &'a wgpu::Queue,
@@ -117,13 +114,16 @@ impl<'a> RenderResourceManagerTransaction<'a> {
         usage: wgpu::TextureUsages,
         label: &str,
     ) -> (UndecidedTextureSender, TextureReceiver) {
-        let texture = self.create_texture(size, usage, wgpu::TextureFormat::Rgba8Unorm, label);
+        // todo: bevy-migrate
+
+        /*let texture = self.create_texture(size, usage, wgpu::TextureFormat::Rgba8Unorm, label);
 
         texture_channel(
             Arc::new(TextureAndView::from_texture(texture, label)),
             *size,
             self.command_sender.clone(),
-        )
+        )*/
+        todo!();
     }
 
     pub fn device(&self) -> &wgpu::Device {

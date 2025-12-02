@@ -1,9 +1,9 @@
 pub mod buffer;
-pub mod components;
+//pub mod components;
 pub mod resources;
-pub mod serialize;
-pub mod spatial;
-pub mod transform;
+//pub mod serialize;
+//pub mod spatial;
+//pub mod transform;
 
 use std::{
     any::type_name,
@@ -13,12 +13,14 @@ use std::{
         Display,
     },
     marker::PhantomData,
-    ops::{
-        Deref,
-        DerefMut,
-    },
 };
 
+use bevy_ecs::{
+    component::Component,
+    world::EntityWorldMut,
+};
+use cem_scene::spatial::Collider;
+pub use cem_scene::transform;
 use serde::{
     Deserialize,
     Serialize,
@@ -38,17 +40,10 @@ use crate::{
         },
     },
     scene::{
-        components::ComponentRegistry,
         resources::Resources,
-        serialize::SerializeEntity,
-        spatial::{
-            Collider,
-            SpatialQueries,
-        },
         transform::{
             GlobalTransform,
             LocalTransform,
-            TransformHierarchyUpdater,
         },
     },
 };
@@ -84,13 +79,13 @@ impl Default for Scene {
 
         // this and their calls to update should be handled as plugins that register
         // resources and systems.
-        resources.insert(SpatialQueries::default());
-        resources.insert(TransformHierarchyUpdater::default());
+        //resources.insert(SpatialQueries::default());
+        //resources.insert(TransformHierarchyUpdater::default());
 
         // not sure whether this should be a resource.
-        let mut component_registry = ComponentRegistry::default();
-        component_registry.register_builtin();
-        resources.insert(component_registry);
+        //let mut component_registry = ComponentRegistry::default();
+        //component_registry.register_builtin();
+        //resources.insert(component_registry);
 
         Self {
             entities: Default::default(),
@@ -101,8 +96,48 @@ impl Default for Scene {
     }
 }
 
+pub trait SceneExt {
+    fn add_object<S>(
+        &mut self,
+        transform: impl Into<LocalTransform>,
+        shape: S,
+    ) -> EntityWorldMut<'_>
+    where
+        S: ShapeName + Clone + IntoGenerateMesh,
+        Collider: From<S>,
+        S::Config: Default,
+        S::GenerateMesh: Debug + Send + Sync + 'static;
+}
+
+impl SceneExt for cem_scene::Scene {
+    fn add_object<S>(
+        &mut self,
+        transform: impl Into<LocalTransform>,
+        shape: S,
+    ) -> EntityWorldMut<'_>
+    where
+        S: ShapeName + Clone + IntoGenerateMesh,
+        Collider: From<S>,
+        S::Config: Default,
+        S::GenerateMesh: Debug + Send + Sync + 'static,
+    {
+        let label = format!("object.{}", shape.shape_name());
+        let collider = Collider::from(shape.clone());
+        let mesh = LoadMesh::from_shape(shape, Default::default());
+
+        self.world
+            .spawn_empty()
+            .label(label)
+            .transform(transform)
+            .collider(collider)
+            .mesh(mesh)
+            .tagged::<ShowInTree>(true)
+            .tagged::<Selectable>(true)
+    }
+}
+
 impl Scene {
-    pub fn add_object<S>(&mut self, transform: impl Into<LocalTransform>, shape: S) -> EntityBuilder
+    /*pub fn add_object<S>(&mut self, transform: impl Into<LocalTransform>, shape: S) -> EntityBuilder
     where
         S: ShapeName + Clone + IntoGenerateMesh,
         Collider: From<S>,
@@ -122,7 +157,7 @@ impl Scene {
             .mesh(mesh)
             .tagged::<ShowInTree>(true)
             .tagged::<Selectable>(true)
-    }
+    }*/
 
     /// This needs to be called every frame to update internal state.
     ///
@@ -133,13 +168,13 @@ impl Scene {
 
         self.tick.tick += 1;
 
-        self.resources
-            .expect_mut::<TransformHierarchyUpdater>()
-            .update(&mut self.entities, &mut self.command_buffer);
+        //self.resources
+        //    .expect_mut::<TransformHierarchyUpdater>()
+        //    .update(&mut self.entities, &mut self.command_buffer);
 
-        self.resources
-            .expect_mut::<SpatialQueries>()
-            .update(&mut self.entities, &mut self.command_buffer);
+        //self.resources
+        //    .expect_mut::<SpatialQueries>()
+        //    .update(&mut self.entities, &mut self.command_buffer);
 
         // todo: who is responsible for this?
         // the octtree is definitely interested in these, but maybe other's as well?
@@ -175,18 +210,18 @@ impl Scene {
         }
     }
 
-    pub fn take(&mut self, entity: hecs::Entity) -> Option<hecs::TakenEntity<'_>> {
+    /*pub fn take(&mut self, entity: hecs::Entity) -> Option<hecs::TakenEntity<'_>> {
         self.resources.expect_mut::<SpatialQueries>().remove(
             entity,
             &mut self.entities,
             &mut self.command_buffer,
         );
         self.entities.take(entity).ok()
-    }
+    }*/
 
-    pub fn serialize(&self, entity: hecs::Entity) -> Option<SerializeEntity<'_>> {
+    /*pub fn serialize(&self, entity: hecs::Entity) -> Option<SerializeEntity<'_>> {
         self.entities.entity(entity).ok().map(SerializeEntity::new)
-    }
+    }*/
 
     pub fn apply_deferred(&mut self) {
         self.command_buffer.run_on(&mut self.entities);
@@ -248,7 +283,7 @@ impl<T> Debug for Changed<T> {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, Component)]
 pub struct Label {
     pub label: Cow<'static, str>,
 }
@@ -304,7 +339,7 @@ impl From<Label> for egui::WidgetText {
 pub trait PopulateScene {
     type Error;
 
-    fn populate_scene(&self, scene: &mut Scene) -> Result<(), Self::Error>;
+    fn populate_scene(&self, scene: &mut cem_scene::Scene) -> Result<(), Self::Error>;
 }
 
 #[derive(Clone, Debug)]
@@ -342,210 +377,51 @@ impl From<EntityDebugLabel> for egui::WidgetText {
     }
 }
 
-#[must_use]
-#[derive(derive_more::Debug, Default)]
-pub struct EntityBuilder {
-    #[debug("hecs::EntityBuilder {{ ... }}")]
-    builder: hecs::EntityBuilder,
+pub trait EntityBuilderExt {
+    fn transform(self, transform: impl Into<LocalTransform>) -> Self;
+    fn material(self, material: impl Into<Material>) -> Self;
+    fn mesh(self, mesh: impl Into<LoadMesh>) -> Self;
+    fn collider(self, collider: impl Into<Collider>) -> Self;
+    fn label(self, label: impl Display) -> Self;
+    fn tagged<T>(self, on: bool) -> Self
+    where
+        T: Default + Component;
 }
 
-impl EntityBuilder {
-    pub fn component<T>(mut self, component: T) -> Self
+impl<'a> EntityBuilderExt for EntityWorldMut<'a> {
+    fn transform(mut self, transform: impl Into<LocalTransform>) -> Self {
+        self.insert(transform.into());
+        self
+    }
+
+    fn material(mut self, material: impl Into<Material>) -> Self {
+        self.insert(material.into());
+        self
+    }
+
+    fn mesh(mut self, mesh: impl Into<LoadMesh>) -> Self {
+        self.insert(mesh.into());
+        self
+    }
+
+    fn collider(mut self, collider: impl Into<Collider>) -> Self {
+        self.insert(collider.into());
+        self
+    }
+
+    fn label(mut self, label: impl Display) -> Self {
+        self.insert(Label::new(label));
+        self
+    }
+
+    fn tagged<T>(mut self, on: bool) -> Self
     where
-        T: hecs::Component,
-    {
-        self.builder.add(component);
-        self
-    }
-
-    pub fn bundle<B>(mut self, bundle: B) -> Self
-    where
-        B: hecs::DynamicBundle,
-    {
-        self.builder.add_bundle(bundle);
-        self
-    }
-
-    pub fn transform(mut self, transform: impl Into<LocalTransform>) -> Self {
-        self.builder.add(transform.into());
-        self
-    }
-
-    pub fn material(mut self, material: impl Into<Material>) -> Self {
-        self.builder.add(material.into());
-        self
-    }
-
-    pub fn mesh(mut self, mesh: impl Into<LoadMesh>) -> Self {
-        self.builder.add(mesh.into());
-        self
-    }
-
-    pub fn collider(mut self, collider: impl Into<Collider>) -> Self {
-        self.builder.add(collider.into());
-        self
-    }
-
-    pub fn label(mut self, label: impl Display) -> Self {
-        self.builder.add(Label::new(label));
-        self
-    }
-
-    pub fn tagged<T>(mut self, on: bool) -> Self
-    where
-        T: Default + hecs::Component,
+        T: Default + Component,
     {
         if on {
-            self.builder.add(T::default());
+            self.insert(T::default());
         }
         self
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct SpawnOnDrop<E, W>
-where
-    E: Spawn,
-    W: Spawner,
-{
-    entity: Option<E>,
-    spawner: W,
-}
-
-impl<E, W> SpawnOnDrop<E, W>
-where
-    E: Spawn,
-    W: Spawner,
-{
-    pub fn new(entity: E, world: W) -> Self {
-        Self {
-            entity: Some(entity),
-            spawner: world,
-        }
-    }
-}
-
-impl<E, W> Deref for SpawnOnDrop<E, W>
-where
-    E: Spawn,
-    W: Spawner,
-{
-    type Target = E;
-
-    fn deref(&self) -> &Self::Target {
-        self.entity.as_ref().unwrap()
-    }
-}
-
-impl<E, W> DerefMut for SpawnOnDrop<E, W>
-where
-    E: Spawn,
-    W: Spawner,
-{
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        self.entity.as_mut().unwrap()
-    }
-}
-
-impl<E, W> AsRef<E> for SpawnOnDrop<E, W>
-where
-    E: Spawn,
-    W: Spawner,
-{
-    fn as_ref(&self) -> &E {
-        self
-    }
-}
-
-impl<E, W> AsMut<E> for SpawnOnDrop<E, W>
-where
-    E: Spawn,
-    W: Spawner,
-{
-    fn as_mut(&mut self) -> &mut E {
-        &mut *self
-    }
-}
-
-impl<E, W> Drop for SpawnOnDrop<E, W>
-where
-    E: Spawn,
-    W: Spawner,
-{
-    fn drop(&mut self) {
-        self.entity.take().unwrap().spawn(&mut self.spawner);
-    }
-}
-
-pub trait Spawn {
-    fn spawn<S>(self, spawner: &mut S) -> S::Output
-    where
-        S: Spawner;
-
-    fn spawn_on_drop<S>(self, spawner: S) -> SpawnOnDrop<Self, S>
-    where
-        S: Spawner,
-        Self: Sized,
-    {
-        SpawnOnDrop::new(self, spawner)
-    }
-}
-
-impl Spawn for hecs::EntityBuilder {
-    fn spawn<S>(mut self, spawner: &mut S) -> S::Output
-    where
-        S: Spawner,
-    {
-        spawner.spawn(self.build())
-    }
-}
-
-impl Spawn for EntityBuilder {
-    fn spawn<S>(mut self, spawner: &mut S) -> S::Output
-    where
-        S: Spawner,
-    {
-        spawner.spawn(self.builder.build())
-    }
-}
-
-pub trait Spawner {
-    type Output;
-
-    fn spawn<B>(&mut self, bundle: B) -> Self::Output
-    where
-        B: hecs::DynamicBundle;
-}
-
-impl Spawner for hecs::World {
-    type Output = hecs::Entity;
-
-    fn spawn<B>(&mut self, bundle: B) -> Self::Output
-    where
-        B: hecs::DynamicBundle,
-    {
-        hecs::World::spawn(self, bundle)
-    }
-}
-
-impl Spawner for hecs::CommandBuffer {
-    type Output = ();
-
-    fn spawn<B>(&mut self, bundle: B) -> Self::Output
-    where
-        B: hecs::DynamicBundle,
-    {
-        hecs::CommandBuffer::spawn(self, bundle);
-    }
-}
-
-impl Spawner for Scene {
-    type Output = hecs::Entity;
-    fn spawn<B>(&mut self, bundle: B) -> Self::Output
-    where
-        B: hecs::DynamicBundle,
-    {
-        self.entities.spawn(bundle)
     }
 }
 
@@ -584,6 +460,14 @@ impl DebugUi for Scene {
         ui.label(format!("Tick: {}", self.tick));
         ui.label(format!("Entities: {}", self.entities.len()));
 
-        self.resources.expect::<SpatialQueries>().show_debug(ui);
+        //self.resources.expect::<SpatialQueries>().show_debug(ui);
     }
+}
+
+// todo bevy-migration remove this
+#[macro_export]
+macro_rules! impl_register_component {
+    ($($tt:tt)*) => {
+        // nop
+    };
 }

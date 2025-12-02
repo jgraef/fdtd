@@ -7,6 +7,7 @@ use nalgebra::{
 use crate::transform::LocalTransform;
 
 #[derive(Clone, Copy, Debug, Component, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct GlobalTransform {
     isometry: Isometry3<f32>,
 }

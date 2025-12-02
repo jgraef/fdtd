@@ -1,3 +1,4 @@
+use bevy_ecs::component::Component;
 use bytemuck::{
     Pod,
     Zeroable,
@@ -36,7 +37,7 @@ use crate::{
 /// light's) is already sent to the shader. The diffuse and specular light
 /// components can be modulated by the camera as well. So there is no need for
 /// this right now.
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, Component)]
 pub struct PointLight {
     #[serde(with = "crate::util::serde::palette")]
     pub color: Srgb,
@@ -86,7 +87,7 @@ impl PropertiesUi for PointLight {
 
 impl_register_component!(PointLight where ComponentUi, default);
 
-#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, Component)]
 pub struct AmbientLight {
     #[serde(with = "crate::util::serde::palette")]
     pub color: Srgb,

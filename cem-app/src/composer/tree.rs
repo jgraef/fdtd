@@ -1,3 +1,7 @@
+use bevy_ecs::{
+    component::Component,
+    entity::Entity,
+};
 use egui_ltreeview::{
     Action,
     IndentHintStyle,
@@ -29,11 +33,13 @@ pub struct ObjectTreeState {
 
 impl ComposerState {
     pub(super) fn object_tree(&mut self, ui: &mut egui::Ui) -> egui::Response {
-        self.object_tree
-            .tree_state
-            .set_selected(self.selection().with_query_iter::<(), _>(|selected| {
-                selected.map(|(entity, ())| entity.into()).collect()
-            }));
+        let selected = self
+            .selection_mut()
+            .entities()
+            .into_iter()
+            .map(Into::into)
+            .collect();
+        self.object_tree.tree_state.set_selected(selected);
 
         let (response, actions) = TreeView::new(ui.id().with("composer_object_tree"))
             .allow_multi_selection(true)
@@ -42,13 +48,13 @@ impl ComposerState {
             .override_indent(Some(10.0))
             .show_state(ui, &mut self.object_tree.tree_state, |builder| {
                 builder.dir(ObjectTreeId::Root, "Scene");
-                let mut labels = self.scene.entities.view::<Option<&Label>>();
+                /*let mut labels = self.scene.world.query::<Option<&Label>>();
                 let mut visitor = Visitor {
                     world: &self.scene.entities,
                     builder,
                     labels: &mut labels,
                 };
-                visitor.visit_roots();
+                visitor.visit_roots();*/
                 builder.close_dir();
             });
 
@@ -88,6 +94,7 @@ impl ComposerState {
     }
 }
 
+/*
 struct Visitor<'a, 'ui, 'world> {
     world: &'a hecs::World,
     builder: &'a mut TreeViewBuilder<'ui, ObjectTreeId>,
@@ -131,19 +138,20 @@ impl<'a, 'ui, 'world> Visitor<'a, 'ui, 'world> {
         );
     }
 }
+ */
 
 /// Tag for entities that are to be shown in the object tree
-#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, Component)]
 pub struct ShowInTree;
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum ObjectTreeId {
     Root,
-    Entity(hecs::Entity),
+    Entity(Entity),
 }
 
-impl From<hecs::Entity> for ObjectTreeId {
-    fn from(value: hecs::Entity) -> Self {
+impl From<Entity> for ObjectTreeId {
+    fn from(value: Entity) -> Self {
         Self::Entity(value)
     }
 }

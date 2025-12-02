@@ -72,7 +72,8 @@ impl App {
                                 self.renderer.show_debug(ui);
                             });
 
-                            self.composers.show_debug(ui);
+                            // todo: bevy-migrate
+                            //self.composers.show_debug(ui);
 
                             ui.collapsing("egui", |ui| {
                                 ui.collapsing("Settings", |ui| {

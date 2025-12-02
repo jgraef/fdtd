@@ -33,7 +33,7 @@ impl<'a> ComposerMenuElements<'a> {
                     true,
                     composer.has_undos(),
                     composer.has_redos(),
-                    !composer.selection().is_empty(),
+                    !composer.selection_mut().is_empty(),
                 )
             })
             .unwrap_or_default();
@@ -98,7 +98,7 @@ impl<'a> ComposerMenuElements<'a> {
 
         let has_file_open = selection.is_some();
         let has_anything_selected = selection
-            .as_ref()
+            .as_mut()
             .map(|selection| !selection.is_empty())
             .unwrap_or_default();
 

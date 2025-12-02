@@ -76,6 +76,9 @@ where
         }
     }
 
+    /// Flushes the staged data to the GPU.
+    ///
+    /// Returns `true` if the buffer was reallocated.
     pub fn flush<S>(&mut self, on_reallocate: impl FnMut(&wgpu::Buffer), gpu_staging: S) -> bool
     where
         S: WriteStaging,

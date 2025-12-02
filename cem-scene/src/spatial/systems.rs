@@ -41,7 +41,7 @@ pub fn update_bvh(
 ) {
     let mut transaction = bvh.transaction(&mut workspace);
 
-    for message in messages.read() {
+    messages.read().for_each(|message| {
         match message {
             BvhMessage::Insert { entity } => {
                 let query = queries.p0();
@@ -60,7 +60,7 @@ pub fn update_bvh(
                 }
             }
         }
-    }
+    });
 
     {
         let query = queries.p2();

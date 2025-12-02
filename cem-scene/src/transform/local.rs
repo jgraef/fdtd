@@ -9,6 +9,7 @@ use nalgebra::{
 };
 
 #[derive(Clone, Copy, Debug, Default, Component)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct LocalTransform {
     /// Rotation followed by translation that transforms points from the
     /// object's local frame to the global frame.

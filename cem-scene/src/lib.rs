@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+mod label;
 pub mod plugin;
 pub mod schedule;
 pub mod spatial;
@@ -7,7 +8,6 @@ pub mod transform;
 
 use std::sync::OnceLock;
 
-pub use bevy_ecs as ecs;
 use bevy_ecs::{
     resource::Resource,
     schedule::{
@@ -18,6 +18,7 @@ use bevy_ecs::{
     system::ScheduleSystem,
     world::World,
 };
+pub use label::Label;
 
 use crate::{
     plugin::{
@@ -56,6 +57,10 @@ pub struct SceneBuilder {
 }
 
 impl SceneBuilder {
+    pub fn build(self) -> Scene {
+        Scene { world: self.world }
+    }
+
     pub fn register_plugin(&mut self, plugin: impl Plugin) {
         if let Some(plugin) = self.plugins.register(plugin) {
             plugin.setup(self);

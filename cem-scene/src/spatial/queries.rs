@@ -6,7 +6,10 @@ use bevy_ecs::{
         SystemParam,
     },
 };
-use nalgebra::Point3;
+use nalgebra::{
+    Isometry3,
+    Point3,
+};
 use parry3d::{
     bounding_volume::Aabb,
     query::Ray,
@@ -16,6 +19,7 @@ use crate::{
     spatial::{
         bvh::Bvh,
         collider::Collider,
+        merge_aabbs,
     },
     transform::GlobalTransform,
 };
@@ -116,5 +120,50 @@ pub struct RootAabb<'w> {
 impl<'w> RootAabb<'w> {
     pub fn get(&self) -> Aabb {
         self.bvh.root_aabb()
+    }
+}
+
+#[derive(Debug, SystemParam)]
+pub struct WorldAabb<'w, 's> {
+    bvh: Res<'w, Bvh>,
+    query: Query<'w, 's, (&'static GlobalTransform, &'static Collider)>,
+}
+
+impl<'w, 's> WorldAabb<'w, 's> {
+    pub fn root_aabb(&self) -> Aabb {
+        self.bvh.root_aabb()
+    }
+
+    /// Computes the scene's AABB relative to an observer.
+    ///
+    /// # Arguments
+    /// - `relative_to`: The individual AABBs of objects in the scene will be
+    ///   relative to this, i.e. they wll be transformed by its inverse.
+    /// - `approximate_relative_aabbs`: Compute the individual AABBs by
+    ///   transforming the pre-computed AABB
+    pub fn relative_to_observer(
+        &mut self,
+        relative_to: &Isometry3<f32>,
+        approximate_relative_aabbs: bool,
+    ) -> Option<Aabb> {
+        let relative_to_inv = relative_to.inverse();
+
+        if approximate_relative_aabbs {
+            /*let mut query = self.entities.query::<&Aabb>();
+            let aabbs = query
+                .iter()
+                .map(|(_entity, aabb)| aabb.transform_by(&relative_to_inv));
+            merge_aabbs(aabbs)*/
+            todo!(
+                "fixme: Aabbs are currently not stored because we can't derive Component on them."
+            );
+        }
+        else {
+            let aabbs = self.query.iter().map(|(transform, collider)| {
+                let transform = relative_to_inv * transform.isometry();
+                collider.compute_aabb(&transform)
+            });
+            merge_aabbs(aabbs)
+        }
     }
 }

@@ -14,14 +14,13 @@ use nalgebra::Point3;
 
 use crate::{
     renderer::{
-        Renderer,
-        Stencil,
         camera::CameraRenderInfo,
-        command::CommandSender,
         mesh::{
             Mesh,
             MeshBindGroup,
         },
+        pipeline::Stencil,
+        renderer::Renderer,
     },
     util::{
         ReusableSharedBuffer,
@@ -76,8 +75,8 @@ impl DrawCommandBuffer {
                 .contains(DrawCommandFlags::OUTLINE)
                 .then(|| renderer.outline_pipeline.pipeline.clone()),
             buffer: self.buffer.get(),
-            camera_entity,
-            command_sender: renderer.command_queue.sender.clone(),
+            //camera_entity,
+            //command_sender: renderer.command_queue.sender.clone(),
         }
     }
 }
@@ -220,10 +219,10 @@ pub struct DrawCommand {
     outline_pipeline: Option<wgpu::RenderPipeline>,
 
     buffer: Arc<DrawCommandBuilderBuffer>,
-
     // for recording timings
-    camera_entity: hecs::Entity,
-    command_sender: CommandSender,
+    // todo: bevy-migrate
+    //camera_entity: hecs::Entity,
+    //command_sender: CommandSender,
 }
 
 impl DrawCommand {

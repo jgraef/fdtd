@@ -3,6 +3,14 @@ use std::{
     sync::Arc,
 };
 
+use cem_scene::spatial::{
+    Collider,
+    traits::{
+        ComputeAabb,
+        PointQuery,
+        RayCast,
+    },
+};
 use nalgebra::{
     Isometry3,
     Point2,
@@ -18,19 +26,11 @@ use parry3d::{
     },
 };
 
-use crate::{
-    renderer::mesh::{
-        GenerateMesh,
-        IntoGenerateMesh,
-        MeshBuilder,
-        WindingOrder,
-    },
-    scene::spatial::{
-        Collider,
-        ComputeAabb,
-        PointQuery,
-        RayCast,
-    },
+use crate::renderer::mesh::{
+    GenerateMesh,
+    IntoGenerateMesh,
+    MeshBuilder,
+    WindingOrder,
 };
 
 #[derive(Clone, Copy, Debug, Default)]
