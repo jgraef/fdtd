@@ -3,6 +3,7 @@
 
 pub mod app;
 pub mod args;
+pub mod assets;
 pub mod build_info;
 pub mod clipboard;
 pub mod composer;
@@ -12,7 +13,6 @@ pub mod error;
 pub mod files;
 pub mod menubar;
 pub mod renderer;
-pub mod scene;
 pub mod solver;
 pub mod util;
 
@@ -77,4 +77,12 @@ enum Command {
         #[clap(short, long, default_value = "toml")]
         format: String,
     },
+}
+
+// todo bevy-migration remove this
+#[macro_export]
+macro_rules! impl_register_component {
+    ($($tt:tt)*) => {
+        // nop
+    };
 }

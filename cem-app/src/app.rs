@@ -24,10 +24,7 @@ use image::RgbaImage;
 use crate::{
     args::Args,
     build_info::BUILD_INFO,
-    composer::{
-        Composers,
-        loader::AssetLoader,
-    },
+    composer::Composers,
     config::AppConfig,
     error::{
         ErrorDialog,
@@ -41,7 +38,10 @@ use crate::{
     },
     renderer::{
         RendererConfig,
-        plugin::RenderPluginBuilder,
+        plugin::{
+            RenderPlugin,
+            RenderPluginBuilder,
+        },
     },
     solver::runner::SolverRunner,
 };
@@ -270,8 +270,7 @@ pub struct App {
     pub config: AppConfig,
     pub file_dialog: FileDialog,
     pub show_about: bool,
-    pub renderer: Renderer,
-    pub asset_loader: AssetLoader,
+    pub render_plugin: RenderPlugin,
     pub solver_runner: SolverRunner,
     pub composers: Composers,
 }
@@ -326,18 +325,15 @@ impl App {
 
         error_dialog.register_in_context(&context.egui_context);
 
-        let renderer = Renderer::from_app_context(&context);
-        let render_resource_manager = renderer.resource_creator();
-        let asset_loader = AssetLoader::new(render_resource_manager.clone());
-        let solver_runner = SolverRunner::from_app_context(&context, render_resource_manager);
+        let render_plugin = context.render_plugin_builder.build_plugin();
+        let solver_runner = SolverRunner::from_app_context(&context);
 
         Self {
             app_files: context.app_files,
             config: context.config,
             file_dialog,
             show_about: false,
-            renderer,
-            asset_loader,
+            render_plugin,
             solver_runner,
             composers,
         }
@@ -419,8 +415,7 @@ impl eframe::App for App {
         // show solver ui window
         self.solver_runner.show_active_solver_ui(ctx);
 
-        self.composers
-            .show(ctx, &mut self.renderer, &mut self.asset_loader);
+        self.composers.show(ctx);
 
         show_about_window(ctx, &mut self.show_about);
 

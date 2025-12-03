@@ -7,7 +7,7 @@ use serde::{
 };
 
 use crate::renderer::{
-    Outline,
+    components::Outline,
     light::{
         AmbientLight,
         PointLight,

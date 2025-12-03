@@ -6,25 +6,14 @@ use egui_ltreeview::{
     Action,
     IndentHintStyle,
     TreeView,
-    TreeViewBuilder,
     TreeViewState,
-};
-use hecs_hierarchy::{
-    Child,
-    Hierarchy,
 };
 use serde::{
     Deserialize,
     Serialize,
 };
 
-use crate::{
-    composer::ComposerState,
-    scene::{
-        EntityDebugLabel,
-        Label,
-    },
-};
+use crate::composer::ComposerState;
 
 #[derive(Debug, Default)]
 pub struct ObjectTreeState {

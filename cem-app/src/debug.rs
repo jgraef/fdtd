@@ -64,13 +64,13 @@ impl App {
                                 }
                             });
 
-                            ui.collapsing("wgpu", |ui| {
-                                self.renderer.wgpu_context().show_debug(ui);
-                            });
+                            //ui.collapsing("wgpu", |ui| {
+                            //    self.renderer.wgpu_context().show_debug(ui);
+                            //});
 
-                            ui.collapsing("Renderer", |ui| {
-                                self.renderer.show_debug(ui);
-                            });
+                            //ui.collapsing("Renderer", |ui| {
+                            //    self.renderer.show_debug(ui);
+                            //});
 
                             // todo: bevy-migrate
                             //self.composers.show_debug(ui);

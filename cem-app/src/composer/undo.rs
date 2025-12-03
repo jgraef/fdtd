@@ -1,9 +1,8 @@
 use std::collections::VecDeque;
 
-use crate::{
-    debug::DebugUi,
-    scene::Scene,
-};
+use cem_scene::Scene;
+
+use crate::debug::DebugUi;
 
 #[derive(derive_more::Debug)]
 pub struct UndoBuffer {
@@ -63,8 +62,8 @@ impl UndoBuffer {
         }
     }
 
-    pub fn undo_most_recent(&mut self, scene: &mut Scene) {
-        if let Some(undo_action) = self.undo_actions.pop_front() {
+    pub fn undo_most_recent(&mut self, _scene: &mut Scene) {
+        /*if let Some(undo_action) = self.undo_actions.pop_front() {
             match undo_action {
                 UndoAction::DeleteEntity { hades_ids } => {
                     for hades_id in hades_ids {
@@ -79,7 +78,9 @@ impl UndoBuffer {
                     //todo!();
                 }
             }
-        }
+        }*/
+        // todo bevy-migrate
+        todo!();
     }
 
     pub fn iter_undo(&self) -> std::collections::vec_deque::Iter<'_, UndoAction> {

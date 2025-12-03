@@ -33,7 +33,6 @@ use crate::{
     Error,
     composer::loader::{
         LoadAsset,
-        LoaderContext,
         LoadingProgress,
         LoadingState,
     },
@@ -46,9 +45,9 @@ use crate::{
             Fallbacks,
             Renderer,
         },
+        resource::RenderResourceManager,
         systems::UpdateMeshBindGroupMessage,
     },
-    scene::Changed,
 };
 
 #[derive(Debug, Component)]
@@ -327,19 +326,19 @@ impl LoadMesh {
 impl LoadAsset for LoadMesh {
     type State = Self;
 
-    fn start_loading(&self, context: &mut LoaderContext) -> Result<Self, Error> {
-        let _ = context;
+    fn start_loading(&self) -> Result<Self, Error> {
         Ok(self.clone())
     }
 }
 
 impl LoadingState for LoadMesh {
-    type Output = (Mesh, Changed<Mesh>);
+    type Output = Mesh;
+    type Context = RenderResourceManager<'static, 'static>;
 
     fn poll(
         &mut self,
-        context: &mut LoaderContext,
-    ) -> Result<LoadingProgress<(Mesh, Changed<Mesh>)>, Error> {
+        context: &mut RenderResourceManager,
+    ) -> Result<LoadingProgress<Mesh>, Error> {
         let mesh = match self {
             LoadMesh::Generator {
                 generator,
@@ -349,12 +348,12 @@ impl LoadingState for LoadMesh {
                 let mut mesh_builder = MeshBufferBuilder::new(Some(Renderer::WINDING_ORDER));
                 generator.generate(&mut mesh_builder, *normals, *uvs);
                 // todo: label
-                mesh_builder.finish(context.render_resource_manager_transaction.device(), "todo")
+                mesh_builder.finish(context.device(), "todo")
             }
             LoadMesh::File { path: _ } => todo!(),
         };
 
-        Ok(LoadingProgress::Ready((mesh, Changed::default())))
+        Ok(LoadingProgress::Ready(mesh))
     }
 }
 

@@ -32,7 +32,7 @@ use nalgebra::{
 
 use crate::{
     impl_register_component,
-    renderer::texture_channel::{
+    renderer::texture::channel::{
         ImageSender,
         TextureSender,
         UndecidedTextureSender,

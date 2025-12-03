@@ -1,4 +1,5 @@
 #![allow(dead_code)]
+#![warn(clippy::todo, unused_qualifications)]
 
 mod label;
 pub mod plugin;
@@ -97,4 +98,10 @@ pub fn builtin_plugins() -> &'static PluginRegistry {
         builtin.register(TransformHierarchyPlugin);
         builtin
     })
+}
+
+pub trait PopulateScene {
+    type Error;
+
+    fn populate_scene(&self, scene: &mut Scene) -> Result<(), Self::Error>;
 }

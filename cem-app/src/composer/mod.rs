@@ -31,12 +31,18 @@ use bevy_ecs::{
     world::World,
 };
 use cem_scene::{
+    Label,
+    PopulateScene,
     Scene,
     SceneBuilder,
     builtin_plugins,
     spatial::{
         Collider,
         queries::WorldAabb,
+    },
+    transform::{
+        GlobalTransform,
+        LocalTransform,
     },
 };
 use cem_solver::{
@@ -83,7 +89,6 @@ use crate::{
             guess_file_format_from_path,
             nec::PopulateWithNec,
         },
-        loader::AssetLoader,
         menubar::ComposerMenuElements,
         shape::flat::{
             Quad,
@@ -110,7 +115,6 @@ use crate::{
     impl_register_component,
     lipsum,
     renderer::{
-        Renderer,
         camera::{
             CameraConfig,
             CameraProjection,
@@ -121,16 +125,6 @@ use crate::{
         },
         material,
         mesh::LoadMesh,
-    },
-    scene::{
-        EntityBuilderExt,
-        Label,
-        PopulateScene,
-        SceneExt,
-        transform::{
-            GlobalTransform,
-            LocalTransform,
-        },
     },
     solver::{
         config::{
@@ -150,9 +144,15 @@ use crate::{
         runner::SolverRunner,
         ui::SolverConfigUiWindow,
     },
-    util::egui::{
-        EguiUtilUiExt,
-        probe::PropertiesUi,
+    util::{
+        egui::{
+            EguiUtilUiExt,
+            probe::PropertiesUi,
+        },
+        scene::{
+            EntityBuilderExt,
+            SceneExt,
+        },
     },
 };
 
@@ -163,12 +163,7 @@ pub struct Composers {
 }
 
 impl Composers {
-    pub fn show(
-        &mut self,
-        ctx: &egui::Context,
-        renderer: &mut Renderer,
-        asset_loader: &mut AssetLoader,
-    ) {
+    pub fn show(&mut self, ctx: &egui::Context) {
         if self.composers.is_empty() {
             // what is being shown when no file is open
             egui::CentralPanel::default().show(ctx, |ui| {
@@ -181,7 +176,7 @@ impl Composers {
         }
         else if let Some(index) = self.active {
             if let Some(composer) = self.composers.get_mut(index) {
-                composer.show(ctx, renderer, asset_loader);
+                composer.show(ctx);
             }
             else {
                 tracing::error!(index, "invalid active composer");
@@ -451,18 +446,18 @@ impl ComposerState {
         }
     }
 
-    pub fn show(
-        &mut self,
-        ctx: &egui::Context,
-        renderer: &mut Renderer,
-        asset_loader: &mut AssetLoader,
-    ) {
+    pub fn show(&mut self, ctx: &egui::Context) {
         // prepare world
         self.scene.update();
 
-        //asset_loader.run_all(&mut self.scene).ok_or_handle(ctx);
-        //renderer.prepare_world(&mut self.scene);
+        // render world
         self.scene.render();
+
+        // todo: bevy-migrate: these need to run
+        //asset_loader.run_all(&mut self.scene).ok_or_handle(ctx);
+
+        //renderer.prepare_world(&mut self.scene);
+        //self.scene.render();
 
         // todo: give a RepaintTrigger to the solver runner
         //ctx.request_repaint_after(Duration::from_millis(1000 / 60));
@@ -529,7 +524,7 @@ impl ComposerState {
             {
                 // actually render the scene
                 let view_response = ui.add(
-                    SceneView::new(&mut self.scene, renderer)
+                    SceneView::new(&mut self.scene)
                         .with_camera(self.camera_entity)
                         .with_scene_pointer(&mut self.scene_pointer),
                 );
@@ -575,15 +570,16 @@ impl ComposerState {
                     self.entity_windows.push((entity, *window));
                 }
 
-                for (entity, window) in &self.entity_windows {
-                    /*EntityPropertiesWindow::new(
+                // todo: bevy-migrate
+                /*for (entity, window) in &self.entity_windows {
+                    EntityPropertiesWindow::new(
                         egui::Id::new("entity_properties").with(entity),
                         &mut self.scene,
                         *entity,
                     )
                     .deletable(window.despawn_button)
-                    .show(ctx, entity::default_title);*/
-                }
+                    .show(ctx, entity::default_title);
+                }*/
 
                 //self.scene.apply_deferred();
 
@@ -697,9 +693,10 @@ impl ComposerState {
 
     fn send_to_hades(
         &mut self,
-        entities: impl IntoIterator<Item = Entity>,
-        mut before_deletion: impl FnMut(&mut Scene, Entity),
+        _entities: impl IntoIterator<Item = Entity>,
+        mut _before_deletion: impl FnMut(&mut Scene, Entity),
     ) -> Vec<HadesId> {
+        // todo: bevy-migrate
         /*entities
         .into_iter()
         .filter_map(|entity| {
@@ -728,7 +725,7 @@ impl ComposerState {
             .push_undo(UndoAction::DeleteEntity { hades_ids });
     }
 
-    pub fn copy(&mut self, ctx: &egui::Context, entities: impl IntoIterator<Item = Entity>) {
+    pub fn copy(&mut self, _ctx: &egui::Context, _entities: impl IntoIterator<Item = Entity>) {
         /*
         // this is rather hacky, doesn't use our local buffer/clipboard extension and
         // pollutes the OS clipboard.
@@ -758,7 +755,7 @@ impl ComposerState {
         todo!();
     }
 
-    pub fn paste(&mut self, text: &str) {
+    pub fn paste(&mut self, _text: &str) {
         /*if let Some(encoded) = text.strip_prefix(CLIPBOARD_PREFIX) {
             let mut compressed = Vec::with_capacity(encoded.len());
             base64::engine::general_purpose::URL_SAFE
@@ -983,13 +980,15 @@ pub struct SelectionMut<'a> {
 
 impl<'a> SelectionMut<'a> {
     pub fn clear(&mut self) {
-        self.world.run_system_cached(
-            |selection: Query<Entity, With<Selected>>, mut commands: Commands| {
-                selection.iter().for_each(|entity| {
-                    commands.entity(entity).remove::<Selected>();
-                });
-            },
-        );
+        self.world
+            .run_system_cached(
+                |selection: Query<Entity, With<Selected>>, mut commands: Commands| {
+                    selection.iter().for_each(|entity| {
+                        commands.entity(entity).remove::<Selected>();
+                    });
+                },
+            )
+            .unwrap();
     }
 
     pub fn select(&mut self, entity: Entity) {
@@ -1016,16 +1015,18 @@ impl<'a> SelectionMut<'a> {
     }
 
     pub fn select_all(&mut self) {
-        self.world.run_system_cached_with(
-            |In(outline): In<Outline>,
-             selectable: Query<Entity, With<Selectable>>,
-             mut commands: Commands| {
-                selectable.iter().for_each(|entity| {
-                    commands.entity(entity).insert((Selected, outline));
-                });
-            },
-            *self.outline,
-        );
+        self.world
+            .run_system_cached_with(
+                |In(outline): In<Outline>,
+                 selectable: Query<Entity, With<Selectable>>,
+                 mut commands: Commands| {
+                    selectable.iter().for_each(|entity| {
+                        commands.entity(entity).insert((Selected, outline));
+                    });
+                },
+                *self.outline,
+            )
+            .unwrap();
     }
 
     pub fn is_empty(&mut self) -> bool {
@@ -1073,39 +1074,45 @@ impl<'a> CameraMut<'a> {
     /// AABB is calculated relative to the camera orientation. The camera will
     /// also be translated laterally to its view axis to center to the AABB.
     pub fn fit_to_scene(&mut self, margin: &Vector2<f32>) {
-        self.scene.world.run_system_cached_with(
-            |In((camera_entity, margin)): In<(Entity, Vector2<f32>)>,
-             mut cameras: Query<(&GlobalTransform, &mut LocalTransform, &CameraProjection)>,
-             mut world_aabb: WorldAabb| {
-                // todo
+        self.scene
+            .world
+            .run_system_cached_with(
+                |In((camera_entity, margin)): In<(Entity, Vector2<f32>)>,
+                 mut cameras: Query<(&GlobalTransform, &mut LocalTransform, &CameraProjection)>,
+                 mut world_aabb: WorldAabb| {
+                    // todo
 
-                // get camera transform and projection
-                // note: we could use another transform if we want to reposition the camera e.g.
-                // along a coordinate axis.
-                let Ok((camera_global_transform, mut camera_local_transform, camera_projection)) =
-                    cameras.get_mut(camera_entity)
-                else {
-                    return;
-                };
+                    // get camera transform and projection
+                    // note: we could use another transform if we want to reposition the camera e.g.
+                    // along a coordinate axis.
+                    let Ok((
+                        camera_global_transform,
+                        mut camera_local_transform,
+                        camera_projection,
+                    )) = cameras.get_mut(camera_entity)
+                    else {
+                        return;
+                    };
 
-                // compute scene AABB relative to camera
-                let Some(scene_aabb) =
-                    world_aabb.relative_to_observer(camera_global_transform.isometry(), false)
-                else {
-                    return;
-                };
+                    // compute scene AABB relative to camera
+                    let Some(scene_aabb) =
+                        world_aabb.relative_to_observer(camera_global_transform.isometry(), false)
+                    else {
+                        return;
+                    };
 
-                // center camera on aabb
-                let mut translation = scene_aabb.center().coords;
-                translation.z -=
-                    camera_projection.distance_to_fit_aabb_into_fov(&scene_aabb, &margin);
+                    // center camera on aabb
+                    let mut translation = scene_aabb.center().coords;
+                    translation.z -=
+                        camera_projection.distance_to_fit_aabb_into_fov(&scene_aabb, &margin);
 
-                // apply translation to camera
-                // todo bevy-migrate - or should we mutate it directly?
-                camera_local_transform.translate_local(&Translation3::from(translation));
-            },
-            (self.camera_entity, *margin),
-        );
+                    // apply translation to camera
+                    // todo bevy-migrate - or should we mutate it directly?
+                    camera_local_transform.translate_local(&Translation3::from(translation));
+                },
+                (self.camera_entity, *margin),
+            )
+            .unwrap();
     }
 
     /// Fit the camera to the scene looking along a specified axis.

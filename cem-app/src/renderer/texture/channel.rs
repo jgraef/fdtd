@@ -14,7 +14,7 @@ use parking_lot::{
 
 use crate::renderer::{
     command::CommandSender,
-    material::TextureAndView,
+    texture::TextureAndView,
 };
 
 pub(super) fn texture_channel(
@@ -43,7 +43,7 @@ pub struct TextureReceiver {
 }
 
 #[derive(Debug)]
-pub(super) struct CopyImageToTextureCommand {
+pub(in crate::renderer) struct CopyImageToTextureCommand {
     shared: Arc<Shared>,
 }
 

@@ -1,7 +1,16 @@
-use bevy_ecs::entity::Entity;
+use bevy_ecs::{
+    entity::Entity,
+    system::{
+        In,
+        Query,
+    },
+};
 use cem_scene::{
     Scene,
-    transform::LocalTransform,
+    transform::{
+        GlobalTransform,
+        LocalTransform,
+    },
 };
 use nalgebra::{
     Point2,
@@ -13,23 +22,24 @@ use nalgebra::{
 use parry3d::query::Ray;
 
 use crate::renderer::{
-    Renderer,
-    camera::Viewport,
+    camera::{
+        CameraProjection,
+        Viewport,
+    },
+    grab_draw_list,
 };
 
 #[derive(derive_more::Debug)]
 pub struct SceneView<'a> {
     scene: &'a mut Scene,
-    renderer: &'a mut Renderer,
     camera_entity: Option<Entity>,
     scene_pointer: Option<&'a mut ScenePointer>,
 }
 
 impl<'a> SceneView<'a> {
-    pub fn new(scene: &'a mut Scene, renderer: &'a mut Renderer) -> Self {
+    pub fn new(scene: &'a mut Scene) -> Self {
         Self {
             scene,
-            renderer,
             camera_entity: None,
             scene_pointer: None,
         }
@@ -50,7 +60,8 @@ impl<'a> SceneView<'a> {
         // note: we could insert Changed<_> for camera movement and then only update the
         // camera buffer when it actually changes
 
-        let camera_pan_tilt_speed = Vector2::repeat(1.0);
+        // todo: bevy-migrate: this mostly doesn't work right now
+        let _camera_pan_tilt_speed = Vector2::repeat(1.0);
         let camera_translation_speed = Vector3::new(0.5, 0.5, 0.1);
 
         let Some(camera_entity) = self.camera_entity
@@ -108,7 +119,7 @@ impl<'a> SceneView<'a> {
             });
         }
 
-        let drag_delta = || {
+        let _drag_delta = || {
             // drag delta in normalized screen coordinates `[-1, 1]^2`
             let drag_delta = response.drag_delta();
             Vector2::new(
@@ -135,7 +146,7 @@ impl<'a> SceneView<'a> {
                 .map(pointer_position_to_normalized)
         };
 
-        let pointer_position = || {
+        let _pointer_position = || {
             if response.hovered() {
                 let mut hover_pos = response.ctx.input(|input| input.pointer.latest_pos())?;
 
@@ -217,34 +228,32 @@ impl<'a> SceneView<'a> {
         //self.scene.apply_deferred();
     }
 
-    pub fn shoot_ray_from_camera(&self, pointer_position: Point2<f32>) -> Option<Ray> {
-        self.camera_entity.and_then(|camera_entity| {
-            // todo: bevy-migrate
-            //shoot_ray_from_camera(self.scene, camera_entity, pointer_position)
-            None
-        })
+    pub fn shoot_ray_from_camera(&mut self, pointer_position: Point2<f32>) -> Option<Ray> {
+        self.camera_entity
+            .map(|camera_entity| shoot_ray_from_camera(self.scene, camera_entity, pointer_position))
     }
 }
 
-/*
 fn shoot_ray_from_camera(
-    scene: &Scene,
+    scene: &mut Scene,
     camera_entity: Entity,
     pointer_position: Point2<f32>,
-) -> Option<Ray> {
+) -> Ray {
+    // todo: bevy-migrate: the system should be moved into renderer::camera
     scene
-        .entities
-        .query_one::<(&GlobalTransform, &CameraProjection)>(camera_entity)
-        .ok()
-        .and_then(|mut query| {
-            query.get().map(|(camera_transform, camera_projection)| {
+        .world
+        .run_system_cached_with(
+            |In((camera_entity, pointer_position)): In<(Entity, Point2<f32>)>,
+             cameras: Query<(&GlobalTransform, &CameraProjection)>| {
+                let (camera_transform, camera_projection) = cameras.get(camera_entity).unwrap();
                 camera_projection
                     .shoot_screen_ray(&pointer_position)
                     .transform_by(camera_transform.isometry())
-            })
-        })
+            },
+            (camera_entity, pointer_position),
+        )
+        .unwrap()
 }
- */
 
 impl<'a> egui::Widget for SceneView<'a> {
     fn ui(mut self, ui: &mut egui::Ui) -> egui::Response {
@@ -259,7 +268,7 @@ impl<'a> egui::Widget for SceneView<'a> {
         if !ui.is_sizing_pass()
             && ui.is_rect_visible(response.rect)
             && let Some(camera_entity) = self.camera_entity
-            && let Some(draw_command) = self.renderer.prepare_frame(self.scene, Some(camera_entity))
+            && let Some(draw_command) = grab_draw_list(self.scene, Some(camera_entity))
         {
             // draw frame
             let painter = ui.painter();

@@ -1,5 +1,6 @@
 pub mod egui;
 pub mod palette;
+pub mod scene;
 pub mod serde;
 
 use std::{

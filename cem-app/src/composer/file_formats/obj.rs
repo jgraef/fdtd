@@ -3,19 +3,17 @@ use std::{
     path::Path,
 };
 
-use cem_scene::Scene;
+use cem_scene::{
+    Label,
+    PopulateScene,
+    Scene,
+    transform::LocalTransform,
+};
 use nalgebra::Point3;
 use parry3d::shape::TriMesh;
 use tobj::LoadOptions;
 
-use crate::{
-    renderer::material::Material,
-    scene::{
-        Label,
-        PopulateScene,
-        transform::LocalTransform,
-    },
-};
+use crate::renderer::material::Material;
 
 pub type Error = tobj::LoadError;
 

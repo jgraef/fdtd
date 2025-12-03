@@ -1,10 +1,4 @@
-use std::{
-    path::{
-        Path,
-        PathBuf,
-    },
-    sync::Arc,
-};
+use std::sync::Arc;
 
 use bevy_ecs::component::Component;
 use bitflags::bitflags;
@@ -12,7 +6,6 @@ use bytemuck::{
     Pod,
     Zeroable,
 };
-use cem_util::wgpu::create_texture_view_from_texture;
 use palette::{
     LinSrgba,
     Srgb,
@@ -27,15 +20,16 @@ use serde::{
 use crate::{
     Error,
     composer::loader::{
-        AndChanged,
-        ImageInfo,
         LoadAsset,
-        LoaderContext,
         LoadingProgress,
         LoadingState,
     },
     impl_register_component,
-    renderer::texture_channel::TextureReceiver,
+    renderer::texture::{
+        TextureAndView,
+        TextureLoaderContext,
+        TextureSource,
+    },
     util::{
         egui::probe::{
             HasChangeValue,
@@ -473,20 +467,20 @@ impl From<TextureSource> for LoadAlbedoTexture {
 impl LoadAsset for LoadAlbedoTexture {
     type State = Self;
 
-    fn start_loading(&self, context: &mut LoaderContext) -> Result<Self, Error> {
-        let _ = context;
+    fn start_loading(&self) -> Result<Self, Error> {
         Ok(self.clone())
     }
 }
 
 impl LoadingState for LoadAlbedoTexture {
-    type Output = AndChanged<AlbedoTexture>;
+    type Output = AlbedoTexture;
+    type Context = TextureLoaderContext<'static, 'static>;
 
-    fn poll(
+    fn poll<'w, 's>(
         &mut self,
-        context: &mut LoaderContext,
-    ) -> Result<LoadingProgress<AndChanged<AlbedoTexture>>, Error> {
-        let loaded_texture = self.source.load_with(context)?;
+        context: &mut TextureLoaderContext<'w, 's>,
+    ) -> Result<LoadingProgress<AlbedoTexture>, Error> {
+        let loaded_texture = self.source.load(context)?;
 
         let transparent = self
             .transparency
@@ -525,19 +519,19 @@ impl LoadMaterialTexture {
 impl LoadAsset for LoadMaterialTexture {
     type State = Self;
 
-    fn start_loading(&self, context: &mut LoaderContext) -> Result<Self, Error> {
-        let _ = context;
+    fn start_loading(&self) -> Result<Self, Error> {
         Ok(self.clone())
     }
 }
 
 impl LoadingState for LoadMaterialTexture {
-    type Output = AndChanged<MaterialTexture>;
+    type Output = MaterialTexture;
+    type Context = TextureLoaderContext<'static, 'static>;
 
-    fn poll(
+    fn poll<'w, 's>(
         &mut self,
-        context: &mut LoaderContext,
-    ) -> Result<LoadingProgress<AndChanged<MaterialTexture>>, Error> {
+        context: &mut TextureLoaderContext<'w, 's>,
+    ) -> Result<LoadingProgress<MaterialTexture>, Error> {
         let loaded_texture = self.source.load(context)?;
 
         Ok(LoadingProgress::Ready(
@@ -547,82 +541,5 @@ impl LoadingState for LoadMaterialTexture {
             }
             .into(),
         ))
-    }
-}
-
-#[derive(Clone, Debug)]
-pub enum TextureSource {
-    File { path: PathBuf },
-    Channel { receiver: TextureReceiver },
-}
-
-impl TextureSource {
-    pub fn load_with(&self, context: &mut LoaderContext) -> Result<LoadedTexture, Error> {
-        match self {
-            TextureSource::File { path } => {
-                // todo: this should not be implied here
-                let usage = wgpu::TextureUsages::TEXTURE_BINDING;
-
-                let (texture_and_view, info) = context.load_texture_from_file(path, usage)?;
-
-                Ok(LoadedTexture {
-                    texture_and_view,
-                    info: Some(info),
-                })
-            }
-            TextureSource::Channel { receiver } => {
-                Ok(LoadedTexture {
-                    texture_and_view: receiver.inner.clone(),
-                    info: None,
-                })
-            }
-        }
-    }
-
-    pub fn load(&self, context: &mut LoaderContext) -> Result<LoadedTexture, Error> {
-        self.load_with(context)
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct LoadedTexture {
-    texture_and_view: Arc<TextureAndView>,
-    info: Option<ImageInfo>,
-}
-
-impl From<PathBuf> for TextureSource {
-    fn from(value: PathBuf) -> Self {
-        Self::File { path: value }
-    }
-}
-
-impl From<&Path> for TextureSource {
-    fn from(value: &Path) -> Self {
-        Self::from(PathBuf::from(value))
-    }
-}
-
-impl From<&str> for TextureSource {
-    fn from(value: &str) -> Self {
-        Self::from(PathBuf::from(value))
-    }
-}
-
-impl From<TextureReceiver> for TextureSource {
-    fn from(value: TextureReceiver) -> Self {
-        Self::Channel { receiver: value }
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct TextureAndView {
-    pub texture: wgpu::Texture,
-    pub view: wgpu::TextureView,
-}
-
-impl TextureAndView {
-    pub fn from_texture(texture: wgpu::Texture, label: &str) -> Self {
-        let view = create_texture_view_from_texture(&texture, label);
-        Self { texture, view }
     }
 }

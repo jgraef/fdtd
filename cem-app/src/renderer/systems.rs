@@ -6,6 +6,7 @@ use bevy_ecs::{
     },
     query::{
         Changed,
+        Has,
         Or,
         QueryData,
         With,
@@ -14,6 +15,7 @@ use bevy_ecs::{
     system::{
         Commands,
         EntityCommands,
+        In,
         Query,
         Res,
         ResMut,
@@ -41,6 +43,10 @@ use crate::renderer::{
         Hidden,
         Outline,
     },
+    draw_commands::{
+        DrawCommand,
+        DrawCommandFlags,
+    },
     light::{
         AmbientLight,
         PointLight,
@@ -66,10 +72,10 @@ use crate::renderer::{
     },
 };
 
-fn start_frame(renderer: Res<SharedRenderer>, mut state: ResMut<RendererState>) {
+pub fn begin_frame(renderer: Res<SharedRenderer>, mut state: ResMut<RendererState>) {
     assert!(state.write_staging.is_none());
 
-    let mut command_encoder =
+    let command_encoder =
         renderer
             .wgpu_context
             .device
@@ -77,7 +83,7 @@ fn start_frame(renderer: Res<SharedRenderer>, mut state: ResMut<RendererState>) 
                 label: Some("render/prepare_world"),
             });
 
-    let mut write_staging = WriteStagingTransaction::new(
+    let write_staging = WriteStagingTransaction::new(
         renderer.wgpu_context.staging_pool.belt(),
         renderer.wgpu_context.device.clone(),
         command_encoder,
@@ -86,7 +92,7 @@ fn start_frame(renderer: Res<SharedRenderer>, mut state: ResMut<RendererState>) 
     state.write_staging = Some(write_staging);
 }
 
-fn finish_frame(renderer: Res<SharedRenderer>, mut state: ResMut<RendererState>) {
+pub fn end_frame(renderer: Res<SharedRenderer>, mut state: ResMut<RendererState>) {
     // finish all staged writes
     let command_encoder = state.write_staging.take().unwrap().commit();
     renderer
@@ -96,7 +102,7 @@ fn finish_frame(renderer: Res<SharedRenderer>, mut state: ResMut<RendererState>)
 }
 
 #[derive(QueryData)]
-struct UpdateInstanceBufferAndDrawCommandQueryData {
+pub struct UpdateInstanceBufferAndDrawCommandQueryData {
     label: Option<&'static Label>,
     global_transform: &'static GlobalTransform,
     mesh: &'static Mesh,
@@ -108,8 +114,8 @@ struct UpdateInstanceBufferAndDrawCommandQueryData {
     outline: Option<&'static Outline>,
 }
 
-fn update_instance_buffer_and_draw_command(
-    mut query: Query<
+pub fn update_instance_buffer_and_draw_command(
+    query: Query<
         UpdateInstanceBufferAndDrawCommandQueryData,
         (
             Or<(
@@ -192,22 +198,22 @@ fn update_instance_buffer_and_draw_command(
 }
 
 #[derive(Debug, Message)]
-pub(super) enum UpdateMeshBindGroupMessage {
+pub enum UpdateMeshBindGroupMessage {
     MeshAdded { entity: Entity },
     MeshRemoved { entity: Entity },
 }
 
 #[derive(QueryData)]
-struct UpdateMeshBindGroupsQueryData {
+pub struct UpdateMeshBindGroupsQueryData {
     label: Option<&'static Label>,
     mesh: &'static Mesh,
     albedo_texture: Option<&'static AlbedoTexture>,
     material_texture: Option<&'static MaterialTexture>,
 }
 
-fn update_mesh_bind_groups(
+pub fn update_mesh_bind_groups(
     renderer: Res<SharedRenderer>,
-    mut query: Query<UpdateMeshBindGroupsQueryData>,
+    query: Query<UpdateMeshBindGroupsQueryData>,
     mut messages: MessageReader<UpdateMeshBindGroupMessage>,
     mut commands: Commands,
 ) {
@@ -234,7 +240,7 @@ fn update_mesh_bind_groups(
     });
 }
 
-fn update_mesh_bind_group(
+pub fn update_mesh_bind_group(
     renderer: &Renderer,
     mut entity_commands: EntityCommands,
     mesh: &Mesh,
@@ -260,7 +266,7 @@ fn update_mesh_bind_group(
     entity_commands.insert(mesh_bind_group);
 }
 
-fn update_camera_viewports(
+pub fn update_camera_viewports(
     mut changed_viewports: Query<(&mut CameraProjection, &Viewport), Changed<Viewport>>,
 ) {
     changed_viewports
@@ -271,7 +277,7 @@ fn update_camera_viewports(
 }
 
 #[derive(QueryData)]
-struct CreateCameraBindGroupsQueryData {
+pub struct CreateCameraBindGroupsQueryData {
     entity: Entity,
     camera_projection: &'static CameraProjection,
     global_transform: &'static GlobalTransform,
@@ -281,7 +287,7 @@ struct CreateCameraBindGroupsQueryData {
     camera_config: Option<&'static CameraConfig>,
 }
 
-fn create_camera_bind_groups(
+pub fn create_camera_bind_groups(
     renderer: Res<SharedRenderer>,
     state: Res<RendererState>,
     query: Query<CreateCameraBindGroupsQueryData, Without<CameraBindGroup>>,
@@ -325,7 +331,7 @@ fn create_camera_bind_groups(
     )
 }
 
-fn destroy_camera_bind_groups(
+pub fn destroy_camera_bind_groups(
     query: Query<
         Entity,
         (
@@ -342,7 +348,7 @@ fn destroy_camera_bind_groups(
 
 #[derive(QueryData)]
 #[query_data(mutable)]
-struct UpdateCameraBindGroupsQueryData {
+pub struct UpdateCameraBindGroupsQueryData {
     camera_bind_group: &'static mut CameraBindGroup,
     camera_projection: &'static CameraProjection,
     global_transform: &'static GlobalTransform,
@@ -352,7 +358,7 @@ struct UpdateCameraBindGroupsQueryData {
     camera_config: Option<&'static CameraConfig>,
 }
 
-fn update_camera_bind_groups(
+pub fn update_camera_bind_groups(
     renderer: Res<SharedRenderer>,
     mut state: ResMut<RendererState>,
     mut query: Query<UpdateCameraBindGroupsQueryData>,
@@ -393,4 +399,52 @@ fn update_camera_bind_groups(
             );
         },
     );
+}
+
+/// Prepares rendering a frame for a specific view.
+///
+/// This just fetches camera information and the prepared draw commands
+/// (from [`Self::prepare_world`]) and returns them as a [`DrawCommand`].
+///
+/// The [`DrawCommand`] can be cloned and passed via [`egui::PaintCallback`]
+/// to do the actual rendering with a [`wgpu::RenderPass`].
+///
+/// Note that the actual draw commands are prepared in
+/// [`Self::prepare_world`], since they can be shared by multiple view
+/// widgets.
+pub fn grab_draw_list(
+    In(camera_entity): In<Option<Entity>>,
+    renderer: Res<SharedRenderer>,
+    state: Res<RendererState>,
+    cameras: Query<(
+        &CameraBindGroup,
+        Option<&CameraConfig>,
+        Has<ClearColor>,
+        &GlobalTransform,
+    )>,
+) -> Option<DrawCommand> {
+    // todo: pass in clear color as argument. then we can at least clear the screen
+    // if no camera exists
+
+    let camera_entity = camera_entity?;
+
+    // get bind group and config for our camera
+    let (camera_resources, camera_config, has_clear_color, camera_transform) =
+        cameras.get(camera_entity).unwrap();
+
+    // default to all, then apply configuration, so by default stuff will render and
+    // we don't have to debug for 15 minutes to find that we don't enable the
+    // pipeline
+    let mut draw_command_flags = DrawCommandFlags::all();
+    draw_command_flags.set(DrawCommandFlags::CLEAR, has_clear_color);
+    if let Some(camera_config) = camera_config {
+        camera_config.apply_to_draw_command_flags(&mut draw_command_flags);
+    }
+
+    Some(state.draw_command_buffer.finish(
+        &renderer,
+        camera_resources.bind_group.clone(),
+        camera_transform.position(),
+        draw_command_flags,
+    ))
 }

@@ -2,7 +2,7 @@ use std::sync::mpsc;
 
 use crate::renderer::{
     draw_commands::DrawCommandInfo,
-    texture_channel::CopyImageToTextureCommand,
+    texture::channel::CopyImageToTextureCommand,
 };
 
 #[derive(Debug)]

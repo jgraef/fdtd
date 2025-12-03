@@ -53,7 +53,6 @@ impl DrawCommandBuffer {
         camera_bind_group: wgpu::BindGroup,
         camera_position: Point3<f32>,
         flags: DrawCommandFlags,
-        camera_entity: hecs::Entity,
     ) -> DrawCommand {
         DrawCommand {
             camera_bind_group,

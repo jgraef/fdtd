@@ -59,10 +59,7 @@ use crate::{
         ErrorHandler,
         UiErrorSink,
     },
-    renderer::{
-        resource::RenderResourceManager,
-        texture_channel::UndecidedTextureSender,
-    },
+    renderer::texture::channel::UndecidedTextureSender,
     solver::config::{
         Parallelization,
         SolverConfig,
@@ -83,24 +80,19 @@ use crate::{
 #[derive(Debug)]
 pub struct SolverRunner {
     fdtd_wgpu: FdtdWgpuBackend,
-    render_resource_manager: RenderResourceManager,
     repaint_trigger: RepaintTrigger,
     error_sink: UiErrorSink,
     active_solver: Option<Solver>,
 }
 
 impl SolverRunner {
-    pub fn from_app_context(
-        context: &CreateAppContext,
-        render_resource_manager: RenderResourceManager,
-    ) -> Self {
+    pub fn from_app_context(context: &CreateAppContext) -> Self {
         Self {
             fdtd_wgpu: FdtdWgpuBackend::new(
                 context.wgpu_context.device.clone(),
                 context.wgpu_context.queue.clone(),
                 context.wgpu_context.staging_pool.clone(),
             ),
-            render_resource_manager,
             repaint_trigger: context.egui_context.repaint_trigger(),
             error_sink: context.egui_context.error_sink(),
             active_solver: None,
@@ -156,7 +148,6 @@ impl SolverRunner {
             scene,
             common_config,
             fdtd_config,
-            render_resource_manager: &self.render_resource_manager,
             repaint_trigger: self.repaint_trigger.clone(),
             error_sink: self.error_sink.clone(),
         };
@@ -205,7 +196,6 @@ struct RunFdtd<'a> {
     scene: &'a mut Scene,
     common_config: &'a SolverConfigCommon,
     fdtd_config: &'a SolverConfigFdtd,
-    render_resource_manager: &'a RenderResourceManager,
     repaint_trigger: RepaintTrigger,
     error_sink: UiErrorSink,
 }
@@ -228,7 +218,6 @@ impl<'a> RunFdtd<'a> {
             scene,
             common_config,
             fdtd_config,
-            render_resource_manager,
             repaint_trigger,
             error_sink,
         } = self;
@@ -342,14 +331,8 @@ impl<'a> RunFdtd<'a> {
         );*/
 
         // create observers
-        let observers = Observers::from_scene(
-            &instance,
-            &mut state,
-            scene,
-            &lattice_size,
-            render_resource_manager,
-            repaint_trigger,
-        );
+        let observers =
+            Observers::from_scene(&instance, &mut state, scene, &lattice_size, repaint_trigger);
 
         tracing::debug!("time to create simulation: {:?}", time_start.elapsed());
 
@@ -613,8 +596,9 @@ impl<'a> SceneDomainDescription<'a> {
     }
 }
 
+// todo: bevy-migrate
 impl<'a> DomainDescription<Point3<usize>> for SceneDomainDescription<'a> {
-    fn material(&self, point: &Point3<usize>) -> Material {
+    fn material(&self, _point: &Point3<usize>) -> Material {
         /*let point = self
             .coordinate_transformations
             .transform_point_from_solver_to_world(point);
@@ -631,7 +615,7 @@ impl<'a> DomainDescription<Point3<usize>> for SceneDomainDescription<'a> {
         *self.default_material
     }
 
-    fn pml(&self, point: &Point3<usize>) -> Option<PmlCoefficients> {
+    fn pml(&self, _point: &Point3<usize>) -> Option<PmlCoefficients> {
         /*let point = self
             .coordinate_transformations
             .transform_point_from_solver_to_world(point);
@@ -677,12 +661,11 @@ struct Observers<P> {
 
 impl<P> Observers<P> {
     pub fn from_scene<I>(
-        instance: &I,
-        state: &mut I::State,
-        scene: &mut Scene,
-        lattice_size: &Vector3<usize>,
-        render_resource_manager: &RenderResourceManager,
-        repaint_trigger: RepaintTrigger,
+        _instance: &I,
+        _state: &mut I::State,
+        _scene: &mut Scene,
+        _lattice_size: &Vector3<usize>,
+        _repaint_trigger: RepaintTrigger,
     ) -> Self
     where
         I: CreateProjection<UndecidedTextureSender, Projection = P>,
@@ -692,12 +675,14 @@ impl<P> Observers<P> {
         // - derive projection from observer and transform
         // - transform projection into simulation coordinate space
 
-        let mut needs_repaint = false;
-        let mut transaction = render_resource_manager.begin_transaction();
+        // todo: bevy-migrate
+        //let mut needs_repaint = false;
+
+        //let mut transaction = render_resource_manager.begin_transaction();
 
         // clippy, i want to chain other options into it later.
-        #[allow(clippy::let_and_return)]
-        let projections = vec![];
+        //#[allow(clippy::let_and_return)]
+        //let projections = vec![];
         /*let projections = scene
         .entities
         .query_mut::<&Observer>()
@@ -766,15 +751,16 @@ impl<P> Observers<P> {
         })
         .collect();*/
 
-        transaction.commit();
+        //transaction.commit();
 
         // apply deferred commands
         //scene.apply_deferred();
 
-        Self {
+        /*Self {
             projections,
             repaint_trigger: needs_repaint.then_some(repaint_trigger),
-        }
+        }*/
+        todo!();
     }
 
     pub fn run<I>(&mut self, instance: &I, state: &I::State) -> Result<(), Error>
@@ -805,8 +791,8 @@ struct Sources {
 
 impl Sources {
     pub fn from_scene(
-        scene: &mut Scene,
-        coordinate_transformations: &CoordinateTransformations,
+        _scene: &mut Scene,
+        _coordinate_transformations: &CoordinateTransformations,
     ) -> Self {
         /*let sources = scene
         .entities

@@ -19,13 +19,11 @@ mod renderer;
 pub mod resource;
 mod state;
 mod systems;
-pub mod texture_channel;
+pub mod texture;
 
-use std::{
-    num::NonZero,
-    time::Duration,
-};
+use std::time::Duration;
 
+use bevy_ecs::entity::Entity;
 use cem_scene::Scene;
 use cem_util::{
     format_size,
@@ -34,6 +32,7 @@ use cem_util::{
         buffer::WriteStaging,
     },
 };
+pub use renderer::RendererConfig;
 
 use crate::{
     debug::DebugUi,
@@ -42,15 +41,15 @@ use crate::{
             Command,
             CommandReceiver,
         },
+        draw_commands::DrawCommand,
         material::MaterialData,
-        pipeline::mesh::StencilStateExt,
     },
 };
 
 fn handle_commands<S>(
     command_receiver: &mut CommandReceiver,
     mut write_staging: S,
-    scene: &mut Scene,
+    _scene: &mut Scene,
 ) where
     S: WriteStaging,
 {
@@ -67,10 +66,11 @@ fn handle_commands<S>(
                     image.write_to_texture(texture, &mut write_staging);
                 });
             }
-            Command::DrawCommandInfo(info) => {
-                scene
-                    .command_buffer
-                    .insert_one(info.camera_entity, info.info);
+            Command::DrawCommandInfo(_info) => {
+                // todo: bevy-migrate
+                //scene
+                //    .command_buffer
+                //    .insert_one(info.camera_entity, info.info);
             }
         }
     }
@@ -115,4 +115,12 @@ pub struct StagingInfo {
     pub command_queue: u64,
     pub instance_buffer: u64,
     pub camera_buffers: u64,
+}
+
+/// Grabs the draw list for a camera from the scene
+pub fn grab_draw_list(scene: &mut Scene, camera_entity: Option<Entity>) -> Option<DrawCommand> {
+    scene
+        .world
+        .run_system_cached_with(systems::grab_draw_list, camera_entity)
+        .unwrap()
 }

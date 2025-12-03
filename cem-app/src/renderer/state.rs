@@ -31,7 +31,7 @@ use crate::renderer::{
 };
 
 #[derive(Debug, Resource)]
-pub(super) struct RendererState {
+pub struct RendererState {
     /// The instance buffer.
     ///
     /// This holds the handle to the GPU buffer for the instance data, a
@@ -71,7 +71,7 @@ impl RendererState {
 
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 #[repr(C)]
-pub(super) struct InstanceData {
+pub struct InstanceData {
     transform: Matrix4<f32>,
     instance_flags: InstanceFlags,
     mesh_flags: MeshFlags,

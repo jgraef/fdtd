@@ -2,7 +2,11 @@
 
 use std::convert::Infallible;
 
-use cem_scene::Scene;
+use cem_scene::{
+    PopulateScene,
+    Scene,
+    transform::LocalTransform,
+};
 use nalgebra::{
     Translation3,
     UnitQuaternion,
@@ -18,11 +22,9 @@ use parry3d::shape::Cylinder;
 
 use crate::{
     renderer::material::Material,
-    scene::{
+    util::scene::{
         EntityBuilderExt,
-        PopulateScene,
         SceneExt,
-        transform::LocalTransform,
     },
 };
 

@@ -5,10 +5,6 @@ use std::{
 };
 
 use bevy_ecs::resource::Resource;
-use cem_scene::{
-    Scene,
-    transform::GlobalTransform,
-};
 use cem_util::wgpu::{
     buffer::{
         WriteStaging,
@@ -24,15 +20,6 @@ use crate::{
     app::WgpuContext,
     debug::DebugUi,
     renderer::{
-        camera::{
-            CameraBindGroup,
-            CameraConfig,
-        },
-        components::ClearColor,
-        draw_commands::{
-            DrawCommand,
-            DrawCommandFlags,
-        },
         mesh::WindingOrder,
         pipeline::{
             DepthState,
@@ -48,8 +35,6 @@ use crate::{
                 StencilStateExt,
             },
         },
-        resource::RenderResourceManager,
-        state::RendererState,
     },
 };
 
@@ -61,7 +46,7 @@ pub struct RendererConfig {
 }
 
 #[derive(Debug)]
-pub(super) struct Renderer {
+pub struct Renderer {
     pub wgpu_context: WgpuContext,
     config: RendererConfig,
 
@@ -316,64 +301,6 @@ impl Renderer {
     pub fn config(&self) -> &RendererConfig {
         &self.config
     }
-
-    pub fn resource_creator(&self) -> RenderResourceManager {
-        RenderResourceManager::from_renderer(self)
-    }
-
-    /// Prepares rendering a frame for a specific view.
-    ///
-    /// This just fetches camera information and the prepared draw commands
-    /// (from [`Self::prepare_world`]) and returns them as a [`DrawCommand`].
-    ///
-    /// The [`DrawCommand`] can be cloned and passed via [`egui::PaintCallback`]
-    /// to do the actual rendering with a [`wgpu::RenderPass`].
-    ///
-    /// Note that the actual draw commands are prepared in
-    /// [`Self::prepare_world`], since they can be shared by multiple view
-    /// widgets.
-    pub fn prepare_frame(
-        &mut self,
-        scene: &Scene,
-        camera_entity: Option<hecs::Entity>,
-    ) -> Option<DrawCommand> {
-        // todo: pass in clear color as argument. then we can at least clear the screen
-        // if no camera exists
-
-        let camera_entity = camera_entity?;
-
-        // get bind group and config for our camera
-        let mut query = scene
-            .entities
-            .query_one::<(
-                &CameraBindGroup,
-                Option<&CameraConfig>,
-                hecs::Satisfies<&ClearColor>,
-                &GlobalTransform,
-            )>(camera_entity)
-            .ok()?;
-
-        let (camera_resources, camera_config, has_clear_color, camera_transform) = query.get()?;
-
-        let state = scene.resources.get::<RendererState>()?;
-
-        // default to all, then apply configuration, so by default stuff will render and
-        // we don't have to debug for 15 minutes to find that we don't enable the
-        // pipeline
-        let mut draw_command_flags = DrawCommandFlags::all();
-        draw_command_flags.set(DrawCommandFlags::CLEAR, has_clear_color);
-        if let Some(camera_config) = camera_config {
-            camera_config.apply_to_draw_command_flags(&mut draw_command_flags);
-        }
-
-        Some(state.draw_command_buffer.finish(
-            self,
-            camera_resources.bind_group.clone(),
-            camera_transform.position(),
-            draw_command_flags,
-            camera_entity,
-        ))
-    }
 }
 
 impl DebugUi for Renderer {
@@ -393,8 +320,10 @@ impl DebugUi for Renderer {
     }
 }
 
+// todo: bevy-migrate: this should be as hidden as possible. but it needs to be
+// pub for grab_draw_list. although the whole module is not pub.
 #[derive(Clone, Debug, Resource)]
-pub(super) struct SharedRenderer(pub Arc<Renderer>);
+pub struct SharedRenderer(pub Arc<Renderer>);
 
 impl Deref for SharedRenderer {
     type Target = Renderer;
@@ -405,7 +334,7 @@ impl Deref for SharedRenderer {
 }
 
 #[derive(Clone, Debug)]
-pub(super) struct Fallbacks {
+pub struct Fallbacks {
     pub white: wgpu::TextureView,
     pub black: wgpu::TextureView,
     pub sampler: wgpu::Sampler,
