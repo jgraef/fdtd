@@ -355,9 +355,10 @@ impl egui_wgpu::CallbackTrait for DrawCommand {
     }
 }
 
+// todo: bevy-migrate: all this can be returned by the render method
 #[derive(Clone, Copy, Debug)]
 pub struct DrawCommandInfo {
-    pub camera_entity: hecs::Entity,
+    //pub camera_entity: Entity,
     pub info: CameraRenderInfo,
 }
 

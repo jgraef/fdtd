@@ -26,17 +26,15 @@ impl Plugin for AssetPlugin {
 }
 
 pub trait AssetExt {
-    fn register_asset_loader<A, M>(&mut self)
+    fn register_asset_loader<A>(&mut self) -> &mut Self
     where
         A: LoadAsset;
 }
 
-#[rustfmt::skip]
 impl AssetExt for SceneBuilder {
-    fn register_asset_loader<A, M>(&mut self)
+    fn register_asset_loader<A>(&mut self) -> &mut Self
     where
         A: LoadAsset,
-
     {
         self.add_systems(
             schedule::PostUpdate,
@@ -47,7 +45,7 @@ impl AssetExt for SceneBuilder {
             poll_loaders::<A::State>
                 .in_set(AssetLoaderSystems::PollLoaders)
                 .after(AssetLoaderSystems::StartLoading),
-        );
+        )
     }
 }
 

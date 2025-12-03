@@ -30,8 +30,10 @@ pub(super) fn sync_simple_transforms(
             ),
         >,
         Query<(Ref<LocalTransform>, &mut GlobalTransform), (Without<ChildOf>, Without<Children>)>,
+        Query<(Entity, &LocalTransform), Without<GlobalTransform>>,
     )>,
     mut orphaned: RemovedComponents<ChildOf>,
+    mut commands: Commands,
 ) {
     // Update changed entities.
     query
@@ -40,14 +42,24 @@ pub(super) fn sync_simple_transforms(
         .for_each(|(local_transform, mut global_transform)| {
             *global_transform = GlobalTransform::from_local(*local_transform);
         });
-    // Update orphaned entities.
-    let mut query = query.p1();
-    let mut iter = query.iter_many_mut(orphaned.read());
-    while let Some((local_transform, mut global_transform)) = iter.fetch_next() {
-        if !local_transform.is_changed() && !global_transform.is_added() {
-            *global_transform = GlobalTransform::from_local(*local_transform);
+
+    {
+        // Update orphaned entities.
+        let mut query = query.p1();
+        let mut iter = query.iter_many_mut(orphaned.read());
+        while let Some((local_transform, mut global_transform)) = iter.fetch_next() {
+            if !local_transform.is_changed() && !global_transform.is_added() {
+                *global_transform = GlobalTransform::from_local(*local_transform);
+            }
         }
     }
+
+    // Create global transforms for anything that doesn't have it yet, but has a
+    // local transform
+    query.p2().iter().for_each(|(entity, local_transform)| {
+        let mut entity = commands.entity(entity);
+        entity.insert(GlobalTransform::from_local(*local_transform));
+    })
 }
 
 /// Optimization for static scenes. Propagates a "dirty bit" up the hierarchy

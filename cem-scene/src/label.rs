@@ -5,6 +5,8 @@ use std::{
 
 use bevy_ecs::component::Component;
 
+// todo: bevy-migrate: bevy_ecs has this in bevy_ecs::name
+
 #[derive(Clone, Debug, Component)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Label {

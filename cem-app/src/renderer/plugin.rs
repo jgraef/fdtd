@@ -12,13 +12,23 @@ use cem_scene::{
 
 use crate::{
     app::WgpuContext,
+    assets::AssetExt,
     renderer::{
+        material::{
+            LoadAlbedoTexture,
+            LoadMaterialTexture,
+        },
+        mesh::LoadMesh,
         renderer::{
             Renderer,
             RendererConfig,
             SharedRenderer,
         },
-        systems,
+        state::RendererState,
+        systems::{
+            self,
+            UpdateMeshBindGroupMessage,
+        },
         texture::cache::TextureCache,
     },
 };
@@ -49,46 +59,62 @@ impl RenderPluginBuilder {
 pub enum RenderSystems {
     Begin,
     UpdateCameras,
+    UpdateMeshes,
     EmitDrawList,
     End,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct RenderPlugin {
     renderer: SharedRenderer,
 }
 
 impl Plugin for RenderPlugin {
     fn setup(&self, builder: &mut SceneBuilder) {
-        // todo: bevy-migrate: share the texture cache between worlds
-        builder.insert_resource(TextureCache::default());
-
         builder
+            // todo: bevy-migrate: share the texture cache between worlds
+            .insert_resource(TextureCache::default())
+            // insert the shared renderer as resource
             .insert_resource(self.renderer.clone())
-            .add_systems(
-                schedule::Render,
-                systems::begin_frame.in_set(RenderSystems::Begin),
-            )
+            .insert_resource(RendererState::new(&self.renderer.wgpu_context.device))
+            // register messages
+            .register_message::<UpdateMeshBindGroupMessage>()
+            // add various rendering systems
             .add_systems(
                 schedule::Render,
                 (
-                    systems::update_camera_viewports,
-                    systems::destroy_camera_bind_groups,
-                )
-                    .in_set(RenderSystems::UpdateCameras),
+                    // these update rendering-related components and bind groups. could be done
+                    // in post-update?
+                    (
+                        (
+                            systems::update_camera_viewports,
+                            systems::destroy_camera_bind_groups,
+                        )
+                            .in_set(RenderSystems::UpdateCameras),
+                        systems::update_mesh_bind_groups.in_set(RenderSystems::UpdateMeshes),
+                    )
+                        .before(RenderSystems::EmitDrawList),
+                    // the actual rendering
+                    (
+                        systems::begin_frame.in_set(RenderSystems::Begin),
+                        (
+                            systems::update_instance_buffer_and_draw_command,
+                            // note: `create_camera_bind_groups` is run here after
+                            // `update_instance_buffer_and_draw_command` because it needs to
+                            // recreate the camera bind groups if the
+                            // instance buffer was reallocated
+                            systems::create_camera_bind_groups,
+                        )
+                            .chain()
+                            .in_set(RenderSystems::EmitDrawList)
+                            .after(RenderSystems::Begin)
+                            .before(RenderSystems::End),
+                        systems::end_frame.in_set(RenderSystems::End),
+                    ),
+                ),
             )
-            .add_systems(
-                schedule::Render,
-                systems::update_instance_buffer_and_draw_command
-                    .chain()
-                    .in_set(RenderSystems::EmitDrawList)
-                    .after(RenderSystems::Begin)
-                    .after(RenderSystems::UpdateCameras)
-                    .before(RenderSystems::End),
-            )
-            .add_systems(
-                schedule::Render,
-                systems::end_frame.in_set(RenderSystems::End),
-            );
+            .register_asset_loader::<LoadMesh>()
+            .register_asset_loader::<LoadAlbedoTexture>()
+            .register_asset_loader::<LoadMaterialTexture>();
     }
 }

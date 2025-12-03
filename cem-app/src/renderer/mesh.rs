@@ -51,7 +51,7 @@ use crate::{
 };
 
 #[derive(Debug, Component)]
-#[component(on_add = mesh_added, on_remove = mesh_removed)]
+#[component(on_add = mesh_added, on_insert = mesh_added, on_remove = mesh_removed)]
 pub struct Mesh {
     pub index_buffer: wgpu::Buffer,
     pub vertex_buffer: wgpu::Buffer,

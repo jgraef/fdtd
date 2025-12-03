@@ -15,6 +15,10 @@ pub use crate::spatial::collider::Collider;
 use crate::{
     plugin::Plugin,
     schedule,
+    spatial::bvh::{
+        Bvh,
+        BvhMessage,
+    },
     transform::TransformSystems,
 };
 
@@ -38,6 +42,8 @@ pub struct SpatialQueryPlugin;
 impl Plugin for SpatialQueryPlugin {
     fn setup(&self, builder: &mut crate::SceneBuilder) {
         builder
+            .insert_resource(Bvh::default())
+            .register_message::<BvhMessage>()
             .add_systems(
                 schedule::PostStartup,
                 systems::update_bvh

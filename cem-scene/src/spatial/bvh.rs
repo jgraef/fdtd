@@ -24,7 +24,7 @@ use crate::{
     transform::GlobalTransform,
 };
 
-#[derive(Debug, Resource)]
+#[derive(Debug, Default, Resource)]
 pub struct Bvh {
     bvh: parry3d::partitioning::Bvh,
     leaf_index_map: LeafIndexMap,

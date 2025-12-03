@@ -83,6 +83,7 @@ use serde::{
 
 use crate::{
     Error,
+    assets::AssetPlugin,
     composer::{
         file_formats::{
             FileFormat,
@@ -125,6 +126,7 @@ use crate::{
         },
         material,
         mesh::LoadMesh,
+        plugin::RenderPlugin,
     },
     solver::{
         config::{
@@ -156,13 +158,22 @@ use crate::{
     },
 };
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Composers {
     composers: Vec<ComposerState>,
     active: Option<usize>,
+    render_plugin: RenderPlugin,
 }
 
 impl Composers {
+    pub fn new(render_plugin: RenderPlugin) -> Self {
+        Self {
+            composers: vec![],
+            active: None,
+            render_plugin,
+        }
+    }
+
     pub fn show(&mut self, ctx: &egui::Context) {
         if self.composers.is_empty() {
             // what is being shown when no file is open
@@ -237,7 +248,7 @@ impl Composers {
 
     /// Creates a new file with an example scene
     pub fn new_file(&mut self, app_config: &AppConfig) {
-        let mut state = ComposerState::new(app_config.composer.clone());
+        let mut state = ComposerState::new(app_config.composer.clone(), self.render_plugin.clone());
 
         ExampleScene
             .populate_scene(&mut state.scene)
@@ -266,7 +277,8 @@ impl Composers {
                     let nec_file = NecFile::from_reader(reader)?;
                     tracing::debug!("{nec_file:#?}");
 
-                    let mut state = ComposerState::new(app_config.composer.clone());
+                    let mut state =
+                        ComposerState::new(app_config.composer.clone(), self.render_plugin.clone());
 
                     PopulateWithNec {
                         nec_file: &nec_file,
@@ -384,9 +396,11 @@ struct ComposerState {
 }
 
 impl ComposerState {
-    fn new(config: ComposerConfig) -> Self {
+    fn new(config: ComposerConfig, render_plugin: RenderPlugin) -> Self {
         let mut scene_builder = SceneBuilder::default();
         scene_builder.register_plugins(builtin_plugins());
+        scene_builder.register_plugin(AssetPlugin);
+        scene_builder.register_plugin(render_plugin);
 
         // the only view we have right now
         // todo: don't create camera here. for a proper project file it will be

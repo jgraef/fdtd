@@ -1,6 +1,10 @@
 use std::sync::Arc;
 
-use bevy_ecs::component::Component;
+use bevy_ecs::{
+    component::Component,
+    lifecycle::HookContext,
+    world::DeferredWorld,
+};
 use bitflags::bitflags;
 use bytemuck::{
     Pod,
@@ -25,10 +29,13 @@ use crate::{
         LoadingState,
     },
     impl_register_component,
-    renderer::texture::{
-        TextureAndView,
-        TextureLoaderContext,
-        TextureSource,
+    renderer::{
+        systems::UpdateMeshBindGroupMessage,
+        texture::{
+            TextureAndView,
+            TextureLoaderContext,
+            TextureSource,
+        },
     },
     util::{
         egui::probe::{
@@ -314,16 +321,42 @@ impl PropertiesUi for Wireframe {
 impl_register_component!(Wireframe where Changed, ComponentUi, default);
 
 #[derive(Clone, Debug, Component)]
+#[component(on_add = albedo_texture_added, on_insert = albedo_texture_added, on_remove = albedo_texture_removed)]
 pub struct AlbedoTexture {
     pub texture: Arc<TextureAndView>,
     pub transparent: bool,
 }
 
+fn albedo_texture_added(mut world: DeferredWorld, context: HookContext) {
+    world.write_message(UpdateMeshBindGroupMessage::AlbedoTextureAdded {
+        entity: context.entity,
+    });
+}
+
+fn albedo_texture_removed(mut world: DeferredWorld, context: HookContext) {
+    world.write_message(UpdateMeshBindGroupMessage::AlbedoTextureRemoved {
+        entity: context.entity,
+    });
+}
+
 /// Combined ambient occlusion, roughness, metalness map
 #[derive(Clone, Debug, Component)]
+#[component(on_add = material_texture_added, on_insert = material_texture_added, on_remove = material_texture_removed)]
 pub struct MaterialTexture {
     pub texture: Arc<TextureAndView>,
     pub flags: MaterialTextureFlags,
+}
+
+fn material_texture_added(mut world: DeferredWorld, context: HookContext) {
+    world.write_message(UpdateMeshBindGroupMessage::MaterialTextureAdded {
+        entity: context.entity,
+    });
+}
+
+fn material_texture_removed(mut world: DeferredWorld, context: HookContext) {
+    world.write_message(UpdateMeshBindGroupMessage::MaterialTextureRemoved {
+        entity: context.entity,
+    });
 }
 
 bitflags! {

@@ -194,6 +194,7 @@ pub fn update_instance_buffer_and_draw_command(
     });
 
     // send instance data to gpu
+    // todo: pass `instance_buffer_reallocated` outside of renderer state.
     state.instance_buffer_reallocated = state.instance_buffer.flush(|_buffer| {}, write_staging);
 }
 
@@ -201,6 +202,10 @@ pub fn update_instance_buffer_and_draw_command(
 pub enum UpdateMeshBindGroupMessage {
     MeshAdded { entity: Entity },
     MeshRemoved { entity: Entity },
+    AlbedoTextureAdded { entity: Entity },
+    AlbedoTextureRemoved { entity: Entity },
+    MaterialTextureAdded { entity: Entity },
+    MaterialTextureRemoved { entity: Entity },
 }
 
 #[derive(QueryData)]
@@ -218,8 +223,13 @@ pub fn update_mesh_bind_groups(
     mut commands: Commands,
 ) {
     messages.read().for_each(|message| {
+        tracing::debug!(?message, "update mesh bind group");
         match message {
-            UpdateMeshBindGroupMessage::MeshAdded { entity } => {
+            UpdateMeshBindGroupMessage::MeshAdded { entity }
+            | UpdateMeshBindGroupMessage::AlbedoTextureAdded { entity }
+            | UpdateMeshBindGroupMessage::MaterialTextureAdded { entity }
+            | UpdateMeshBindGroupMessage::AlbedoTextureRemoved { entity }
+            | UpdateMeshBindGroupMessage::MaterialTextureRemoved { entity } => {
                 let item = query.get(*entity).unwrap();
 
                 let entity_commands = commands.entity(*entity);

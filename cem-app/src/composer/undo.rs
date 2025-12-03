@@ -1,8 +1,11 @@
 use std::collections::VecDeque;
 
+use bevy_ecs::entity::Entity;
 use cem_scene::Scene;
 
 use crate::debug::DebugUi;
+
+// todo: bevy-migrate
 
 #[derive(derive_more::Debug)]
 pub struct UndoBuffer {
@@ -11,9 +14,8 @@ pub struct UndoBuffer {
 
     redo_actions: VecDeque<RedoAction>,
     redo_limit: Option<usize>,
-
-    #[debug("hecs::World {{ ... }}")]
-    hades: hecs::World,
+    //#[debug("hecs::World {{ ... }}")]
+    //hades: hecs::World,
 }
 
 impl Default for UndoBuffer {
@@ -29,15 +31,15 @@ impl UndoBuffer {
             undo_limit,
             redo_actions: VecDeque::new(),
             redo_limit,
-            hades: Default::default(),
+            //hades: Default::default(),
         }
     }
 
-    pub fn send_to_hades(&mut self, entity: hecs::TakenEntity) -> HadesId {
+    /*pub fn send_to_hades(&mut self, entity: hecs::TakenEntity) -> HadesId {
         HadesId {
             entity: self.hades.spawn(entity),
         }
-    }
+    }*/
 
     pub fn push_undo(&mut self, undo: UndoAction) {
         self.undo_actions.push_front(undo);
@@ -52,8 +54,8 @@ impl UndoBuffer {
                 #[allow(clippy::single_match)]
                 match undo_action {
                     UndoAction::DeleteEntity { hades_ids } => {
-                        for hades_id in hades_ids {
-                            self.hades.despawn(hades_id.entity).unwrap();
+                        for _hades_id in hades_ids {
+                            //self.hades.despawn(hades_id.entity).unwrap();
                         }
                     }
                     _ => {}
@@ -103,18 +105,18 @@ impl UndoBuffer {
 #[derive(Debug)]
 pub enum UndoAction {
     DeleteEntity { hades_ids: Vec<HadesId> },
-    CreateEntity { entity: hecs::Entity },
+    CreateEntity { entity: Entity },
 }
 
 #[derive(Debug)]
 pub enum RedoAction {
-    DeleteEntity { entity: hecs::Entity },
+    DeleteEntity { entity: Entity },
 }
 
 /// It's just an [`hecs::Entity`], but wrapped to avoid mixups.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct HadesId {
-    entity: hecs::Entity,
+    entity: Entity,
 }
 
 impl DebugUi for UndoBuffer {

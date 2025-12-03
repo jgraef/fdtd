@@ -38,10 +38,7 @@ use crate::{
     },
     renderer::{
         RendererConfig,
-        plugin::{
-            RenderPlugin,
-            RenderPluginBuilder,
-        },
+        plugin::RenderPluginBuilder,
     },
     solver::runner::SolverRunner,
 };
@@ -270,7 +267,6 @@ pub struct App {
     pub config: AppConfig,
     pub file_dialog: FileDialog,
     pub show_about: bool,
-    pub render_plugin: RenderPlugin,
     pub solver_runner: SolverRunner,
     pub composers: Composers,
 }
@@ -297,13 +293,14 @@ impl App {
             style.visuals.popup_shadow.spread = 0;
         });
 
+        let render_plugin = context.render_plugin_builder.build_plugin();
+        let mut composers = Composers::new(render_plugin);
+        let solver_runner = SolverRunner::from_app_context(&context);
+
         // create file dialog for opening and saving files
         let file_dialog = FileDialog::new()
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .add_file_filter_extensions("NEC", vec!["nec"]);
-
-        // create composer ui
-        let mut composers = Composers::default();
 
         if context.args.new_file {
             // command line telling us to directly go to a new file
@@ -325,15 +322,11 @@ impl App {
 
         error_dialog.register_in_context(&context.egui_context);
 
-        let render_plugin = context.render_plugin_builder.build_plugin();
-        let solver_runner = SolverRunner::from_app_context(&context);
-
         Self {
             app_files: context.app_files,
             config: context.config,
             file_dialog,
             show_about: false,
-            render_plugin,
             solver_runner,
             composers,
         }

@@ -10,9 +10,16 @@ pub mod transform;
 use std::sync::OnceLock;
 
 use bevy_ecs::{
+    message::{
+        Message,
+        MessageRegistry,
+        Messages,
+        message_update_system,
+    },
     resource::Resource,
     schedule::{
         IntoScheduleConfigs,
+        Schedule,
         ScheduleLabel,
         Schedules,
     },
@@ -26,6 +33,7 @@ use crate::{
         Plugin,
         PluginRegistry,
     },
+    spatial::SpatialQueryPlugin,
     transform::TransformHierarchyPlugin,
 };
 
@@ -35,11 +43,6 @@ pub struct Scene {
 }
 
 impl Scene {
-    pub fn start(&mut self) {
-        self.world.run_schedule(schedule::Startup);
-        self.world.run_schedule(schedule::PostStartup);
-    }
-
     pub fn update(&mut self) {
         self.world.run_schedule(schedule::PreUpdate);
         self.world.run_schedule(schedule::Update);
@@ -51,14 +54,40 @@ impl Scene {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct SceneBuilder {
     pub world: World,
     pub plugins: PluginRegistry,
 }
 
+impl Default for SceneBuilder {
+    fn default() -> Self {
+        let mut schedules = Schedules::new();
+
+        schedules.insert(Schedule::new(schedule::Startup));
+        schedules.insert(Schedule::new(schedule::PostStartup));
+        schedules.insert(Schedule::new(schedule::PreUpdate));
+        schedules.insert(Schedule::new(schedule::Update));
+        schedules.insert(Schedule::new(schedule::PostStartup));
+        schedules.insert(Schedule::new(schedule::Render));
+
+        schedules.add_systems(schedule::PreUpdate, message_update_system);
+
+        let mut world = World::new();
+        world.insert_resource(schedules);
+
+        Self {
+            world,
+            plugins: Default::default(),
+        }
+    }
+}
+
 impl SceneBuilder {
-    pub fn build(self) -> Scene {
+    pub fn build(mut self) -> Scene {
+        self.world.run_schedule(schedule::Startup);
+        self.world.run_schedule(schedule::PostStartup);
+
         Scene { world: self.world }
     }
 
@@ -89,6 +118,16 @@ impl SceneBuilder {
         schedules.add_systems(schedule, systems);
         self
     }
+
+    pub fn register_message<M>(&mut self) -> &mut Self
+    where
+        M: Message,
+    {
+        if !self.world.contains_resource::<Messages<M>>() {
+            MessageRegistry::register_message::<M>(&mut self.world);
+        }
+        self
+    }
 }
 
 pub fn builtin_plugins() -> &'static PluginRegistry {
@@ -96,6 +135,7 @@ pub fn builtin_plugins() -> &'static PluginRegistry {
     BUILTIN.get_or_init(|| {
         let mut builtin = PluginRegistry::default();
         builtin.register(TransformHierarchyPlugin);
+        builtin.register(SpatialQueryPlugin);
         builtin
     })
 }

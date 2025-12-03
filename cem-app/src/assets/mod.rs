@@ -6,6 +6,11 @@ use bevy_ecs::{
     component::Component,
     system::SystemParam,
 };
+pub use plugin::{
+    AssetExt,
+    AssetLoaderSystems,
+    AssetPlugin,
+};
 
 use crate::Error;
 
