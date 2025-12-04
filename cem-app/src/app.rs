@@ -38,7 +38,7 @@ use crate::{
     },
     renderer::{
         RendererConfig,
-        plugin::RenderPluginBuilder,
+        plugin::RenderPlugin,
     },
     solver::runner::SolverRunner,
 };
@@ -46,8 +46,8 @@ use crate::{
 #[derive(Clone, Debug)]
 pub struct CreateAppContext {
     pub wgpu_context: WgpuContext,
+    pub renderer_config: RendererConfig,
     pub egui_context: egui::Context,
-    pub render_plugin_builder: RenderPluginBuilder,
     pub app_files: AppFiles,
     pub config: AppConfig,
     pub args: Args,
@@ -243,16 +243,13 @@ pub(super) fn run_app(args: Args) -> Result<(), Error> {
             //
             // render_state.renderer.clone(),
 
-            let render_plugin_builder =
-                RenderPluginBuilder::new(wgpu_context.clone(), renderer_config);
-
             let create_app_context = CreateAppContext {
                 wgpu_context,
+                renderer_config,
                 egui_context: cc.egui_ctx.clone(),
                 app_files,
                 config,
                 args,
-                render_plugin_builder,
             };
 
             Ok(Box::new(App::new(create_app_context)))
@@ -269,6 +266,8 @@ pub struct App {
     pub show_about: bool,
     pub solver_runner: SolverRunner,
     pub composers: Composers,
+    pub wgpu_context: WgpuContext,
+    pub renderer_config: RendererConfig,
 }
 
 impl App {
@@ -293,7 +292,8 @@ impl App {
             style.visuals.popup_shadow.spread = 0;
         });
 
-        let render_plugin = context.render_plugin_builder.build_plugin();
+        let render_plugin =
+            RenderPlugin::new(context.wgpu_context.clone(), context.renderer_config);
         let mut composers = Composers::new(render_plugin);
         let solver_runner = SolverRunner::from_app_context(&context);
 
@@ -329,6 +329,8 @@ impl App {
             show_about: false,
             solver_runner,
             composers,
+            wgpu_context: context.wgpu_context,
+            renderer_config: context.renderer_config,
         }
     }
 

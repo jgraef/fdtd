@@ -20,6 +20,7 @@ parry3d = { version = "0.25.3", default-features = false, features = [
     "std",
 ] }
 serde = { version = "1.0.228", features = ["derive"], optional = true }
+thiserror = "2.0.17"
 tracing = "0.1.43"
 
 [features]

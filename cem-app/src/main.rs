@@ -3,7 +3,6 @@
 
 pub mod app;
 pub mod args;
-pub mod assets;
 pub mod build_info;
 pub mod clipboard;
 pub mod composer;

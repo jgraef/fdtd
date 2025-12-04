@@ -10,6 +10,12 @@ use bytemuck::{
     Pod,
     Zeroable,
 };
+use cem_scene::assets::{
+    AssetError,
+    LoadAsset,
+    LoadingProgress,
+    LoadingState,
+};
 use palette::{
     LinSrgba,
     Srgb,
@@ -22,12 +28,6 @@ use serde::{
 };
 
 use crate::{
-    Error,
-    composer::loader::{
-        LoadAsset,
-        LoadingProgress,
-        LoadingState,
-    },
     impl_register_component,
     renderer::{
         systems::UpdateMeshBindGroupMessage,
@@ -500,7 +500,7 @@ impl From<TextureSource> for LoadAlbedoTexture {
 impl LoadAsset for LoadAlbedoTexture {
     type State = Self;
 
-    fn start_loading(&self) -> Result<Self, Error> {
+    fn start_loading(&self) -> Result<Self, AssetError> {
         Ok(self.clone())
     }
 }
@@ -512,8 +512,8 @@ impl LoadingState for LoadAlbedoTexture {
     fn poll<'w, 's>(
         &mut self,
         context: &mut TextureLoaderContext<'w, 's>,
-    ) -> Result<LoadingProgress<AlbedoTexture>, Error> {
-        let loaded_texture = self.source.load(context)?;
+    ) -> Result<LoadingProgress<AlbedoTexture>, AssetError> {
+        let loaded_texture = self.source.load(context).map_err(AssetError::custom)?;
 
         let transparent = self
             .transparency
@@ -552,7 +552,7 @@ impl LoadMaterialTexture {
 impl LoadAsset for LoadMaterialTexture {
     type State = Self;
 
-    fn start_loading(&self) -> Result<Self, Error> {
+    fn start_loading(&self) -> Result<Self, AssetError> {
         Ok(self.clone())
     }
 }
@@ -564,8 +564,8 @@ impl LoadingState for LoadMaterialTexture {
     fn poll<'w, 's>(
         &mut self,
         context: &mut TextureLoaderContext<'w, 's>,
-    ) -> Result<LoadingProgress<MaterialTexture>, Error> {
-        let loaded_texture = self.source.load(context)?;
+    ) -> Result<LoadingProgress<MaterialTexture>, AssetError> {
+        let loaded_texture = self.source.load(context).map_err(AssetError::custom)?;
 
         Ok(LoadingProgress::Ready(
             MaterialTexture {

@@ -6,6 +6,7 @@ pub mod wgpu;
 #[cfg(feature = "image")]
 pub mod image;
 
+pub mod exclusive;
 pub mod oneshot;
 
 use std::{

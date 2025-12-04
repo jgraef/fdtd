@@ -2,18 +2,18 @@ use bevy_ecs::schedule::{
     IntoScheduleConfigs,
     SystemSet,
 };
-use cem_scene::{
+
+use crate::{
     SceneBuilder,
+    assets::{
+        LoadAsset,
+        systems::{
+            poll_loaders,
+            start_loading,
+        },
+    },
     plugin::Plugin,
     schedule,
-};
-
-use crate::assets::{
-    LoadAsset,
-    systems::{
-        poll_loaders,
-        start_loading,
-    },
 };
 
 #[derive(Clone, Copy, Debug)]

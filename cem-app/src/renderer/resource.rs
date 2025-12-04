@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use bevy_ecs::{
     resource::Resource,
     system::{
@@ -23,37 +25,31 @@ use nalgebra::Vector2;
 use palette::LinSrgba;
 
 use crate::renderer::{
+    command::CommandSender,
     renderer::{
         Renderer,
         SharedRenderer,
     },
-    texture::channel::{
-        TextureReceiver,
-        UndecidedTextureSender,
+    texture::{
+        TextureAndView,
+        channel::{
+            TextureReceiver,
+            UndecidedTextureSender,
+            texture_channel,
+        },
     },
 };
 
 #[derive(derive_more::Debug, SystemParam)]
 pub struct RenderResourceManager<'w, 's> {
     renderer: Res<'w, SharedRenderer>,
-    transaction: Option<ResMut<'w, Transaction>>,
+    transaction: ResMut<'w, RenderResourceTransactionState>,
+    command_sender: Res<'w, CommandSender>,
     #[debug(skip)]
     commands: Commands<'w, 's>,
 }
 
 impl<'w, 's> RenderResourceManager<'w, 's> {
-    fn with_transaction<R>(&mut self, f: impl FnOnce(&Renderer, &mut Transaction) -> R) -> R {
-        if let Some(mut transaction) = self.transaction.as_mut() {
-            f(&self.renderer, &mut transaction)
-        }
-        else {
-            let mut transaction = Transaction::new(&self.renderer.0);
-            let output = f(&self.renderer, &mut transaction);
-            self.commands.insert_resource(transaction);
-            output
-        }
-    }
-
     pub fn device(&self) -> &wgpu::Device {
         &self.renderer.wgpu_context.device
     }
@@ -80,11 +76,11 @@ impl<'w, 's> RenderResourceManager<'w, 's> {
         usage: wgpu::TextureUsages,
         label: &str,
     ) -> Result<wgpu::Texture, UnsupportedColorSpace> {
-        self.with_transaction(|renderer, transaction| {
+        self.transaction.with(&self.renderer, |transaction| {
             image.create_texture(
                 usage,
                 label,
-                &renderer.wgpu_context.device,
+                &self.renderer.wgpu_context.device,
                 &mut transaction.write_staging,
             )
         })
@@ -96,12 +92,12 @@ impl<'w, 's> RenderResourceManager<'w, 's> {
         usage: wgpu::TextureUsages,
         label: &str,
     ) -> wgpu::Texture {
-        self.with_transaction(|renderer, transaction| {
+        self.transaction.with(&self.renderer, |transaction| {
             create_texture_from_linsrgba(
                 color,
                 usage,
                 label,
-                &renderer.wgpu_context.device,
+                &self.renderer.wgpu_context.device,
                 &mut transaction.write_staging,
             )
         })
@@ -109,32 +105,52 @@ impl<'w, 's> RenderResourceManager<'w, 's> {
 
     pub fn create_texture_channel(
         &mut self,
-        _size: &Vector2<u32>,
-        _usage: wgpu::TextureUsages,
-        _label: &str,
+        size: &Vector2<u32>,
+        usage: wgpu::TextureUsages,
+        label: &str,
     ) -> (UndecidedTextureSender, TextureReceiver) {
-        // todo: bevy-migrate
-
-        /*let texture = self.create_texture(size, usage, wgpu::TextureFormat::Rgba8Unorm, label);
+        let texture = self.create_texture(size, usage, wgpu::TextureFormat::Rgba8Unorm, label);
 
         texture_channel(
             Arc::new(TextureAndView::from_texture(texture, label)),
             *size,
             self.command_sender.clone(),
-        )*/
-        todo!();
+        )
+    }
+
+    pub fn write_to_texture(&mut self, image: &image::RgbaImage, texture: &wgpu::Texture) {
+        self.transaction.with(&self.renderer, |transaction| {
+            image.write_to_texture(texture, &mut transaction.write_staging);
+        });
     }
 }
 
-#[derive(Debug, Resource)]
-struct Transaction {
-    write_staging: SubmitOnDrop<
+#[derive(Debug, Default, Resource)]
+pub struct RenderResourceTransactionState(pub Option<RenderResourceTransaction>);
+
+impl RenderResourceTransactionState {
+    pub fn with<R>(
+        &mut self,
+        renderer: &Renderer,
+        f: impl FnOnce(&mut RenderResourceTransaction) -> R,
+    ) -> R {
+        let transaction = self
+            .0
+            .get_or_insert_with(|| RenderResourceTransaction::new(renderer));
+
+        f(transaction)
+    }
+}
+
+#[derive(Debug)]
+pub struct RenderResourceTransaction {
+    pub write_staging: SubmitOnDrop<
         WriteStagingTransaction<WriteStagingBelt, wgpu::Device, wgpu::CommandEncoder>,
         wgpu::Queue,
     >,
 }
 
-impl Transaction {
+impl RenderResourceTransaction {
     fn new(renderer: &Renderer) -> Self {
         Self {
             write_staging: SubmitOnDrop::new(

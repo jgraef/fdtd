@@ -17,7 +17,7 @@ use crate::renderer::{
     texture::TextureAndView,
 };
 
-pub(super) fn texture_channel(
+pub(in crate::renderer) fn texture_channel(
     texture_and_view: Arc<TextureAndView>,
     size: Vector2<u32>,
 

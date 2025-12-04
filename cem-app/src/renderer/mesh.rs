@@ -16,6 +16,12 @@ use bytemuck::{
     Pod,
     Zeroable,
 };
+use cem_scene::assets::{
+    AssetError,
+    LoadAsset,
+    LoadingProgress,
+    LoadingState,
+};
 use cem_util::format_size;
 use nalgebra::{
     Point2,
@@ -29,25 +35,17 @@ use parry3d::shape::{
 };
 use wgpu::util::DeviceExt;
 
-use crate::{
-    Error,
-    composer::loader::{
-        LoadAsset,
-        LoadingProgress,
-        LoadingState,
+use crate::renderer::{
+    material::{
+        AlbedoTexture,
+        MaterialTexture,
     },
     renderer::{
-        material::{
-            AlbedoTexture,
-            MaterialTexture,
-        },
-        renderer::{
-            Fallbacks,
-            Renderer,
-        },
-        resource::RenderResourceManager,
-        systems::UpdateMeshBindGroupMessage,
+        Fallbacks,
+        Renderer,
     },
+    resource::RenderResourceManager,
+    systems::UpdateMeshBindGroupMessage,
 };
 
 #[derive(Debug, Component)]
@@ -95,7 +93,7 @@ impl Vertex {
 }
 
 #[derive(Debug, Component)]
-pub(super) struct MeshBindGroup {
+pub struct MeshBindGroup {
     pub bind_group: wgpu::BindGroup,
 }
 
@@ -326,7 +324,7 @@ impl LoadMesh {
 impl LoadAsset for LoadMesh {
     type State = Self;
 
-    fn start_loading(&self) -> Result<Self, Error> {
+    fn start_loading(&self) -> Result<Self, AssetError> {
         Ok(self.clone())
     }
 }
@@ -338,7 +336,7 @@ impl LoadingState for LoadMesh {
     fn poll(
         &mut self,
         context: &mut RenderResourceManager,
-    ) -> Result<LoadingProgress<Mesh>, Error> {
+    ) -> Result<LoadingProgress<Mesh>, AssetError> {
         let mesh = match self {
             LoadMesh::Generator {
                 generator,
@@ -347,8 +345,7 @@ impl LoadingState for LoadMesh {
             } => {
                 let mut mesh_builder = MeshBufferBuilder::new(Some(Renderer::WINDING_ORDER));
                 generator.generate(&mut mesh_builder, *normals, *uvs);
-                // todo: label
-                mesh_builder.finish(context.device(), "todo")
+                mesh_builder.finish(context.device(), &format!("{generator:?}"))
             }
             LoadMesh::File { path: _ } => todo!(),
         };

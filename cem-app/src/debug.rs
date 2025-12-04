@@ -12,17 +12,16 @@ use crate::{
     app::{
         App,
         GithubUrls,
-        WgpuContext,
     },
     build_info::BUILD_INFO,
 };
 
 pub trait DebugUi {
-    fn show_debug(&self, ui: &mut egui::Ui);
+    fn show_debug(self, ui: &mut egui::Ui);
 }
 
 impl App {
-    pub fn show_debug_window(&self, ctx: &egui::Context) {
+    pub fn show_debug_window(&mut self, ctx: &egui::Context) {
         let debug_open_id = egui::Id::new("debug_open");
         let mut debug_open = ctx
             .data_mut(|data| data.get_persisted(debug_open_id))
@@ -64,16 +63,90 @@ impl App {
                                 }
                             });
 
-                            //ui.collapsing("wgpu", |ui| {
-                            //    self.renderer.wgpu_context().show_debug(ui);
-                            //});
+                            ui.collapsing("Renderer", |ui| {
+                                let device_info =
+                                    get_wgpu_device_info(&self.wgpu_context.device, ui.ctx());
 
-                            //ui.collapsing("Renderer", |ui| {
-                            //    self.renderer.show_debug(ui);
-                            //});
+                                ui.small("Adapter");
+                                ui.label(format!(
+                                    "{} ({:04x}:{:04x})",
+                                    self.wgpu_context.adapter_info.name,
+                                    self.wgpu_context.adapter_info.vendor,
+                                    self.wgpu_context.adapter_info.device
+                                ));
+                                ui.small("Backend");
+                                ui.label(format!("{:?}", self.wgpu_context.adapter_info.backend));
+                                ui.small("Driver");
+                                ui.label(format!(
+                                    "{} ({})",
+                                    self.wgpu_context.adapter_info.driver,
+                                    self.wgpu_context.adapter_info.driver_info
+                                ));
+                                ui.small("Device type");
+                                ui.label(format!(
+                                    "{:?}",
+                                    self.wgpu_context.adapter_info.device_type
+                                ));
 
-                            // todo: bevy-migrate
-                            //self.composers.show_debug(ui);
+                                if let Some(report) = &device_info.allocator_report {
+                                    ui.collapsing("Allocator report:", |ui| {
+                                        ui.label(format!(
+                                            "Total allocated: {}",
+                                            format_size(report.total_allocated_bytes)
+                                        ));
+                                        ui.label(format!(
+                                            "Total reserved: {}",
+                                            format_size(report.total_reserved_bytes)
+                                        ));
+                                        for allocation in &report.allocations {
+                                            ui.label(format!(
+                                                "{}: {}",
+                                                allocation.name,
+                                                format_size(allocation.size)
+                                            ));
+                                        }
+                                    });
+                                }
+
+                                ui.label(format!(
+                                    "Surface texture: {:?}",
+                                    self.renderer_config.target_texture_format
+                                ));
+                                ui.label(format!(
+                                    "Depth texture: {:?}",
+                                    self.renderer_config.depth_texture_format
+                                ));
+                                ui.label(format!(
+                                    "Multisampling: {:?}",
+                                    self.renderer_config.multisample_count
+                                ));
+
+                                ui.collapsing("Staging Belt", |ui| {
+                                    let staging_belt_info = self.wgpu_context.staging_pool.info();
+
+                                    ui.label(format!(
+                                        "In-flight chunks: {}",
+                                        staging_belt_info.in_flight_count
+                                    ));
+                                    ui.label(format!(
+                                        "Free chunks: {}",
+                                        staging_belt_info.free_count
+                                    ));
+                                    ui.label(format!(
+                                        "Total allocations: {} chunks, {}",
+                                        staging_belt_info.total_allocation_count,
+                                        format_size(staging_belt_info.total_allocation_bytes)
+                                    ));
+                                    ui.label(format!(
+                                        "Cumulative staged: {}",
+                                        format_size(staging_belt_info.total_staged_bytes)
+                                    ));
+                                });
+                            });
+
+                            ui.collapsing("Composers", |ui| {
+                                self.composers.show_debug(ui);
+                            });
 
                             ui.collapsing("egui", |ui| {
                                 ui.collapsing("Settings", |ui| {
@@ -98,71 +171,7 @@ impl App {
     }
 }
 
-impl DebugUi for WgpuContext {
-    fn show_debug(&self, ui: &mut egui::Ui) {
-        let device_info = get_wgpu_device_info(&self.device, ui.ctx());
-        let staging_belt_info = self.staging_pool.info();
-
-        ui.small("Adapter");
-        ui.label(format!(
-            "{} ({:04x}:{:04x})",
-            self.adapter_info.name, self.adapter_info.vendor, self.adapter_info.device
-        ));
-        ui.small("Backend");
-        ui.label(format!("{:?}", self.adapter_info.backend));
-        ui.small("Driver");
-        ui.label(format!(
-            "{} ({})",
-            self.adapter_info.driver, self.adapter_info.driver_info
-        ));
-        ui.small("Device type");
-        ui.label(format!("{:?}", self.adapter_info.device_type));
-
-        if let Some(report) = &device_info.allocator_report {
-            ui.separator();
-
-            ui.label("Allocator report:");
-            ui.indent(egui::Id::NULL, |ui| {
-                ui.label(format!(
-                    "Total allocated: {}",
-                    format_size(report.total_allocated_bytes)
-                ));
-                ui.label(format!(
-                    "Total reserved: {}",
-                    format_size(report.total_reserved_bytes)
-                ));
-                for allocation in &report.allocations {
-                    ui.label(format!(
-                        "{}: {}",
-                        allocation.name,
-                        format_size(allocation.size)
-                    ));
-                }
-            });
-        }
-
-        ui.separator();
-
-        ui.collapsing("Staging Belt", |ui| {
-            ui.label(format!(
-                "In-flight chunks: {}",
-                staging_belt_info.in_flight_count
-            ));
-            ui.label(format!("Free chunks: {}", staging_belt_info.free_count));
-            ui.label(format!(
-                "Total allocations: {} chunks, {}",
-                staging_belt_info.total_allocation_count,
-                format_size(staging_belt_info.total_allocation_bytes)
-            ));
-            ui.label(format!(
-                "Cumulative staged: {}",
-                format_size(staging_belt_info.total_staged_bytes)
-            ));
-        });
-    }
-}
-
-pub fn get_wgpu_device_info(device: &wgpu::Device, ctx: &egui::Context) -> Arc<DeviceInfo> {
+fn get_wgpu_device_info(device: &wgpu::Device, ctx: &egui::Context) -> Arc<DeviceInfo> {
     #[derive(Clone)]
     struct Container {
         device_info: Arc<DeviceInfo>,

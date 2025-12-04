@@ -1,7 +1,4 @@
-use std::{
-    f32::consts::FRAC_PI_4,
-    time::Duration,
-};
+use std::f32::consts::FRAC_PI_4;
 
 use bevy_ecs::component::Component;
 use bitflags::bitflags;
@@ -152,7 +149,7 @@ impl Default for CameraProjection {
     }
 }
 
-#[derive(Clone, Copy, Debug, Component)]
+#[derive(Clone, Copy, Debug, Component, PartialEq)]
 pub struct Viewport {
     pub viewport: egui::Rect,
 }
@@ -168,7 +165,7 @@ impl Viewport {
 }
 
 #[derive(Clone, Debug, Component)]
-pub(super) struct CameraBindGroup {
+pub struct CameraBindGroup {
     pub buffer: wgpu::Buffer,
     pub bind_group: wgpu::BindGroup,
 }
@@ -239,7 +236,7 @@ fn create_camera_bind_group(
 
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 #[repr(C)]
-pub(super) struct CameraData {
+pub struct CameraData {
     transform: Matrix4<f32>,
     projection: Matrix4<f32>,
     world_position: Vector4<f32>,
@@ -395,11 +392,3 @@ impl PropertiesUi for CameraConfig {
 }
 
 impl_register_component!(CameraConfig where ComponentUi, default);
-
-#[derive(Clone, Copy, Debug)]
-pub struct CameraRenderInfo {
-    pub total: Duration,
-    pub num_opaque: usize,
-    pub num_transparent: usize,
-    pub num_outlines: usize,
-}

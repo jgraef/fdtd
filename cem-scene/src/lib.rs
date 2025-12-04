@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 #![warn(clippy::todo, unused_qualifications)]
 
-mod label;
+pub mod assets;
 pub mod plugin;
 pub mod schedule;
 pub mod spatial;
@@ -26,9 +26,9 @@ use bevy_ecs::{
     system::ScheduleSystem,
     world::World,
 };
-pub use label::Label;
 
 use crate::{
+    assets::AssetPlugin,
     plugin::{
         Plugin,
         PluginRegistry,
@@ -134,6 +134,7 @@ pub fn builtin_plugins() -> &'static PluginRegistry {
     static BUILTIN: OnceLock<PluginRegistry> = OnceLock::new();
     BUILTIN.get_or_init(|| {
         let mut builtin = PluginRegistry::default();
+        builtin.register(AssetPlugin);
         builtin.register(TransformHierarchyPlugin);
         builtin.register(SpatialQueryPlugin);
         builtin

@@ -1,8 +1,15 @@
 use bevy_ecs::{
-    entity::Entity,
+    entity::{
+        Entity,
+        EntityHashSet,
+    },
     message::{
         Message,
         MessageReader,
+    },
+    name::{
+        NameOrEntity,
+        NameOrEntityItem,
     },
     query::{
         Changed,
@@ -16,27 +23,33 @@ use bevy_ecs::{
         Commands,
         EntityCommands,
         In,
+        Local,
         Query,
         Res,
         ResMut,
     },
 };
-use cem_scene::{
-    Label,
-    transform::GlobalTransform,
-};
-use cem_util::wgpu::buffer::{
-    WriteStagingCommit,
-    WriteStagingTransaction,
+use cem_scene::transform::GlobalTransform;
+use cem_util::wgpu::{
+    ImageTextureExt,
+    buffer::{
+        WriteStagingCommit,
+        WriteStagingTransaction,
+    },
 };
 
 use crate::renderer::{
+    Command,
     camera::{
         CameraBindGroup,
         CameraConfig,
         CameraData,
         CameraProjection,
         Viewport,
+    },
+    command::{
+        CommandReceiver,
+        CommandSender,
     },
     components::{
         ClearColor,
@@ -46,6 +59,7 @@ use crate::renderer::{
     draw_commands::{
         DrawCommand,
         DrawCommandFlags,
+        DrawCommandInfoSink,
     },
     light::{
         AmbientLight,
@@ -66,6 +80,7 @@ use crate::renderer::{
         Renderer,
         SharedRenderer,
     },
+    resource::RenderResourceTransactionState,
     state::{
         InstanceData,
         RendererState,
@@ -103,7 +118,6 @@ pub fn end_frame(renderer: Res<SharedRenderer>, mut state: ResMut<RendererState>
 
 #[derive(QueryData)]
 pub struct UpdateInstanceBufferAndDrawCommandQueryData {
-    label: Option<&'static Label>,
     global_transform: &'static GlobalTransform,
     mesh: &'static Mesh,
     mesh_bind_group: &'static MeshBindGroup,
@@ -210,7 +224,7 @@ pub enum UpdateMeshBindGroupMessage {
 
 #[derive(QueryData)]
 pub struct UpdateMeshBindGroupsQueryData {
-    label: Option<&'static Label>,
+    name: NameOrEntity,
     mesh: &'static Mesh,
     albedo_texture: Option<&'static AlbedoTexture>,
     material_texture: Option<&'static MaterialTexture>,
@@ -221,33 +235,43 @@ pub fn update_mesh_bind_groups(
     query: Query<UpdateMeshBindGroupsQueryData>,
     mut messages: MessageReader<UpdateMeshBindGroupMessage>,
     mut commands: Commands,
+    mut updated: Local<EntityHashSet>,
 ) {
+    assert!(updated.is_empty());
+
     messages.read().for_each(|message| {
-        tracing::debug!(?message, "update mesh bind group");
         match message {
             UpdateMeshBindGroupMessage::MeshAdded { entity }
             | UpdateMeshBindGroupMessage::AlbedoTextureAdded { entity }
             | UpdateMeshBindGroupMessage::MaterialTextureAdded { entity }
             | UpdateMeshBindGroupMessage::AlbedoTextureRemoved { entity }
             | UpdateMeshBindGroupMessage::MaterialTextureRemoved { entity } => {
-                let item = query.get(*entity).unwrap();
+                if updated.insert(*entity) {
+                    let item = query.get(*entity).unwrap();
+                    tracing::debug!(?message, name = %item.name, "update mesh bind group");
 
-                let entity_commands = commands.entity(*entity);
+                    let entity_commands = commands.entity(*entity);
 
-                update_mesh_bind_group(
-                    &*renderer,
-                    entity_commands,
-                    item.mesh,
-                    item.albedo_texture,
-                    item.material_texture,
-                    item.label,
-                );
+                    update_mesh_bind_group(
+                        &*renderer,
+                        entity_commands,
+                        item.mesh,
+                        item.albedo_texture,
+                        item.material_texture,
+                        item.name,
+                    );
+                }
             }
             UpdateMeshBindGroupMessage::MeshRemoved { entity } => {
+                tracing::debug!(?message, "remove mesh bind group");
+
+                updated.remove(entity);
                 commands.entity(*entity).remove::<MeshBindGroup>();
             }
         }
     });
+
+    updated.clear();
 }
 
 pub fn update_mesh_bind_group(
@@ -256,12 +280,12 @@ pub fn update_mesh_bind_group(
     mesh: &Mesh,
     albedo_texture: Option<&AlbedoTexture>,
     material_texture: Option<&MaterialTexture>,
-    label: Option<&Label>,
+    name: NameOrEntityItem,
 ) {
     if !mesh.flags.contains(MeshFlags::UVS)
         && (albedo_texture.is_some() || material_texture.is_some())
     {
-        tracing::warn!(?label, "Mesh with textures, but no UV buffer");
+        tracing::warn!(%name, "Mesh with textures, but no UV buffer");
     }
 
     let mesh_bind_group = MeshBindGroup::new(
@@ -330,13 +354,13 @@ pub fn create_camera_bind_groups(
                 point_light,
                 camera_config,
             );
-            let camera_resources = CameraBindGroup::new(
+            let camera_bind_group = CameraBindGroup::new(
                 &renderer.camera_bind_group_layout,
                 &renderer.wgpu_context.device,
                 &camera_data,
                 state.instance_buffer.buffer.buffer().unwrap(),
             );
-            commands.entity(entity).insert(camera_resources);
+            commands.entity(entity).insert(camera_bind_group);
         },
     )
 }
@@ -414,18 +438,18 @@ pub fn update_camera_bind_groups(
 /// Prepares rendering a frame for a specific view.
 ///
 /// This just fetches camera information and the prepared draw commands
-/// (from [`Self::prepare_world`]) and returns them as a [`DrawCommand`].
 ///
 /// The [`DrawCommand`] can be cloned and passed via [`egui::PaintCallback`]
 /// to do the actual rendering with a [`wgpu::RenderPass`].
 ///
 /// Note that the actual draw commands are prepared in
-/// [`Self::prepare_world`], since they can be shared by multiple view
-/// widgets.
-pub fn grab_draw_list(
-    In(camera_entity): In<Option<Entity>>,
+/// [`update_instance_buffer_and_draw_command`], since they can be shared by
+/// multiple view widgets.
+pub fn grab_draw_list_for_camera(
+    In(camera_entity): In<Entity>,
     renderer: Res<SharedRenderer>,
     state: Res<RendererState>,
+    command_sender: Res<CommandSender>,
     cameras: Query<(
         &CameraBindGroup,
         Option<&CameraConfig>,
@@ -433,11 +457,6 @@ pub fn grab_draw_list(
         &GlobalTransform,
     )>,
 ) -> Option<DrawCommand> {
-    // todo: pass in clear color as argument. then we can at least clear the screen
-    // if no camera exists
-
-    let camera_entity = camera_entity?;
-
     // get bind group and config for our camera
     let (camera_resources, camera_config, has_clear_color, camera_transform) =
         cameras.get(camera_entity).unwrap();
@@ -456,5 +475,44 @@ pub fn grab_draw_list(
         camera_resources.bind_group.clone(),
         camera_transform.position(),
         draw_command_flags,
+        DrawCommandInfoSink {
+            command_sender: command_sender.clone(),
+            camera_entity,
+        },
     ))
+}
+
+pub fn commit_resource_transaction(mut transaction: ResMut<RenderResourceTransactionState>) {
+    if let Some(transaction) = transaction.0.take() {
+        tracing::debug!("commiting resource transaction");
+        transaction.commit();
+    }
+}
+
+pub fn handle_command_queue(
+    renderer: Res<SharedRenderer>,
+    mut transaction: ResMut<RenderResourceTransactionState>,
+    mut command_receiver: ResMut<CommandReceiver>,
+    mut commands: Commands,
+) {
+    // todo: for this to be able to run multi-threaded we would need to open
+    // multiple staging transactions.
+
+    for command in command_receiver.drain() {
+        match command {
+            Command::CopyImageToTexture(command) => {
+                command.handle(|image, texture| {
+                    transaction.with(&renderer, |transaction| {
+                        image.write_to_texture(texture, &mut transaction.write_staging);
+                    });
+                });
+            }
+            Command::DrawCommandInfo {
+                camera_entity,
+                draw_command_info,
+            } => {
+                commands.entity(camera_entity).insert(draw_command_info);
+            }
+        }
+    }
 }

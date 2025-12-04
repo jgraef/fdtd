@@ -3,8 +3,8 @@ use std::{
     path::Path,
 };
 
+use bevy_ecs::name::Name;
 use cem_scene::{
-    Label,
     PopulateScene,
     Scene,
     transform::LocalTransform,
@@ -59,8 +59,6 @@ impl<'a> PopulateScene for PopulateSceneWithObjFile<'a> {
         // with z axis inverted).
 
         for model in &self.obj_file.models {
-            let label = Label::from(format!("tobj.{}", model.name));
-
             assert!(model.mesh.face_arities.is_empty(), "non-triangular mesh");
             assert!(
                 model.mesh.positions.len() % 3 == 0,
@@ -93,7 +91,7 @@ impl<'a> PopulateScene for PopulateSceneWithObjFile<'a> {
                 self.transform,
                 self.material,
                 //MeshFromShape::from(tri_mesh),
-                label,
+                Name::new(model.name.clone()),
             ));
         }
 

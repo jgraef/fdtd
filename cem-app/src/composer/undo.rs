@@ -5,7 +5,7 @@ use cem_scene::Scene;
 
 use crate::debug::DebugUi;
 
-// todo: bevy-migrate
+// todo: bevy-migrate: undo
 
 #[derive(derive_more::Debug)]
 pub struct UndoBuffer {
@@ -119,8 +119,8 @@ pub struct HadesId {
     entity: Entity,
 }
 
-impl DebugUi for UndoBuffer {
-    fn show_debug(&self, ui: &mut egui::Ui) {
+impl DebugUi for &UndoBuffer {
+    fn show_debug(self, ui: &mut egui::Ui) {
         ui.label("Undo:");
         let mut empty = true;
         for undo_action in self.undo_actions.iter().take(10) {

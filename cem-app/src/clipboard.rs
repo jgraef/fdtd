@@ -63,7 +63,7 @@ pub enum ClipboardItem {
         text: String,
     },
     Entities {
-        // todo: bevy-migrate
+        // todo: bevy-migrate: clipboard
         //#[debug(skip)]
         //entity_builder: Vec<hecs::EntityBuilderClone>,
     },

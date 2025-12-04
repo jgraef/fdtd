@@ -18,7 +18,6 @@ use palette::LinSrgba;
 
 use crate::{
     app::WgpuContext,
-    debug::DebugUi,
     renderer::{
         mesh::WindingOrder,
         pipeline::{
@@ -48,7 +47,7 @@ pub struct RendererConfig {
 #[derive(Debug)]
 pub struct Renderer {
     pub wgpu_context: WgpuContext,
-    config: RendererConfig,
+    pub config: RendererConfig,
 
     pub camera_bind_group_layout: wgpu::BindGroupLayout,
     pub mesh_bind_group_layout: wgpu::BindGroupLayout,
@@ -65,12 +64,6 @@ pub struct Renderer {
 
     /// Fallbacks for textures and sampler
     pub fallbacks: Fallbacks,
-    // /// Command queue to asynchronously send commands to the renderer.
-    // ///
-    // /// The queue is checked in [`prepare_world`](Self::prepare_world). Senders
-    // /// are e.g. handed out to
-    // /// [`TextureSender`s](texture_channel::TextureSender).
-    //pub command_queue: CommandQueue,
 }
 
 impl Renderer {
@@ -290,33 +283,7 @@ impl Renderer {
             wireframe_pipeline,
             outline_pipeline,
             fallbacks,
-            // command_queue: CommandQueue::default(),
         }
-    }
-
-    pub fn wgpu_context(&self) -> &WgpuContext {
-        &self.wgpu_context
-    }
-
-    pub fn config(&self) -> &RendererConfig {
-        &self.config
-    }
-}
-
-impl DebugUi for Renderer {
-    fn show_debug(&self, ui: &mut egui::Ui) {
-        ui.label(format!(
-            "Surface texture: {:?}",
-            self.config.target_texture_format
-        ));
-        ui.label(format!(
-            "Depth texture: {:?}",
-            self.config.depth_texture_format
-        ));
-        ui.label(format!(
-            "Multisampling: {:?}",
-            self.config.multisample_count
-        ));
     }
 }
 

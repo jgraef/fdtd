@@ -1,5 +1,6 @@
 use bevy_ecs::{
     message::MessageReader,
+    name::NameOrEntity,
     query::{
         Changed,
         Or,
@@ -29,8 +30,8 @@ pub fn update_bvh(
     mut bvh: ResMut<Bvh>,
     mut workspace: Local<parry3d::partitioning::BvhWorkspace>,
     mut queries: ParamSet<(
-        Query<(&GlobalTransform, &Collider)>,
-        Query<&LeafIndex>,
+        Query<(NameOrEntity, &GlobalTransform, &Collider)>,
+        Query<(NameOrEntity, &LeafIndex)>,
         Query<
             (&GlobalTransform, &Collider, &LeafIndex),
             Or<(Changed<GlobalTransform>, Changed<Collider>)>,
@@ -45,16 +46,16 @@ pub fn update_bvh(
         match message {
             BvhMessage::Insert { entity } => {
                 let query = queries.p0();
-                if let Ok((transform, collider)) = query.get(*entity) {
+                if let Ok((name, transform, collider)) = query.get(*entity) {
                     let leaf_index = transaction.insert(*entity, transform, collider);
-                    tracing::debug!(?entity, ?leaf_index, "adding to bvh");
+                    tracing::debug!(entity = %name, ?leaf_index, "adding to bvh");
                     commands.entity(*entity).insert(leaf_index);
                 }
             }
             BvhMessage::Remove { entity } => {
                 let query = queries.p1();
-                if let Ok(leaf_index) = query.get(*entity) {
-                    tracing::debug!(?entity, ?leaf_index, "removing from bvh");
+                if let Ok((name, leaf_index)) = query.get(*entity) {
+                    tracing::debug!(entity = %name, ?leaf_index, "removing from bvh");
                     transaction.remove(leaf_index);
                     commands.entity(*entity).remove::<LeafIndex>();
                 }

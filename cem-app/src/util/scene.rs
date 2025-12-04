@@ -5,19 +5,17 @@ use std::fmt::{
 
 use bevy_ecs::{
     component::Component,
-    entity::Entity,
-    query::QueryData,
+    name::Name,
     world::EntityWorldMut,
 };
 use cem_scene::{
-    Label,
     spatial::Collider,
     transform::LocalTransform,
 };
 
 use crate::{
     composer::{
-        Selectable,
+        selection::Selectable,
         tree::ShowInTree,
     },
     renderer::{
@@ -54,13 +52,13 @@ impl SceneExt for cem_scene::Scene {
         S::Config: Default,
         S::GenerateMesh: Debug + Send + Sync + 'static,
     {
-        let label = format!("object.{}", shape.shape_name());
+        let name = shape.shape_name().to_owned();
         let collider = Collider::from(shape.clone());
         let mesh = LoadMesh::from_shape(shape, Default::default());
 
         self.world
             .spawn_empty()
-            .label(label)
+            .name(name)
             .transform(transform)
             .collider(collider)
             .mesh(mesh)
@@ -76,7 +74,7 @@ pub trait EntityBuilderExt {
     fn material(self, material: impl Into<Material>) -> Self;
     fn mesh(self, mesh: impl Into<LoadMesh>) -> Self;
     fn collider(self, collider: impl Into<Collider>) -> Self;
-    fn label(self, label: impl Display) -> Self;
+    fn name(self, label: impl Display) -> Self;
     fn tagged<T>(self, on: bool) -> Self
     where
         T: Default + Component;
@@ -103,8 +101,8 @@ impl<'a> EntityBuilderExt for EntityWorldMut<'a> {
         self
     }
 
-    fn label(mut self, label: impl Display) -> Self {
-        self.insert(Label::new(label));
+    fn name(mut self, label: impl Display) -> Self {
+        self.insert(Name::new(label.to_string()));
         self
     }
 
@@ -119,37 +117,9 @@ impl<'a> EntityBuilderExt for EntityWorldMut<'a> {
     }
 }
 
-#[derive(Clone, Debug, QueryData)]
-pub struct EntityDebugLabel {
-    pub entity: Entity,
-    pub label: Option<&'static Label>,
-}
-
-impl Display for EntityDebugLabel {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self.entity)?;
-
-        if let Some(label) = &self.label {
-            write!(f, ":{}", label.label)?;
-        }
-
-        Ok(())
-    }
-}
-
-impl From<&EntityDebugLabel> for egui::WidgetText {
-    fn from(value: &EntityDebugLabel) -> Self {
-        egui::WidgetText::Text(value.to_string())
-    }
-}
-
-impl From<EntityDebugLabel> for egui::WidgetText {
-    fn from(value: EntityDebugLabel) -> Self {
-        egui::WidgetText::Text(value.to_string())
-    }
-}
-
 // todo: implement a proper way of naming things and remove this
+// todo: bevy-migrate: remove. might add an optional name getter on mesh
+// generators
 pub trait ShapeName {
     fn shape_name(&self) -> &str;
 }

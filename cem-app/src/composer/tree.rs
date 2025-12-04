@@ -23,7 +23,7 @@ pub struct ObjectTreeState {
 impl ComposerState {
     pub(super) fn object_tree(&mut self, ui: &mut egui::Ui) -> egui::Response {
         let selected = self
-            .selection_mut()
+            .selection()
             .entities()
             .into_iter()
             .map(Into::into)
@@ -50,7 +50,7 @@ impl ComposerState {
         // whether something was selected in the tree view
         let mut set_selected = false;
 
-        let mut selection = self.selection_mut();
+        let mut selection = self.selection();
 
         for action in actions {
             #[allow(clippy::single_match)]
