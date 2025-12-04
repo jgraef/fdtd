@@ -58,9 +58,9 @@ pub trait SolverBackend<Config, Point> {
 // options. i think probably only the domain size needs to be known a priori to
 // allocate buffers.
 pub trait DomainDescription<P> {
-    fn material(&self, point: &P) -> Material;
+    fn material(&mut self, point: &P) -> Material;
 
-    fn pml(&self, point: &P) -> Option<PmlCoefficients> {
+    fn pml(&mut self, point: &P) -> Option<PmlCoefficients> {
         let _ = point;
         None
     }

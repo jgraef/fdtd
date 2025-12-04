@@ -234,7 +234,7 @@ pub struct FdtdCpuSolverInstance<Threading = SingleThreaded> {
 impl<Threading> FdtdCpuSolverInstance<Threading> {
     fn new(
         config: &FdtdSolverConfig,
-        domain_description: impl DomainDescription<Point3<usize>>,
+        mut domain_description: impl DomainDescription<Point3<usize>>,
         threading: Threading,
     ) -> Self {
         let strider = config.strider();

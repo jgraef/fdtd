@@ -69,6 +69,9 @@ impl<'w> IntersectAabb<'w> {
     }
 }
 
+// todo: bevy-migrate: put a `Q: QueryData` on this to query more than just the
+// entity
+#[derive(Debug, SystemParam)]
 pub struct PointQuery<'w, 's> {
     bvh: Res<'w, Bvh>,
     query: Query<'w, 's, (&'static GlobalTransform, &'static Collider)>,

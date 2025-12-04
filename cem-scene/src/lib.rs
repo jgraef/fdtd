@@ -37,6 +37,8 @@ use crate::{
     transform::TransformHierarchyPlugin,
 };
 
+// todo: bevy-migrate: remove this and use World (with extension traits)
+// instead.
 #[derive(Debug)]
 pub struct Scene {
     pub world: World,

@@ -67,7 +67,7 @@ impl Plugin for RenderPlugin {
         let (command_sender, command_receiver) = command::queue(1024);
 
         builder
-            // todo: bevy-migrate: share the texture cache between worlds
+            // todo: share the texture cache between worlds
             .insert_resource(TextureCache::default())
             // insert the shared renderer as resource
             .insert_resource(self.renderer.clone())

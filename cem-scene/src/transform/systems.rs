@@ -58,7 +58,10 @@ pub(super) fn sync_simple_transforms(
     // local transform
     query.p2().iter().for_each(|(entity, local_transform)| {
         let mut entity = commands.entity(entity);
-        entity.insert(GlobalTransform::from_local(*local_transform));
+        entity.insert((
+            GlobalTransform::from_local(*local_transform),
+            TransformTreeChanged,
+        ));
     })
 }
 
@@ -133,7 +136,7 @@ mod parallel {
 
     use crate::transform::{
         GlobalTransform,
-        LocalTransform as Transform,
+        LocalTransform,
         systems::TransformTreeChanged,
     };
 
@@ -146,7 +149,7 @@ mod parallel {
     pub(in crate::transform) fn propagate_parent_transforms(
         mut queue: Local<WorkQueue>,
         mut roots: Query<
-            (Entity, Ref<Transform>, &mut GlobalTransform, &Children),
+            (Entity, Ref<LocalTransform>, &mut GlobalTransform, &Children),
             (Without<ChildOf>, Changed<TransformTreeChanged>),
         >,
         nodes: NodeQuery,
@@ -388,7 +391,7 @@ mod parallel {
         (
             Entity,
             (
-                Ref<'static, Transform>,
+                Ref<'static, LocalTransform>,
                 Mut<'static, GlobalTransform>,
                 Ref<'static, TransformTreeChanged>,
             ),

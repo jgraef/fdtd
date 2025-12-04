@@ -287,8 +287,8 @@ impl Renderer {
     }
 }
 
-// todo: bevy-migrate: this should be as hidden as possible. but it needs to be
-// pub for grab_draw_list. although the whole module is not pub.
+// todo: render-refactor: this should be as hidden as possible. but it needs to
+// be pub for grab_draw_list. although the whole module is not pub.
 #[derive(Clone, Debug, Resource)]
 pub struct SharedRenderer(pub Arc<Renderer>);
 
