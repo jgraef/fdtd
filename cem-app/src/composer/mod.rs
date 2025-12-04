@@ -79,7 +79,7 @@ use serde::{
 use crate::{
     Error,
     composer::{
-        camera::CameraProxy,
+        camera::CameraWorldMut,
         file_formats::{
             FileFormat,
             guess_file_format_from_path,
@@ -89,7 +89,7 @@ use crate::{
         selection::{
             Selectable,
             Selected,
-            Selection,
+            SelectionWorldMut,
         },
         shape::flat::{
             Quad,
@@ -663,15 +663,15 @@ impl ComposerState {
         tracing::debug!("todo: redo");
     }
 
-    pub fn selection(&mut self) -> Selection<'_> {
-        Selection {
+    pub fn selection(&mut self) -> SelectionWorldMut<'_> {
+        SelectionWorldMut {
             world: &mut self.scene.world,
             outline: &self.config.views.selection_outline,
         }
     }
 
-    pub fn camera(&mut self) -> CameraProxy<'_> {
-        CameraProxy {
+    pub fn camera(&mut self) -> CameraWorldMut<'_> {
+        CameraWorldMut {
             world: &mut self.scene.world,
             camera_entity: self.camera_entity,
         }

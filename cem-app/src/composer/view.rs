@@ -13,7 +13,7 @@ use nalgebra::{
 use parry3d::query::Ray;
 
 use crate::{
-    composer::camera::CameraProxy,
+    composer::camera::CameraWorldMut,
     renderer::{
         DrawCommand,
         camera::{
@@ -58,7 +58,7 @@ impl<'a> egui::Widget for SceneView<'a> {
         );
 
         if let Some(camera_entity) = self.camera_entity {
-            let mut camera_proxy = CameraProxy {
+            let mut camera_proxy = CameraWorldMut {
                 world: &mut self.scene.world,
                 camera_entity,
             };
@@ -85,7 +85,7 @@ impl<'a> egui::Widget for SceneView<'a> {
 
 /// Handle widget's inputs
 fn handle_input(
-    camera_proxy: &mut CameraProxy,
+    camera_proxy: &mut CameraWorldMut,
     scene_pointer: Option<&mut ScenePointer>,
     response: &egui::Response,
 ) {

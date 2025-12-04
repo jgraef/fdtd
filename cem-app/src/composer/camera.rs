@@ -41,13 +41,14 @@ use crate::renderer::{
     grab_draw_list_for_camera,
 };
 
+/// A proxy to control a camera in a world.
 #[derive(Debug)]
-pub struct CameraProxy<'a> {
+pub struct CameraWorldMut<'a> {
     pub world: &'a mut World,
     pub camera_entity: Entity,
 }
 
-impl<'a> CameraProxy<'a> {
+impl<'a> CameraWorldMut<'a> {
     /// Grabs the draw list for a camera from the scene
     pub fn draw_list(&mut self) -> Option<DrawCommand> {
         self.world
