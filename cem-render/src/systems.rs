@@ -1,3 +1,5 @@
+#![allow(clippy::type_complexity)]
+
 use bevy_ecs::{
     entity::{
         Entity,
@@ -248,7 +250,7 @@ pub fn update_mesh_bind_groups(
                     let entity_commands = commands.entity(*entity);
 
                     update_mesh_bind_group(
-                        &*renderer,
+                        &renderer,
                         entity_commands,
                         item.mesh,
                         item.albedo_texture,

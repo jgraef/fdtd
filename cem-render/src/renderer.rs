@@ -288,7 +288,7 @@ impl Deref for SharedRenderer {
     type Target = Renderer;
 
     fn deref(&self) -> &Self::Target {
-        &*self.0
+        &self.0
     }
 }
 

@@ -249,8 +249,6 @@ impl egui_wgpu::CallbackTrait for PaintCallback {
         render_pass: &mut wgpu::RenderPass<'static>,
         _callback_resources: &egui_wgpu::CallbackResources,
     ) {
-        // todo: this needs to be send through a queue back so that it can be attached
-        // to the camera
-        let _draw_info = self.draw_command.render(render_pass);
+        self.draw_command.render(render_pass);
     }
 }

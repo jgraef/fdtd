@@ -159,17 +159,15 @@ impl<'a> EntityWindowRenderer<'a> {
 
                                 if let Some(reflect_default) =
                                     type_registration.data::<ReflectDefault>()
-                                {
-                                    if ui
+                                    && ui
                                         .add_enabled(
                                             !has_component,
                                             egui::Button::new(component_name(type_info)).small(),
                                         )
                                         .clicked()
-                                    {
-                                        let default = reflect_default.default();
-                                        entity.insert_reflect(default);
-                                    }
+                                {
+                                    let default = reflect_default.default();
+                                    entity.insert_reflect(default);
                                 }
                             }
                         });
@@ -193,21 +191,20 @@ impl<'a> EntityWindowRenderer<'a> {
 
                     let mut delete_component = false;
 
-                    if let Some(mut reflect) = reflect_component.reflect_mut(&mut entity) {
-                        if let Some(component_ui) = reflect_component_ui.get_mut(&mut *reflect) {
-                            egui::CollapsingHeader::new(component_name(type_info))
-                                .id_salt(self.id.with("component").with(type_info.type_id()))
-                                .default_open(true)
-                                .show(ui, |ui| {
-                                    component_ui.properties_ui(ui, &());
+                    if let Some(mut reflect) = reflect_component.reflect_mut(&mut entity)
+                        && let Some(component_ui) = reflect_component_ui.get_mut(&mut *reflect)
+                    {
+                        egui::CollapsingHeader::new(component_name(type_info))
+                            .id_salt(self.id.with("component").with(type_info.type_id()))
+                            .default_open(true)
+                            .show(ui, |ui| {
+                                component_ui.properties_ui(ui, &());
 
-                                    if self.components_deletable {
-                                        if ui.small_button("Delete").clicked() {
-                                            delete_component = true;
-                                        }
-                                    }
-                                });
-                        }
+                                if self.components_deletable && ui.small_button("Delete").clicked()
+                                {
+                                    delete_component = true;
+                                }
+                            });
                     }
 
                     if delete_component {

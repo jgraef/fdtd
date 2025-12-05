@@ -10,14 +10,15 @@ use nalgebra::{
     Isometry3,
     Point3,
 };
-use parry3d::{
-    bounding_volume::Aabb,
-    query::Ray,
-};
+use parry3d::query::Ray;
 
 use crate::{
     spatial::{
-        bvh::Bvh,
+        Aabb,
+        bvh::{
+            Bvh,
+            BvhLeaf,
+        },
         collider::Collider,
         merge_aabbs,
     },
@@ -130,7 +131,8 @@ impl<'w> RootAabb<'w> {
 #[derive(Debug, SystemParam)]
 pub struct WorldAabb<'w, 's> {
     bvh: Res<'w, Bvh>,
-    query: Query<'w, 's, (&'static GlobalTransform, &'static Collider)>,
+    colliders: Query<'w, 's, (&'static GlobalTransform, &'static Collider)>,
+    bvh_leaves: Query<'w, 's, &'static BvhLeaf>,
 }
 
 impl<'w, 's> WorldAabb<'w, 's> {
@@ -153,21 +155,17 @@ impl<'w, 's> WorldAabb<'w, 's> {
         let relative_to_inv = relative_to.inverse();
 
         if approximate_relative_aabbs {
-            /*let mut query = self.entities.query::<&Aabb>();
-            let aabbs = query
-                .iter()
-                .map(|(_entity, aabb)| aabb.transform_by(&relative_to_inv));
-            merge_aabbs(aabbs)*/
-            todo!(
-                "fixme: Aabbs are currently not stored because we can't derive Component on them."
-            );
+            merge_aabbs(
+                self.bvh_leaves
+                    .iter()
+                    .map(|bvh_leaf| bvh_leaf.aabb.transform_by(&relative_to_inv)),
+            )
         }
         else {
-            let aabbs = self.query.iter().map(|(transform, collider)| {
+            merge_aabbs(self.colliders.iter().map(|(transform, collider)| {
                 let transform = relative_to_inv * transform.isometry();
                 collider.compute_aabb(&transform)
-            });
-            merge_aabbs(aabbs)
+            }))
         }
     }
 }

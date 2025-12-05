@@ -1,3 +1,5 @@
+#![allow(clippy::type_complexity)]
+
 use bevy_ecs::prelude::*;
 pub(super) use parallel::propagate_parent_transforms;
 

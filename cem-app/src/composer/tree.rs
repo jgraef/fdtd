@@ -59,7 +59,7 @@ struct Node {
     children: Option<&'static Children>,
 }
 
-fn render_object_tree_system<'ui>(
+fn render_object_tree_system(
     (InMut(ui), InMut(tree_view_state), In(selection_outline)): (
         InMut<egui::Ui>,
         InMut<TreeViewState<ObjectTreeId>>,

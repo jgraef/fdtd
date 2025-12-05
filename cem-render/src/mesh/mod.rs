@@ -4,7 +4,6 @@ pub mod parry;
 use std::{
     fmt::Debug,
     ops::Range,
-    path::PathBuf,
     sync::Arc,
 };
 
@@ -285,9 +284,9 @@ pub enum LoadMesh {
         normals: bool,
         uvs: bool,
     },
-    File {
+    /*File {
         path: PathBuf,
-    },
+    },*/
 }
 
 impl LoadMesh {
@@ -343,8 +342,7 @@ impl LoadingState for LoadMesh {
                 let mut mesh_builder = MeshBufferBuilder::new(Some(Renderer::WINDING_ORDER));
                 generator.generate(&mut mesh_builder, *normals, *uvs);
                 mesh_builder.finish(context.device(), &format!("{generator:?}"))
-            }
-            LoadMesh::File { path: _ } => todo!(),
+            } //LoadMesh::File { path: _ } => todo!("load mesh from file"),
         };
 
         Ok(LoadingProgress::Ready(mesh))

@@ -530,13 +530,10 @@ impl LoadingState for LoadAlbedoTexture {
             })
             .unwrap_or_default();
 
-        Ok(LoadingProgress::Ready(
-            AlbedoTexture {
-                texture: loaded_texture.texture_and_view,
-                transparent,
-            }
-            .into(),
-        ))
+        Ok(LoadingProgress::Ready(AlbedoTexture {
+            texture: loaded_texture.texture_and_view,
+            transparent,
+        }))
     }
 }
 
@@ -573,12 +570,9 @@ impl LoadingState for LoadMaterialTexture {
     ) -> Result<LoadingProgress<MaterialTexture>, AssetError> {
         let loaded_texture = self.source.load(context).map_err(AssetError::custom)?;
 
-        Ok(LoadingProgress::Ready(
-            MaterialTexture {
-                texture: loaded_texture.texture_and_view,
-                flags: self.flags,
-            }
-            .into(),
-        ))
+        Ok(LoadingProgress::Ready(MaterialTexture {
+            texture: loaded_texture.texture_and_view,
+            flags: self.flags,
+        }))
     }
 }

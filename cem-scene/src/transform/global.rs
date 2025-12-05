@@ -30,7 +30,7 @@ impl GlobalTransform {
 
     pub(crate) fn with_local(self, local: &LocalTransform) -> Self {
         Self {
-            isometry: &self.isometry * local.isometry,
+            isometry: self.isometry * local.isometry,
         }
     }
 

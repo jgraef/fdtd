@@ -92,15 +92,15 @@ impl InstanceData {
         material_texture: Option<&MaterialTexture>,
         outline: Option<&Outline>,
     ) -> Self {
-        if mesh.winding_order != Renderer::WINDING_ORDER {
-            todo!("fix winding order");
-        }
-
-        if !mesh.flags.contains(MeshFlags::UVS) {
-            // could enable textures in this case, but we need to tell the
-            // vertex shader to not index into the uv buffer anyway
-            // flags.remove(InstanceFlags::ENABLE_TEXTURES);
-        }
+        // note: this should be fixed by the mesh builder (e.g. `MeshBufferBuilder` does
+        // this)
+        assert_eq!(
+            mesh.winding_order,
+            Renderer::WINDING_ORDER,
+            "Mesh has incorrect winding ({:?}) for renderer, which expects {:?}",
+            mesh.winding_order,
+            Renderer::WINDING_ORDER
+        );
 
         let (outline_thickness, outline_color) = outline.map_or_else(Default::default, |outline| {
             (outline.thickness, outline.color.into_linear())

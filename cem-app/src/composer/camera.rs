@@ -99,7 +99,7 @@ impl<'a> CameraWorldMut<'a> {
     /// # Returns
     ///
     ///  - a [`Ray`] with origin at the camera position in the direction of
-    /// where `pointer_position` is pointing at in the projected image.
+    ///    where `pointer_position` is pointing at in the projected image.
     ///  - if the ray hits an entity, a [`RayHit`] with the [`Entity`] and
     ///    distance along the ray.
     pub fn shoot_ray(&mut self, pointer_position: Point2<f32>) -> (Ray, Option<RayHit>) {
@@ -175,6 +175,7 @@ impl<'a> CameraWorldMut<'a> {
         up: &Vector3<f32>,
         margin: &Vector2<f32>,
     ) {
+        #[allow(clippy::type_complexity)]
         self.world
             .run_system_cached_with(
                 |In((camera_entity, axis, up, margin)): In<(

@@ -571,7 +571,7 @@ where
     Backend: SolverBackend<FdtdSolverConfig, Point3<usize>>,
 {
     backend.create_instance(
-        &config,
+        config,
         WorldDomainDescription {
             system_param: world_domain_description,
             coordinate_transformations,
@@ -832,6 +832,7 @@ impl<P> Observers<P> {
     }
 }
 
+#[allow(clippy::type_complexity)]
 fn setup_observers_system<I, P>(
     (InRef(instance), InMut(state), In(lattice_size), In(repaint_trigger)): (
         InRef<I>,

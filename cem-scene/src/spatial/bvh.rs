@@ -8,16 +8,14 @@ use bevy_ecs::{
 };
 use nalgebra::Point3;
 use parry3d::{
-    bounding_volume::{
-        Aabb,
-        BoundingVolume,
-    },
+    bounding_volume::BoundingVolume,
     partitioning::BvhWorkspace,
     query::Ray,
 };
 
 use crate::{
     spatial::{
+        Aabb,
         queries::RayHit,
         traits::ComputeAabb,
     },
@@ -107,7 +105,7 @@ impl<'a> BvhTransaction<'a> {
         entity: Entity,
         transform: &GlobalTransform,
         collider: &impl ComputeAabb,
-    ) -> LeafIndex {
+    ) -> BvhLeaf {
         let leaf_index = self.bvh.leaf_index_map.insert(entity);
 
         let aabb = collider.compute_aabb(transform.isometry());
@@ -117,18 +115,18 @@ impl<'a> BvhTransaction<'a> {
 
         self.changed = true;
 
-        LeafIndex { leaf_index }
+        BvhLeaf { leaf_index, aabb }
     }
 
-    pub fn remove(&mut self, leaf_index: &LeafIndex) {
-        self.bvh.bvh.remove(leaf_index.leaf_index);
-        self.bvh.leaf_index_map.remove(leaf_index.leaf_index);
+    pub fn remove(&mut self, bvh_leaf: &BvhLeaf) {
+        self.bvh.bvh.remove(bvh_leaf.leaf_index);
+        self.bvh.leaf_index_map.remove(bvh_leaf.leaf_index);
         self.changed = true;
     }
 
     pub fn update(
         &mut self,
-        leaf_index: &LeafIndex,
+        bvh_leaf: &BvhLeaf,
         transform: &GlobalTransform,
         collider: &impl ComputeAabb,
     ) {
@@ -136,7 +134,7 @@ impl<'a> BvhTransaction<'a> {
 
         self.bvh
             .bvh
-            .insert_or_update_partially(aabb, leaf_index.leaf_index, 0.0);
+            .insert_or_update_partially(aabb, bvh_leaf.leaf_index, 0.0);
 
         self.changed = true;
     }
@@ -145,7 +143,7 @@ impl<'a> BvhTransaction<'a> {
 impl<'a> Drop for BvhTransaction<'a> {
     fn drop(&mut self) {
         if self.changed {
-            self.bvh.bvh.refit(&mut self.workspace);
+            self.bvh.bvh.refit(self.workspace);
         }
     }
 }
@@ -157,10 +155,12 @@ pub enum BvhMessage {
 }
 
 #[derive(Clone, Copy, Debug, Component)]
-pub struct LeafIndex {
+pub struct BvhLeaf {
     pub leaf_index: u32,
+    pub aabb: Aabb,
 }
 
+/// Maps leaf indices to entities
 #[derive(Clone, Debug, Default)]
 struct LeafIndexMap {
     entities: HashMap<u32, Entity>,

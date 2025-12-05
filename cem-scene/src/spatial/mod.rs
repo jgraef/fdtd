@@ -8,8 +8,10 @@ use bevy_ecs::schedule::{
     IntoScheduleConfigs,
     SystemSet,
 };
-pub use parry3d::bounding_volume::Aabb;
-use parry3d::bounding_volume::BoundingVolume;
+use parry3d::bounding_volume::{
+    Aabb,
+    BoundingVolume,
+};
 
 pub use crate::spatial::collider::Collider;
 use crate::{

@@ -1,3 +1,5 @@
+#![allow(clippy::type_complexity)]
+
 use bevy_ecs::{
     message::MessageReader,
     name::NameOrEntity,
@@ -18,8 +20,8 @@ use crate::{
     spatial::{
         bvh::{
             Bvh,
+            BvhLeaf,
             BvhMessage,
-            LeafIndex,
         },
         collider::Collider,
     },
@@ -31,9 +33,9 @@ pub fn update_bvh(
     mut workspace: Local<parry3d::partitioning::BvhWorkspace>,
     mut queries: ParamSet<(
         Query<(NameOrEntity, &GlobalTransform, &Collider)>,
-        Query<(NameOrEntity, &LeafIndex)>,
+        Query<(NameOrEntity, &BvhLeaf)>,
         Query<
-            (&GlobalTransform, &Collider, &LeafIndex),
+            (&GlobalTransform, &Collider, &BvhLeaf),
             Or<(Changed<GlobalTransform>, Changed<Collider>)>,
         >,
     )>,
@@ -47,17 +49,17 @@ pub fn update_bvh(
             BvhMessage::Insert { entity } => {
                 let query = queries.p0();
                 if let Ok((name, transform, collider)) = query.get(*entity) {
-                    let leaf_index = transaction.insert(*entity, transform, collider);
-                    tracing::debug!(entity = %name, ?leaf_index, "adding to bvh");
-                    commands.entity(*entity).insert(leaf_index);
+                    let bvh_leaf = transaction.insert(*entity, transform, collider);
+                    tracing::debug!(entity = %name, ?bvh_leaf, "adding to bvh");
+                    commands.entity(*entity).insert(bvh_leaf);
                 }
             }
             BvhMessage::Remove { entity } => {
                 let query = queries.p1();
-                if let Ok((name, leaf_index)) = query.get(*entity) {
-                    tracing::debug!(entity = %name, ?leaf_index, "removing from bvh");
-                    transaction.remove(leaf_index);
-                    commands.entity(*entity).remove::<LeafIndex>();
+                if let Ok((name, bvh_leaf)) = query.get(*entity) {
+                    tracing::debug!(entity = %name, ?bvh_leaf, "removing from bvh");
+                    transaction.remove(bvh_leaf);
+                    commands.entity(*entity).remove::<BvhLeaf>();
                 }
             }
         }
@@ -65,8 +67,8 @@ pub fn update_bvh(
 
     {
         let query = queries.p2();
-        for (transform, collider, leaf_index) in query.iter() {
-            transaction.update(leaf_index, transform, collider);
+        for (transform, collider, bvh_leaf) in query.iter() {
+            transaction.update(bvh_leaf, transform, collider);
         }
     }
 }
