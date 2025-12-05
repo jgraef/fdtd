@@ -63,7 +63,7 @@ impl Bvh {
             })
     }
 
-    pub fn intersect_aabb<'a>(&'a self, aabb: Aabb) -> impl Iterator<Item = Entity> + 'a {
+    pub fn intersect_aabb<'a>(&'a self, aabb: Aabb) -> impl Iterator<Item = (Entity, Aabb)> + 'a {
         // note: this is slightly more convenient than the builtin aabb-intersection
         // query as we can move the aabb into the closure
 
@@ -74,7 +74,12 @@ impl Bvh {
 
         self.bvh
             .leaves(move |node| node.aabb().intersects(&aabb))
-            .map(|leaf_index| self.leaf_index_map.resolve(leaf_index))
+            .map(|leaf_index| {
+                (
+                    self.leaf_index_map.resolve(leaf_index),
+                    self.bvh.leaf_node(leaf_index).unwrap().aabb(),
+                )
+            })
     }
 
     /// This queries all entities that might contain a point.

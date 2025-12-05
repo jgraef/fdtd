@@ -64,13 +64,14 @@ pub struct IntersectAabb<'w> {
 }
 
 impl<'w> IntersectAabb<'w> {
-    pub fn intersect_aabb(&self, aabb: Aabb) -> impl Iterator<Item = Entity> {
+    pub fn intersect_aabb(&self, aabb: Aabb) -> impl Iterator<Item = (Entity, Aabb)> {
         self.bvh.intersect_aabb(aabb)
     }
 }
 
-// todo: bevy-migrate: put a `Q: QueryData` on this to query more than just the
-// entity
+// todo: put a `Q: QueryData` on this to query more than just the
+// entity. this is hard because the iterator could return a mut-borrow from the
+// same entity twice (and thus the compiler doesn't allow it).
 #[derive(Debug, SystemParam)]
 pub struct PointQuery<'w, 's> {
     bvh: Res<'w, Bvh>,

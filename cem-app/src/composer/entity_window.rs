@@ -141,8 +141,6 @@ impl<'a> EntityWindowRenderer<'a> {
                             egui::Button::new("+").small(),
                         )
                         .ui(ui, |ui| {
-                            // todo: bevy-migrate: add component
-
                             for (type_registration, _reflect_component_ui) in
                                 self.type_registry.iter_with_data::<ReflectComponentUi>()
                             {
@@ -182,8 +180,6 @@ impl<'a> EntityWindowRenderer<'a> {
                 for (type_registration, reflect_component_ui) in
                     self.type_registry.iter_with_data::<ReflectComponentUi>()
                 {
-                    // todo: bevy-migrate entity ui
-
                     let type_info = type_registration.type_info();
 
                     let reflect_component = type_registration

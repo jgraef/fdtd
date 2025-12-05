@@ -20,7 +20,13 @@ use bevy_ecs::{
 };
 use cem_scene::{
     Scene,
-    spatial::queries::PointQuery,
+    spatial::{
+        Collider,
+        queries::{
+            IntersectAabb,
+            PointQuery,
+        },
+    },
     transform::GlobalTransform,
 };
 use cem_solver::{
@@ -35,7 +41,10 @@ use cem_solver::{
         FdtdSolverConfig,
         Resolution,
         cpu::FdtdCpuBackend,
-        pml::PmlCoefficients,
+        pml::{
+            GradedPml,
+            PmlCoefficients,
+        },
         wgpu::FdtdWgpuBackend,
     },
     material::{
@@ -72,7 +81,10 @@ use parking_lot::{
     Mutex,
     MutexGuard,
 };
-use parry3d::bounding_volume::Aabb;
+use parry3d::{
+    bounding_volume::Aabb,
+    query::Ray,
+};
 
 use crate::{
     Error,
@@ -600,8 +612,10 @@ impl<'a> DomainDescription<Point3<usize>> for SceneDomainDescription<'a> {
 
         self.world
             .run_system_cached_with(
-                |In(point): In<Point3<f32>>, query: PointQuery, materials: Query<&Material>| {
-                    let mut materials = query
+                |In(point): In<Point3<f32>>,
+                 point_query: PointQuery,
+                 materials: Query<&Material>| {
+                    let mut materials = point_query
                         .point_query(point)
                         .filter_map(|entity| materials.get(entity).ok())
                         .cloned();
@@ -616,43 +630,59 @@ impl<'a> DomainDescription<Point3<usize>> for SceneDomainDescription<'a> {
             .unwrap_or(*self.default_material)
     }
 
-    fn pml(&mut self, _point: &Point3<usize>) -> Option<PmlCoefficients> {
-        // todo: bevy-migrate: pml
-
-        /*let point = self
+    fn pml(&mut self, point: &Point3<usize>) -> Option<PmlCoefficients> {
+        let point = self
             .coordinate_transformations
             .transform_point_from_solver_to_world(point);
 
-        let mut pml_coefficients = self
-            .scene
-            .intersect_aabb(Aabb {
-                mins: point,
-                maxs: point,
-            })
-            .filter_map(|entity| {
-                let (pml, collider, aabb, transform) = self.pmls.get(entity)?;
+        self.world
+            .run_system_cached_with(
+                |In((point, resolution, physical_constants)): In<(
+                    Point3<f32>,
+                    Resolution,
+                    PhysicalConstants,
+                )>,
+                 intersect_aabb: IntersectAabb,
+                 pmls: Query<(&GradedPml, &Collider, &GlobalTransform)>| {
+                    let mut pmls = intersect_aabb
+                        .intersect_aabb(Aabb {
+                            mins: point,
+                            maxs: point,
+                        })
+                        .filter_map(move |(entity, aabb)| {
+                            pmls.get(entity)
+                                .ok()
+                                .and_then(|(pml, collider, global_transform)| {
+                                    let max_depth = nalgebra::distance(&aabb.mins, &aabb.maxs);
+                                    let ray = Ray::new(point, *pml.normal);
 
-                let max_depth = nalgebra::distance(&aabb.mins, &aabb.maxs);
-                let ray = Ray::new(point, *pml.normal);
+                                    let depth = collider.cast_ray(
+                                        global_transform.isometry(),
+                                        &ray,
+                                        max_depth,
+                                        false,
+                                    )?;
 
-                let depth = collider.cast_ray(transform.isometry(), &ray, max_depth, false)?;
+                                    Some(PmlCoefficients::new_graded(
+                                        &resolution,
+                                        &physical_constants,
+                                        pml.m,
+                                        pml.m_a,
+                                        pml.sigma_max,
+                                        pml.kappa_max,
+                                        pml.a_max,
+                                        depth as f64,
+                                        -pml.normal.cast(),
+                                    ))
+                                })
+                        });
 
-                Some(PmlCoefficients::new_graded(
-                    self.resolution,
-                    self.physical_constants,
-                    pml.m,
-                    pml.m_a,
-                    pml.sigma_max,
-                    pml.kappa_max,
-                    pml.a_max,
-                    depth as f64,
-                    -pml.normal.cast(),
-                ))
-            });
-
-        // for now only one
-        pml_coefficients.next()*/
-        None
+                    // todo: merge pmls present at this point
+                    pmls.next()
+                },
+                (point, *self.resolution, *self.physical_constants),
+            )
+            .unwrap()
     }
 }
 

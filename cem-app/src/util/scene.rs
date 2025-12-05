@@ -116,8 +116,6 @@ impl<'a> EntityBuilderExt for EntityWorldMut<'a> {
 }
 
 // todo: implement a proper way of naming things and remove this
-// todo: bevy-migrate: remove. might add an optional name getter on mesh
-// generators
 pub trait ShapeName {
     fn shape_name(&self) -> &str;
 }
