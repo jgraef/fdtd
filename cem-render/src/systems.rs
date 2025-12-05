@@ -261,7 +261,7 @@ pub fn update_mesh_bind_groups(
                 tracing::debug!(?message, "remove mesh bind group");
 
                 updated.remove(entity);
-                commands.entity(*entity).remove::<MeshBindGroup>();
+                commands.entity(*entity).try_remove::<MeshBindGroup>();
             }
         }
     });

@@ -107,7 +107,10 @@ fn default_point_light() -> PointLight {
 }
 
 fn default_background_color() -> Srgb {
-    palette::named::BLUEVIOLET.into_format()
+    // note: this is palette::named::BLUEVIOLET if you convert it to linear and
+    // treat it as non-linear. it used to be incorrectly converted to linear and
+    // i got used to the color, and just liked it.
+    Srgb::new(0.2541521, 0.02415763, 0.76052463)
 }
 
 fn default_fovy() -> f32 {

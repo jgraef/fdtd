@@ -15,6 +15,7 @@ use bevy_ecs::{
         InMut,
         InRef,
         Query,
+        SystemParam,
     },
     world::World,
 };
@@ -240,7 +241,7 @@ struct RunFdtd<'a> {
 impl<'a> RunFdtd<'a> {
     fn run_fdtd_with_backend<Backend>(self, backend: &Backend) -> Result<Solver, Error>
     where
-        Backend: SolverBackend<FdtdSolverConfig, Point3<usize>>,
+        Backend: SolverBackend<FdtdSolverConfig, Point3<usize>> + 'static,
         Backend::Instance: CreateProjection<TextureSenderTarget> + Send + 'static,
         <Backend::Instance as SolverInstance>::State: Time + Send + 'static,
         for<'b> <Backend::Instance as SolverInstance>::UpdatePass<'b>:
@@ -331,41 +332,23 @@ impl<'a> RunFdtd<'a> {
             &aabb,
         );
 
-        let materials = SceneDomainDescription::new(
-            &mut scene.world,
-            &config.resolution,
-            &config.physical_constants,
-            &coordinate_transformations,
-            &common_config.default_material,
-        );
-
-        let instance = backend
-            .create_instance(&config, materials)
+        let instance = scene
+            .world
+            .run_system_cached_with(
+                create_solver_instance_system,
+                (
+                    backend,
+                    &config,
+                    coordinate_transformations,
+                    common_config.default_material,
+                ),
+            )
+            .unwrap()
             .expect("fdtd solver instance creation never fails");
 
         let mut state = instance.create_state();
 
-        // create sources
-        // todo: from scene. this is blocked by the fact that this specific source needs
-        // config parameters.
-
         let sources = Sources::from_scene(&mut scene.world, &coordinate_transformations);
-        //let mut sources = Sources::default();
-        /*let source = fdtd::source::ContinousWave {
-            electric_current_density_amplitude: Vector3::z() / config.resolution.temporal,
-            magnetic_current_density_amplitude: Vector3::zeros(),
-            electric_current_density_phase: 0.0,
-            magnetic_current_density_phase: 0.0,
-            frequency: 2.0,
-        };*/
-        /*sources.push(
-            Point3::from(lattice_size / 2),
-            GaussianPulse::new(
-                config.resolution.temporal * 50.0,
-                config.resolution.temporal * 10.0,
-            )
-            .with_amplitudes(Vector3::z() / config.resolution.temporal, Vector3::zeros()),
-        );*/
 
         // create observers
         let observers = Observers::from_scene(
@@ -575,8 +558,120 @@ impl Solver {
     }
 }
 
+fn create_solver_instance_system<Backend>(
+    (InRef(backend), InRef(config), In(coordinate_transformations), In(default_material)): (
+        InRef<Backend>,
+        InRef<FdtdSolverConfig>,
+        In<CoordinateTransformations>,
+        In<Material>,
+    ),
+    world_domain_description: WorldDomainDescriptionSystemParam,
+) -> Result<Backend::Instance, Backend::Error>
+where
+    Backend: SolverBackend<FdtdSolverConfig, Point3<usize>>,
+{
+    backend.create_instance(
+        &config,
+        WorldDomainDescription {
+            system_param: world_domain_description,
+            coordinate_transformations,
+            default_material,
+            resolution: config.resolution,
+            physical_constants: config.physical_constants,
+        },
+    )
+}
+
+#[derive(Debug, SystemParam)]
+struct WorldDomainDescriptionSystemParam<'w, 's> {
+    point_query: PointQuery<'w, 's>,
+    materials: Query<'w, 's, &'static Material>,
+    intersect_aabb_query: IntersectAabb<'w>,
+    pmls: Query<
+        'w,
+        's,
+        (
+            &'static GradedPml,
+            &'static Collider,
+            &'static GlobalTransform,
+        ),
+    >,
+}
+
+struct WorldDomainDescription<'w, 's> {
+    system_param: WorldDomainDescriptionSystemParam<'w, 's>,
+    coordinate_transformations: CoordinateTransformations,
+    default_material: Material,
+    // todo: the solver knows these two so the pml parameters it takes should not need them
+    resolution: Resolution,
+    physical_constants: PhysicalConstants,
+}
+
+impl<'w, 's> DomainDescription<Point3<usize>> for WorldDomainDescription<'w, 's> {
+    fn material(&mut self, point: &Point3<usize>) -> Material {
+        let point = self
+            .coordinate_transformations
+            .transform_point_from_solver_to_world(point);
+
+        let mut materials = self
+            .system_param
+            .point_query
+            .point_query(point)
+            .filter_map(|entity| self.system_param.materials.get(entity).ok())
+            .cloned();
+
+        // for now we'll just use the first material we find.
+        // if nothing is found, use the default
+        materials.next().unwrap_or(self.default_material)
+    }
+
+    fn pml(&mut self, point: &Point3<usize>) -> Option<PmlCoefficients> {
+        let point = self
+            .coordinate_transformations
+            .transform_point_from_solver_to_world(point);
+
+        let mut pmls = self
+            .system_param
+            .intersect_aabb_query
+            .intersect_aabb(Aabb {
+                mins: point,
+                maxs: point,
+            })
+            .filter_map(|(entity, aabb)| {
+                self.system_param.pmls.get(entity).ok().and_then(
+                    |(pml, collider, global_transform)| {
+                        let max_depth = nalgebra::distance(&aabb.mins, &aabb.maxs);
+                        let ray = Ray::new(point, *pml.normal);
+
+                        let depth = collider.cast_ray(
+                            global_transform.isometry(),
+                            &ray,
+                            max_depth,
+                            false,
+                        )?;
+
+                        Some(PmlCoefficients::new_graded(
+                            &self.resolution,
+                            &self.physical_constants,
+                            pml.m,
+                            pml.m_a,
+                            pml.sigma_max,
+                            pml.kappa_max,
+                            pml.a_max,
+                            depth as f64,
+                            -pml.normal.cast(),
+                        ))
+                    },
+                )
+            });
+
+        // todo: merge pmls present at this point
+        pmls.next()
+    }
+}
+
 #[derive(derive_more::Debug)]
-struct SceneDomainDescription<'a> {
+struct SceneDomainDescriptionOld<'a> {
     world: &'a mut World,
     resolution: &'a Resolution,
     physical_constants: &'a PhysicalConstants,
@@ -584,7 +679,7 @@ struct SceneDomainDescription<'a> {
     default_material: &'a Material,
 }
 
-impl<'a> SceneDomainDescription<'a> {
+impl<'a> SceneDomainDescriptionOld<'a> {
     pub fn new(
         world: &'a mut World,
         resolution: &'a Resolution,
@@ -602,7 +697,7 @@ impl<'a> SceneDomainDescription<'a> {
     }
 }
 
-impl<'a> DomainDescription<Point3<usize>> for SceneDomainDescription<'a> {
+impl<'a> DomainDescription<Point3<usize>> for SceneDomainDescriptionOld<'a> {
     fn material(&mut self, point: &Point3<usize>) -> Material {
         let point = self
             .coordinate_transformations
