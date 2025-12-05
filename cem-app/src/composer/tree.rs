@@ -17,6 +17,7 @@ use bevy_ecs::{
         Query,
     },
 };
+use cem_render::components::Outline;
 use egui_ltreeview::{
     Action,
     IndentHintStyle,
@@ -29,12 +30,9 @@ use serde::{
     Serialize,
 };
 
-use crate::{
-    composer::{
-        ComposerState,
-        selection::Selection,
-    },
-    renderer::components::Outline,
+use crate::composer::{
+    ComposerState,
+    selection::Selection,
 };
 
 #[derive(Debug, Default)]

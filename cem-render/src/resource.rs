@@ -3,7 +3,6 @@ use std::sync::Arc;
 use bevy_ecs::{
     resource::Resource,
     system::{
-        Commands,
         Res,
         ResMut,
         SystemParam,
@@ -24,7 +23,7 @@ use cem_util::wgpu::{
 use nalgebra::Vector2;
 use palette::LinSrgba;
 
-use crate::renderer::{
+use crate::{
     command::CommandSender,
     renderer::{
         Renderer,
@@ -40,18 +39,16 @@ use crate::renderer::{
     },
 };
 
-#[derive(derive_more::Debug, SystemParam)]
-pub struct RenderResourceManager<'w, 's> {
+#[derive(Debug, SystemParam)]
+pub struct RenderResourceManager<'w> {
     renderer: Res<'w, SharedRenderer>,
     transaction: ResMut<'w, RenderResourceTransactionState>,
     command_sender: Res<'w, CommandSender>,
-    #[debug(skip)]
-    commands: Commands<'w, 's>,
 }
 
-impl<'w, 's> RenderResourceManager<'w, 's> {
+impl<'w> RenderResourceManager<'w> {
     pub fn device(&self) -> &wgpu::Device {
-        &self.renderer.wgpu_context.device
+        &self.renderer.device
     }
 
     pub fn create_texture(
@@ -61,13 +58,7 @@ impl<'w, 's> RenderResourceManager<'w, 's> {
         format: wgpu::TextureFormat,
         label: &str,
     ) -> wgpu::Texture {
-        create_texture(
-            size,
-            usage,
-            format,
-            label,
-            &self.renderer.wgpu_context.device,
-        )
+        create_texture(size, usage, format, label, &self.renderer.device)
     }
 
     pub fn create_texture_from_image(
@@ -80,7 +71,7 @@ impl<'w, 's> RenderResourceManager<'w, 's> {
             image.create_texture(
                 usage,
                 label,
-                &self.renderer.wgpu_context.device,
+                &self.renderer.device,
                 &mut transaction.write_staging,
             )
         })
@@ -97,7 +88,7 @@ impl<'w, 's> RenderResourceManager<'w, 's> {
                 color,
                 usage,
                 label,
-                &self.renderer.wgpu_context.device,
+                &self.renderer.device,
                 &mut transaction.write_staging,
             )
         })
@@ -155,15 +146,15 @@ impl RenderResourceTransaction {
         Self {
             write_staging: SubmitOnDrop::new(
                 WriteStagingTransaction::new(
-                    renderer.wgpu_context.staging_pool.belt(),
-                    renderer.wgpu_context.device.clone(),
-                    renderer.wgpu_context.device.create_command_encoder(
-                        &wgpu::CommandEncoderDescriptor {
+                    renderer.staging_pool.belt(),
+                    renderer.device.clone(),
+                    renderer
+                        .device
+                        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                             label: Some("render/resource_manager/transaction"),
-                        },
-                    ),
+                        }),
                 ),
-                renderer.wgpu_context.queue.clone(),
+                renderer.queue.clone(),
             ),
         }
     }

@@ -26,7 +26,7 @@ use crate::{
     project::{
         BeginProjectionPass,
         CreateProjection,
-        ImageTarget,
+        FdtdImageTarget,
         ProjectionParameters,
         ProjectionPass,
         ProjectionPassAdd,
@@ -214,27 +214,27 @@ impl TextureProjectionInner {
 }
 
 #[derive(Debug)]
-pub struct TextureProjection {
+pub struct FdtdWgpuTextureProjection {
     inner: TextureProjectionInner,
     texture_view: wgpu::TextureView,
 }
 
 impl CreateProjection<wgpu::Texture> for FdtdWgpuSolverInstance {
-    type Projection = TextureProjection;
+    type Projection = FdtdWgpuTextureProjection;
 
     fn create_projection(
         &self,
         state: &FdtdWgpuSolverState,
         target: wgpu::Texture,
         parameters: &ProjectionParameters,
-    ) -> TextureProjection {
+    ) -> FdtdWgpuTextureProjection {
         let texture_view = target.create_view(&wgpu::TextureViewDescriptor {
             label: Some("fdtd-wgpu/projection"),
             ..Default::default()
         });
         let texture_format = target.format();
 
-        TextureProjection {
+        FdtdWgpuTextureProjection {
             inner: TextureProjectionInner::new(self, state, parameters, texture_format),
             texture_view,
         }
@@ -242,17 +242,17 @@ impl CreateProjection<wgpu::Texture> for FdtdWgpuSolverInstance {
 }
 
 impl CreateProjection<wgpu::TextureView> for FdtdWgpuSolverInstance {
-    type Projection = TextureProjection;
+    type Projection = FdtdWgpuTextureProjection;
 
     fn create_projection(
         &self,
         state: &FdtdWgpuSolverState,
         target: wgpu::TextureView,
         parameters: &ProjectionParameters,
-    ) -> TextureProjection {
+    ) -> FdtdWgpuTextureProjection {
         let texture_format = target.texture().format();
 
-        TextureProjection {
+        FdtdWgpuTextureProjection {
             inner: TextureProjectionInner::new(self, state, parameters, texture_format),
             texture_view: target,
         }
@@ -262,7 +262,7 @@ impl CreateProjection<wgpu::TextureView> for FdtdWgpuSolverInstance {
 #[derive(Debug)]
 pub struct ImageProjection<Target>
 where
-    Target: ImageTarget,
+    Target: FdtdImageTarget,
 {
     target: Target,
     inner: TextureProjectionInner,
@@ -273,7 +273,7 @@ where
 
 impl<Target> CreateProjection<Target> for FdtdWgpuSolverInstance
 where
-    Target: ImageTarget<Pixel = image::Rgba<u8>>,
+    Target: FdtdImageTarget<Pixel = image::Rgba<u8>>,
 {
     type Projection = ImageProjection<Target>;
 
@@ -350,7 +350,7 @@ struct Staging {
 
 impl<'a, Target> ProjectionPassAdd<'a, ImageProjection<Target>> for FdtdWgpuProjectionPass<'a>
 where
-    Target: ImageTarget<Pixel = image::Rgba<u8>>,
+    Target: FdtdImageTarget<Pixel = image::Rgba<u8>>,
 {
     fn add_projection(&mut self, projection: &'a mut ImageProjection<Target>) {
         projection.inner.project(
@@ -490,8 +490,8 @@ impl<'a> FdtdWgpuProjectionPass<'a> {
     }
 }
 
-impl<'a> ProjectionPassAdd<'a, TextureProjection> for FdtdWgpuProjectionPass<'a> {
-    fn add_projection(&mut self, projection: &mut TextureProjection) {
+impl<'a> ProjectionPassAdd<'a, FdtdWgpuTextureProjection> for FdtdWgpuProjectionPass<'a> {
+    fn add_projection(&mut self, projection: &mut FdtdWgpuTextureProjection) {
         projection.inner.project(
             &mut self.command_encoder,
             self.swap_buffer_index,

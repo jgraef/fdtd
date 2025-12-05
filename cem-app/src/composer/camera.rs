@@ -11,6 +11,14 @@ use bevy_ecs::{
         World,
     },
 };
+use cem_render::{
+    DrawCommand,
+    camera::{
+        CameraProjection,
+        Viewport,
+    },
+    grab_draw_list_for_camera,
+};
 use cem_scene::{
     spatial::queries::{
         RayCast,
@@ -31,15 +39,6 @@ use nalgebra::{
     Vector3,
 };
 use parry3d::query::Ray;
-
-use crate::renderer::{
-    DrawCommand,
-    camera::{
-        CameraProjection,
-        Viewport,
-    },
-    grab_draw_list_for_camera,
-};
 
 /// A proxy to control a camera in a world.
 #[derive(Debug)]

@@ -2,6 +2,7 @@
 
 use std::convert::Infallible;
 
+use cem_render::material::Material;
 use cem_scene::{
     PopulateScene,
     Scene,
@@ -20,12 +21,9 @@ use nec_file::{
 };
 use parry3d::shape::Cylinder;
 
-use crate::{
-    renderer::material::Material,
-    util::scene::{
-        EntityBuilderExt,
-        SceneExt,
-    },
+use crate::util::scene::{
+    EntityBuilderExt,
+    SceneExt,
 };
 
 #[derive(Clone, Copy, Debug)]

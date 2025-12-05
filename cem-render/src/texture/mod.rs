@@ -10,19 +10,19 @@ use bevy_ecs::system::{
     ResMut,
     SystemParam,
 };
-use cem_util::wgpu::create_texture_view_from_texture;
+use cem_util::wgpu::{
+    UnsupportedColorSpace,
+    create_texture_view_from_texture,
+};
 
 use crate::{
-    Error,
-    renderer::{
-        resource::RenderResourceManager,
-        texture::{
-            cache::{
-                ImageInfo,
-                TextureCache,
-            },
-            channel::TextureReceiver,
+    resource::RenderResourceManager,
+    texture::{
+        cache::{
+            ImageInfo,
+            TextureCache,
         },
+        channel::TextureReceiver,
     },
 };
 
@@ -30,16 +30,16 @@ pub mod cache;
 pub mod channel;
 
 #[derive(Debug, SystemParam)]
-pub struct TextureLoaderContext<'w, 's> {
+pub struct TextureLoaderContext<'w> {
     pub texture_cache: ResMut<'w, TextureCache>,
-    pub render_resource_manager: RenderResourceManager<'w, 's>,
+    pub render_resource_manager: RenderResourceManager<'w>,
 }
 
-impl<'w, 's> TextureLoaderContext<'w, 's> {
+impl<'w> TextureLoaderContext<'w> {
     pub fn load_texture_from_file<P>(
         &mut self,
         path: P,
-    ) -> Result<(Arc<TextureAndView>, ImageInfo), Error>
+    ) -> Result<(Arc<TextureAndView>, ImageInfo), TextureLoadError>
     where
         P: AsRef<Path>,
     {
@@ -69,6 +69,18 @@ impl<'w, 's> TextureLoaderContext<'w, 's> {
     }
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum TextureLoadError {
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+
+    #[error(transparent)]
+    Image(#[from] image::ImageError),
+
+    #[error(transparent)]
+    UnsupportedColorspace(#[from] UnsupportedColorSpace),
+}
+
 #[derive(Clone, Debug)]
 pub enum TextureSource {
     File { path: PathBuf },
@@ -76,7 +88,10 @@ pub enum TextureSource {
 }
 
 impl TextureSource {
-    pub fn load(&self, context: &mut TextureLoaderContext) -> Result<LoadedTexture, Error> {
+    pub fn load(
+        &self,
+        context: &mut TextureLoaderContext,
+    ) -> Result<LoadedTexture, TextureLoadError> {
         match self {
             TextureSource::File { path } => {
                 let (texture_and_view, info) = context.load_texture_from_file(path)?;

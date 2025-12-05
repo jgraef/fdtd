@@ -6,7 +6,7 @@ use bevy_ecs::{
 };
 use cem_util::exclusive::Exclusive;
 
-use crate::renderer::{
+use crate::{
     draw_commands::DrawCommandInfo,
     texture::channel::CopyImageToTextureCommand,
 };

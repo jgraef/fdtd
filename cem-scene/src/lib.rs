@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 #![warn(clippy::todo, unused_qualifications)]
 
 pub mod assets;

@@ -7,6 +7,7 @@ members = [
     "nec-file",
     "cem-scene",
     "cem-probe",
+    "cem-render",
 ]
 
 [patch.crates-io]
@@ -22,4 +23,5 @@ cem-scene = { path = "cem-scene" }
 cem-solver = { path = "cem-solver" }
 cem-util = { path = "cem-util" }
 cem-probe = { path = "cem-probe" }
+cem-render = { path = "cem-render" }
 nec-file = { path = "nec-file" }

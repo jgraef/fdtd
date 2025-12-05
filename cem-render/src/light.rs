@@ -43,7 +43,7 @@ use serde::{
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, Component, Reflect)]
 #[reflect(Component, ComponentUi, @ComponentName::new("Point Light"), Default)]
 pub struct PointLight {
-    #[serde(with = "crate::util::serde::palette")]
+    #[serde(with = "cem_util::palette::serde")]
     #[reflect(ignore)]
     pub color: Srgb,
 }
@@ -85,7 +85,7 @@ impl PropertiesUi for PointLight {
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, Component, Reflect)]
 #[reflect(Component, ComponentUi, @ComponentName::new("Ambient Light"), Default)]
 pub struct AmbientLight {
-    #[serde(with = "crate::util::serde::palette")]
+    #[serde(with = "cem_util::palette::serde")]
     #[reflect(ignore)]
     pub color: Srgb,
 }
@@ -108,11 +108,12 @@ impl PropertiesUi for AmbientLight {
 
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 #[repr(C)]
-pub(super) struct PointLightData {
+pub(crate) struct PointLightData {
     pub color: LinSrgba,
 }
 
 impl PointLightData {
+    #[allow(dead_code)]
     pub fn new(point_light: &PointLight) -> Self {
         Self {
             color: point_light.color.into_linear().with_alpha(1.0),

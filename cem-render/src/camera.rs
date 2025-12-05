@@ -35,6 +35,7 @@ use nalgebra::{
 };
 use palette::{
     LinSrgba,
+    Srgba,
     WithAlpha,
 };
 use parry3d::{
@@ -47,7 +48,7 @@ use serde::{
 };
 use wgpu::util::DeviceExt;
 
-use crate::renderer::{
+use crate::{
     components::ClearColor,
     draw_commands::DrawCommandFlags,
     light::{
@@ -247,7 +248,10 @@ pub struct CameraData {
     transform: Matrix4<f32>,
     projection: Matrix4<f32>,
     world_position: Vector4<f32>,
-    clear_color: LinSrgba,
+    // note: this is passed as non-linear to the shader, since it's used with a flat fragment
+    // shader and the target texture is non-srgb (meaning it won't do any conversions). in the end
+    // the original srgb color we set here will be displayed.
+    clear_color: Srgba,
     ambient_light_color: LinSrgba,
     point_light_color: LinSrgba,
     flags: CameraFlags,
@@ -290,7 +294,8 @@ impl CameraData {
         }
 
         if let Some(clear_color) = clear_color {
-            data.clear_color = clear_color.clear_color.into_linear().with_alpha(1.0);
+            //data.clear_color = clear_color.clear_color.into_linear().with_alpha(1.0);
+            data.clear_color = clear_color.clear_color.with_alpha(1.0);
         }
 
         // clippy, i will probably nest other ifs using the camera config

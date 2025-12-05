@@ -12,12 +12,12 @@ use parking_lot::{
     RwLockWriteGuard,
 };
 
-use crate::renderer::{
+use crate::{
     command::CommandSender,
     texture::TextureAndView,
 };
 
-pub(in crate::renderer) fn texture_channel(
+pub(crate) fn texture_channel(
     texture_and_view: Arc<TextureAndView>,
     size: Vector2<u32>,
 
@@ -43,7 +43,7 @@ pub struct TextureReceiver {
 }
 
 #[derive(Debug)]
-pub(in crate::renderer) struct CopyImageToTextureCommand {
+pub(crate) struct CopyImageToTextureCommand {
     shared: Arc<Shared>,
 }
 

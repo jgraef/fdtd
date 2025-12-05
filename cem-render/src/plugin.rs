@@ -10,30 +10,28 @@ use cem_scene::{
     plugin::Plugin,
     schedule,
 };
+use cem_util::wgpu::buffer::StagingPool;
 
 use crate::{
-    app::WgpuContext,
-    renderer::{
-        command,
-        material::{
-            LoadAlbedoTexture,
-            LoadMaterialTexture,
-        },
-        mesh::LoadMesh,
-        renderer::{
-            Renderer,
-            RendererConfig,
-            SharedRenderer,
-        },
-        resource::RenderResourceTransactionState,
-        state::RendererState,
-        systems::{
-            self,
-            UpdateMeshBindGroupMessage,
-            handle_command_queue,
-        },
-        texture::cache::TextureCache,
+    command,
+    material::{
+        LoadAlbedoTexture,
+        LoadMaterialTexture,
     },
+    mesh::LoadMesh,
+    renderer::{
+        Renderer,
+        RendererConfig,
+        SharedRenderer,
+    },
+    resource::RenderResourceTransactionState,
+    state::RendererState,
+    systems::{
+        self,
+        UpdateMeshBindGroupMessage,
+        handle_command_queue,
+    },
+    texture::cache::TextureCache,
 };
 
 #[derive(Clone, Copy, Debug, SystemSet, Hash, PartialEq, Eq)]
@@ -52,8 +50,13 @@ pub struct RenderPlugin {
 }
 
 impl RenderPlugin {
-    pub fn new(wgpu_context: WgpuContext, config: RendererConfig) -> Self {
-        let renderer = Renderer::new(wgpu_context, config);
+    pub fn new(
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+        staging_pool: StagingPool,
+        config: RendererConfig,
+    ) -> Self {
+        let renderer = Renderer::new(device, queue, staging_pool, config);
         Self {
             renderer: SharedRenderer(Arc::new(renderer)),
         }
@@ -71,7 +74,7 @@ impl Plugin for RenderPlugin {
             .insert_resource(TextureCache::default())
             // insert the shared renderer as resource
             .insert_resource(self.renderer.clone())
-            .insert_resource(RendererState::new(&self.renderer.wgpu_context.device))
+            .insert_resource(RendererState::new(&self.renderer.device))
             .insert_resource(RenderResourceTransactionState::default())
             .insert_resource(command_sender)
             .insert_resource(command_receiver)

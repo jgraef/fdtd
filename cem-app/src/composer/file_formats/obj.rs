@@ -4,6 +4,7 @@ use std::{
 };
 
 use bevy_ecs::name::Name;
+use cem_render::material::Material;
 use cem_scene::{
     PopulateScene,
     Scene,
@@ -12,8 +13,6 @@ use cem_scene::{
 use nalgebra::Point3;
 use parry3d::shape::TriMesh;
 use tobj::LoadOptions;
-
-use crate::renderer::material::Material;
 
 pub type Error = tobj::LoadError;
 

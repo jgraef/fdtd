@@ -137,7 +137,7 @@ pub trait ProjectionPassAdd<'a, Projection>: 'a {
 /// This only requires that it can provide a [`image::ImageBuffer`] when asked,
 /// so it can be used to sample into a single image, or into an encoder that
 /// creates an animation.
-pub trait ImageTarget {
+pub trait FdtdImageTarget {
     type Pixel: image::Pixel;
     type Container: DerefMut<Target = [<Self::Pixel as image::Pixel>::Subpixel]>;
     type Error: std::error::Error + Send + Sync + 'static;
@@ -150,9 +150,9 @@ pub trait ImageTarget {
     ) -> Result<(), Self::Error>;
 }
 
-impl<T> ImageTarget for &mut T
+impl<T> FdtdImageTarget for &mut T
 where
-    T: ImageTarget,
+    T: FdtdImageTarget,
 {
     type Pixel = T::Pixel;
     type Container = T::Container;
@@ -170,7 +170,7 @@ where
     }
 }
 
-impl<Pixel, Container> ImageTarget for image::ImageBuffer<Pixel, Container>
+impl<Pixel, Container> FdtdImageTarget for image::ImageBuffer<Pixel, Container>
 where
     Pixel: image::Pixel,
     Container: DerefMut<Target = [<Pixel as image::Pixel>::Subpixel]>,
@@ -204,7 +204,7 @@ where
     pub frame_delay: image::Delay,
 }
 
-impl<Writer> ImageTarget for GifEncoder<Writer>
+impl<Writer> FdtdImageTarget for GifEncoder<Writer>
 where
     Writer: Write,
 {

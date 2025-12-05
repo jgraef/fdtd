@@ -1,17 +1,16 @@
 use std::num::NonZero;
 
-use palette::Srgb;
-use serde::{
-    Deserialize,
-    Serialize,
-};
-
-use crate::renderer::{
+use cem_render::{
     components::Outline,
     light::{
         AmbientLight,
         PointLight,
     },
+};
+use palette::Srgb;
+use serde::{
+    Deserialize,
+    Serialize,
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -65,7 +64,7 @@ pub struct View3dConfig {
     // todo: option so we can have no clear color
     #[serde(
         default = "default_background_color",
-        with = "crate::util::serde::palette"
+        with = "cem_util::palette::serde"
     )]
     pub background_color: Srgb,
 

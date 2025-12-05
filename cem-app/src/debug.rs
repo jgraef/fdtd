@@ -6,6 +6,11 @@ use std::{
     },
 };
 
+use bevy_ecs::system::{
+    Res,
+    SystemParam,
+};
+use cem_render::RendererInfo;
 use cem_util::format_size;
 
 use crate::{
@@ -216,4 +221,36 @@ fn get_wgpu_device_info(device: &wgpu::Device, ctx: &egui::Context) -> Arc<Devic
 pub struct DeviceInfo {
     pub allocator_report: Option<wgpu::AllocatorReport>,
     //pub internal_counters: wgpu::InternalCounters,
+}
+
+#[derive(Debug, SystemParam)]
+pub struct RendererDebugUi<'w> {
+    info: Option<Res<'w, RendererInfo>>,
+}
+
+impl<'w> DebugUi for &RendererDebugUi<'w> {
+    fn show_debug(self, ui: &mut egui::Ui) {
+        if let Some(info) = &self.info {
+            egui::CollapsingHeader::new(format!(
+                "Bytes last frame: {}",
+                format_size(info.prepare_world_staged.total),
+            ))
+            .id_salt(ui.id().with("prepare_world_staged"))
+            .default_open(true)
+            .show(ui, |ui| {
+                ui.label(format!(
+                    "Command Queue: {}",
+                    format_size(info.prepare_world_staged.command_queue),
+                ));
+                ui.label(format!(
+                    "Instance Buffer: {}",
+                    format_size(info.prepare_world_staged.instance_buffer),
+                ));
+                ui.label(format!(
+                    "Camera Buffers: {}",
+                    format_size(info.prepare_world_staged.camera_buffers),
+                ));
+            });
+        }
+    }
 }

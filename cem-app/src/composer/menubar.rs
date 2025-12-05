@@ -7,6 +7,7 @@ use crate::{
     composer::{
         ComposerState,
         Composers,
+        entity_window::EntityWindow,
     },
     error::ResultExt,
     menubar::setup_menu,
@@ -88,6 +89,23 @@ impl<'a> ComposerMenuElements<'a> {
             .clicked()
         {
             self.composers.with_selected(ComposerState::delete);
+        }
+
+        ui.separator();
+
+        if ui
+            .add_enabled(has_selected, egui::Button::new("Properties"))
+            .clicked()
+        {
+            self.composers.with_selected(|state, entities| {
+                entities.into_iter().for_each(|entity| {
+                    state
+                        .scene
+                        .world
+                        .entity_mut(entity)
+                        .insert(EntityWindow::default());
+                });
+            });
         }
     }
 

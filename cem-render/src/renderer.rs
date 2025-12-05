@@ -7,6 +7,7 @@ use std::{
 use bevy_ecs::resource::Resource;
 use cem_util::wgpu::{
     buffer::{
+        StagingPool,
         WriteStaging,
         WriteStagingCommit,
         WriteStagingTransaction,
@@ -17,22 +18,19 @@ use cem_util::wgpu::{
 use palette::LinSrgba;
 
 use crate::{
-    app::WgpuContext,
-    renderer::{
-        mesh::WindingOrder,
-        pipeline::{
-            DepthState,
-            Stencil,
-            StencilTest,
-            clear::{
-                ClearPipeline,
-                ClearPipelineDescriptor,
-            },
-            mesh::{
-                MeshPipeline,
-                MeshPipelineDescriptor,
-                StencilStateExt,
-            },
+    mesh::WindingOrder,
+    pipeline::{
+        DepthState,
+        Stencil,
+        StencilTest,
+        clear::{
+            ClearPipeline,
+            ClearPipelineDescriptor,
+        },
+        mesh::{
+            MeshPipeline,
+            MeshPipelineDescriptor,
+            StencilStateExt,
         },
     },
 };
@@ -46,15 +44,13 @@ pub struct RendererConfig {
 
 #[derive(Debug)]
 pub struct Renderer {
-    pub wgpu_context: WgpuContext,
+    pub device: wgpu::Device,
+    pub queue: wgpu::Queue,
+    pub staging_pool: StagingPool,
     pub config: RendererConfig,
 
     pub camera_bind_group_layout: wgpu::BindGroupLayout,
     pub mesh_bind_group_layout: wgpu::BindGroupLayout,
-
-    // this is actually used for everything, not just meshes. but we might split it into clear,
-    // mesh, etc.
-    mesh_shader_module: wgpu::ShaderModule,
 
     pub clear_pipeline: ClearPipeline,
     pub mesh_opaque_pipeline: MeshPipeline,
@@ -83,35 +79,38 @@ impl Renderer {
     // actually depends on the orientation of our Z axis.
     pub const FRONT_FACE: wgpu::FrontFace = Renderer::WINDING_ORDER.flipped().front_face();
 
-    pub fn new(wgpu_context: WgpuContext, config: RendererConfig) -> Self {
+    pub fn new(
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+        staging_pool: StagingPool,
+        config: RendererConfig,
+    ) -> Self {
         let camera_bind_group_layout =
-            wgpu_context
-                .device
-                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                    label: Some("camera_bind_group_layout"),
-                    entries: &[
-                        wgpu::BindGroupLayoutEntry {
-                            binding: 0,
-                            visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                            ty: wgpu::BindingType::Buffer {
-                                ty: wgpu::BufferBindingType::Uniform,
-                                has_dynamic_offset: false,
-                                min_binding_size: None,
-                            },
-                            count: None,
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("camera_bind_group_layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
                         },
-                        wgpu::BindGroupLayoutEntry {
-                            binding: 1,
-                            visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                            ty: wgpu::BindingType::Buffer {
-                                ty: wgpu::BufferBindingType::Storage { read_only: true },
-                                has_dynamic_offset: false,
-                                min_binding_size: None,
-                            },
-                            count: None,
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
                         },
-                    ],
-                });
+                        count: None,
+                    },
+                ],
+            });
 
         let mesh_bind_group_layout = {
             let vertex_buffer = |binding| {
@@ -140,36 +139,34 @@ impl Renderer {
                 }
             };
 
-            wgpu_context
-                .device
-                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                    label: Some("mesh_bind_group_layout"),
-                    entries: &[
-                        // index buffer
-                        vertex_buffer(0),
-                        // vertex buffer
-                        vertex_buffer(1),
-                        // sampler
-                        wgpu::BindGroupLayoutEntry {
-                            binding: 2,
-                            visibility: wgpu::ShaderStages::FRAGMENT,
-                            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                            count: None,
-                        },
-                        // material - albedo
-                        texture(3),
-                        // material - material
-                        texture(4),
-                    ],
-                })
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("mesh_bind_group_layout"),
+                entries: &[
+                    // index buffer
+                    vertex_buffer(0),
+                    // vertex buffer
+                    vertex_buffer(1),
+                    // sampler
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                    // material - albedo
+                    texture(3),
+                    // material - material
+                    texture(4),
+                ],
+            })
         };
 
-        let mesh_shader_module = wgpu_context
-            .device
-            .create_shader_module(Self::MESH_SHADER_MODULE);
+        // this is actually used for everything, not just meshes. but we might split it
+        // into clear, mesh, etc.
+        let mesh_shader_module = device.create_shader_module(Self::MESH_SHADER_MODULE);
 
         let clear_pipeline = ClearPipeline::new(
-            &wgpu_context.device,
+            &device,
             &ClearPipelineDescriptor {
                 renderer_config: &config,
                 camera_bind_group_layout: &camera_bind_group_layout,
@@ -178,7 +175,7 @@ impl Renderer {
         );
 
         let mesh_opaque_pipeline = MeshPipeline::new(
-            &wgpu_context.device,
+            &device,
             &MeshPipelineDescriptor {
                 label: "render/mesh/opaque",
                 renderer_config: &config,
@@ -195,7 +192,7 @@ impl Renderer {
         );
 
         let mesh_transparent_pipeline = MeshPipeline::new(
-            &wgpu_context.device,
+            &device,
             &MeshPipelineDescriptor {
                 label: "render/mesh/transparent",
                 renderer_config: &config,
@@ -212,7 +209,7 @@ impl Renderer {
         );
 
         let wireframe_pipeline = MeshPipeline::new(
-            &wgpu_context.device,
+            &device,
             &MeshPipelineDescriptor {
                 label: "render/mesh/wireframe",
                 renderer_config: &config,
@@ -232,7 +229,7 @@ impl Renderer {
         // color. it will ignore depth tests, but will check if the OUTLINE bit
         // in the stencil mask is not set
         let outline_pipeline = MeshPipeline::new(
-            &wgpu_context.device,
+            &device,
             &MeshPipelineDescriptor {
                 label: "render/mesh/outline",
                 renderer_config: &config,
@@ -254,29 +251,24 @@ impl Renderer {
             },
         );
 
-        let mut command_encoder =
-            wgpu_context
-                .device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("render/init"),
-                });
-        let mut write_staging = WriteStagingTransaction::new(
-            wgpu_context.staging_pool.belt(),
-            &wgpu_context.device,
-            &mut command_encoder,
-        );
+        let mut command_encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("render/init"),
+        });
+        let mut write_staging =
+            WriteStagingTransaction::new(staging_pool.belt(), &device, &mut command_encoder);
 
-        let fallbacks = Fallbacks::new(&wgpu_context.device, &mut write_staging);
+        let fallbacks = Fallbacks::new(&device, &mut write_staging);
 
         write_staging.commit();
-        wgpu_context.queue.submit([command_encoder.finish()]);
+        queue.submit([command_encoder.finish()]);
 
         Self {
-            wgpu_context,
+            device,
+            queue,
+            staging_pool,
             config,
             camera_bind_group_layout,
             mesh_bind_group_layout,
-            mesh_shader_module,
             clear_pipeline,
             mesh_opaque_pipeline,
             mesh_transparent_pipeline,
@@ -344,18 +336,5 @@ impl Fallbacks {
             black,
             sampler,
         }
-    }
-}
-
-// todo: we might need this later
-#[derive(Clone, derive_more::Debug)]
-struct EguiWgpuRenderer {
-    #[debug(skip)]
-    inner: Arc<egui::mutex::RwLock<egui_wgpu::Renderer>>,
-}
-
-impl From<Arc<egui::mutex::RwLock<egui_wgpu::Renderer>>> for EguiWgpuRenderer {
-    fn from(value: Arc<egui::mutex::RwLock<egui_wgpu::Renderer>>) -> Self {
-        Self { inner: value }
     }
 }

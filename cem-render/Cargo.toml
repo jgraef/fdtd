@@ -1,40 +1,38 @@
 [package]
-name = "cem-scene"
+name = "cem-render"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
 bevy_ecs = { version = "0.17.3", default-features = false, features = [
-    "backtrace",
     "bevy_reflect",
-    "std",
-    "trace",
-    "track_location",
     "reflect_auto_register",
 ] }
 bevy_reflect = "0.17.3"
-bevy_tasks = { version = "0.17.3", default-features = false }
-bevy_utils = { version = "0.17.3", default-features = false }
+bitflags = "2.10.0"
+bytemuck = { version = "1.24.0", features = ["derive"] }
 cem-probe = { workspace = true, optional = true }
+cem-scene.workspace = true
+cem-util = { workspace = true, features = ["image", "wgpu"] }
 derive_more = { version = "2.0.1", features = ["debug"] }
 egui = { version = "0.33.2", default-features = false, optional = true }
-nalgebra = "0.34.1"
-parry3d = { version = "0.25.3", default-features = false, features = [
-    "dim3",
-    "f32",
-    "std",
-] }
+image = { version = "0.25.9", default-features = false }
+nalgebra = { version = "0.34.1", features = ["bytemuck"] }
+palette = "0.7.6"
+parking_lot = "0.12.5"
+parry3d = { version = "0.25.2", default-features = false, optional = true }
+pbr-presets = { git = "https://github.com/jgraef/pbr-presets.git", version = "0.1.0" }
 serde = { version = "1.0.228", features = ["derive"], optional = true }
 thiserror = "2.0.17"
 tracing = "0.1.43"
+wgpu = "27.0.1"
 
 [features]
-default = []
-full = ["serde", "probe"]
 serde = [
     "dep:serde",
-    "parry3d/serde-serialize",
-    "bevy_ecs/serialize",
     "nalgebra/serde-serialize",
+    "palette/serializing",
+    "wgpu/serde",
 ]
+parry-mesh = ["dep:parry3d"]
 probe = ["dep:cem-probe", "dep:egui"]

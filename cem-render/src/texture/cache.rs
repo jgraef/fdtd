@@ -12,7 +12,7 @@ use std::{
 
 use bevy_ecs::resource::Resource;
 
-use crate::renderer::texture::TextureAndView;
+use crate::texture::TextureAndView;
 
 #[derive(Debug, Default, Resource)]
 pub struct TextureCache {

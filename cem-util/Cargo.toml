@@ -19,7 +19,6 @@ wgpu = { version = "27.0.1", default-features = false, optional = true }
 
 [features]
 default = []
-full = ["wgpu", "image", "egui"]
 wgpu = ["dep:wgpu", "nalgebra", "palette"]
 image = ["dep:image"]
 egui = ["dep:egui", "dep:egui-file-dialog"]

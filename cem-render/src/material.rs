@@ -47,7 +47,7 @@ use serde::{
     Serialize,
 };
 
-use crate::renderer::{
+use crate::{
     systems::UpdateMeshBindGroupMessage,
     texture::{
         TextureAndView,
@@ -65,7 +65,7 @@ pub mod presets {
     };
     pub use pbr_presets::*;
 
-    use crate::renderer::material::Material;
+    use crate::material::Material;
 
     impl From<MaterialPreset> for Material {
         fn from(value: MaterialPreset) -> Self {
@@ -98,7 +98,7 @@ pub mod presets {
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, Component, Reflect)]
 #[reflect(Component, ComponentUi, @ComponentName::new("Material"), Default)]
 pub struct Material {
-    #[serde(with = "crate::util::serde::palette")]
+    #[serde(with = "cem_util::palette::serde")]
     #[reflect(ignore)]
     pub albedo: Srgba,
 
@@ -513,11 +513,11 @@ impl LoadAsset for LoadAlbedoTexture {
 
 impl LoadingState for LoadAlbedoTexture {
     type Output = AlbedoTexture;
-    type Context = TextureLoaderContext<'static, 'static>;
+    type Context = TextureLoaderContext<'static>;
 
-    fn poll<'w, 's>(
+    fn poll<'w>(
         &mut self,
-        context: &mut TextureLoaderContext<'w, 's>,
+        context: &mut TextureLoaderContext<'w>,
     ) -> Result<LoadingProgress<AlbedoTexture>, AssetError> {
         let loaded_texture = self.source.load(context).map_err(AssetError::custom)?;
 
@@ -565,11 +565,11 @@ impl LoadAsset for LoadMaterialTexture {
 
 impl LoadingState for LoadMaterialTexture {
     type Output = MaterialTexture;
-    type Context = TextureLoaderContext<'static, 'static>;
+    type Context = TextureLoaderContext<'static>;
 
     fn poll<'w, 's>(
         &mut self,
-        context: &mut TextureLoaderContext<'w, 's>,
+        context: &mut TextureLoaderContext<'w>,
     ) -> Result<LoadingProgress<MaterialTexture>, AssetError> {
         let loaded_texture = self.source.load(context).map_err(AssetError::custom)?;
 

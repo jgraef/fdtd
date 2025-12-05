@@ -45,7 +45,7 @@ impl PropertiesUi for Hidden {
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, Component, Reflect)]
 #[reflect(Component, ComponentUi, @ComponentName::new("Clear Color"), Default)]
 pub struct ClearColor {
-    #[serde(with = "crate::util::serde::palette")]
+    #[serde(with = "cem_util::palette::serde")]
     #[reflect(ignore)]
     pub clear_color: Srgb,
 }
@@ -73,7 +73,7 @@ impl PropertiesUi for ClearColor {
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, Component, Reflect)]
 #[reflect(Component, ComponentUi, @ComponentName::new("Outline"), Default)]
 pub struct Outline {
-    #[serde(with = "crate::util::serde::palette")]
+    #[serde(with = "cem_util::palette::serde")]
     #[reflect(ignore)]
     pub color: Srgba,
 

@@ -8,23 +8,21 @@ use bevy_ecs::{
     name::Name,
     world::EntityWorldMut,
 };
+use cem_render::{
+    material::Material,
+    mesh::{
+        IntoGenerateMesh,
+        LoadMesh,
+    },
+};
 use cem_scene::{
     spatial::Collider,
     transform::LocalTransform,
 };
 
-use crate::{
-    composer::{
-        selection::Selectable,
-        tree::ShowInTree,
-    },
-    renderer::{
-        material::Material,
-        mesh::{
-            IntoGenerateMesh,
-            LoadMesh,
-        },
-    },
+use crate::composer::{
+    selection::Selectable,
+    tree::ShowInTree,
 };
 
 pub trait SceneExt {

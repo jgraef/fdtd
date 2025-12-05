@@ -18,6 +18,10 @@ use bevy_ecs::{
     },
     world::World,
 };
+use cem_render::{
+    material,
+    resource::RenderResourceManager,
+};
 use cem_scene::{
     Scene,
     spatial::{
@@ -93,11 +97,6 @@ use crate::{
         ErrorHandler,
         UiErrorSink,
     },
-    renderer::{
-        material,
-        resource::RenderResourceManager,
-        texture::channel::UndecidedTextureSender,
-    },
     solver::{
         config::{
             Parallelization,
@@ -107,7 +106,10 @@ use crate::{
             SolverConfigSpecifics,
             StopCondition,
         },
-        observer::Observer,
+        observer::{
+            Observer,
+            TextureSenderTarget,
+        },
     },
     util::spawn_thread,
 };
@@ -239,15 +241,15 @@ impl<'a> RunFdtd<'a> {
     fn run_fdtd_with_backend<Backend>(self, backend: &Backend) -> Result<Solver, Error>
     where
         Backend: SolverBackend<FdtdSolverConfig, Point3<usize>>,
-        Backend::Instance: CreateProjection<UndecidedTextureSender> + Send + 'static,
+        Backend::Instance: CreateProjection<TextureSenderTarget> + Send + 'static,
         <Backend::Instance as SolverInstance>::State: Time + Send + 'static,
         for<'b> <Backend::Instance as SolverInstance>::UpdatePass<'b>:
             UpdatePassForcing<Point3<usize>>,
         for<'b> <Backend::Instance as BeginProjectionPass>::ProjectionPass<'b>: ProjectionPassAdd<
                 'b,
-                <Backend::Instance as CreateProjection<UndecidedTextureSender>>::Projection,
+                <Backend::Instance as CreateProjection<TextureSenderTarget>>::Projection,
             >,
-        <Backend::Instance as CreateProjection<UndecidedTextureSender>>::Projection: Send + 'static,
+        <Backend::Instance as CreateProjection<TextureSenderTarget>>::Projection: Send + 'static,
     {
         let Self {
             scene,
@@ -448,20 +450,16 @@ impl Solver {
         mut state: Instance::State,
         stop_condition: StopCondition,
         sources: Sources,
-        mut observers: Observers<
-            <Instance as CreateProjection<UndecidedTextureSender>>::Projection,
-        >,
+        mut observers: Observers<<Instance as CreateProjection<TextureSenderTarget>>::Projection>,
         error_sink: UiErrorSink,
     ) -> Self
     where
-        Instance: SolverInstance + CreateProjection<UndecidedTextureSender> + Send + 'static,
+        Instance: SolverInstance + CreateProjection<TextureSenderTarget> + Send + 'static,
         Instance::State: Time + Send + 'static,
         for<'a> Instance::UpdatePass<'a>: UpdatePassForcing<Point3<usize>>,
-        for<'a> <Instance as BeginProjectionPass>::ProjectionPass<'a>: ProjectionPassAdd<
-                'a,
-                <Instance as CreateProjection<UndecidedTextureSender>>::Projection,
-            >,
-        <Instance as CreateProjection<UndecidedTextureSender>>::Projection: Send + 'static,
+        for<'a> <Instance as BeginProjectionPass>::ProjectionPass<'a>:
+            ProjectionPassAdd<'a, <Instance as CreateProjection<TextureSenderTarget>>::Projection>,
+        <Instance as CreateProjection<TextureSenderTarget>>::Projection: Send + 'static,
     {
         let start_paused = true;
 
@@ -701,7 +699,7 @@ impl<P> Observers<P> {
         repaint_trigger: RepaintTrigger,
     ) -> Self
     where
-        I: CreateProjection<UndecidedTextureSender, Projection = P> + 'static,
+        I: CreateProjection<TextureSenderTarget, Projection = P> + 'static,
         I::State: 'static,
         P: 'static,
         for<'a> <I as BeginProjectionPass>::ProjectionPass<'a>: ProjectionPassAdd<'a, P>,
@@ -751,7 +749,7 @@ fn setup_observers_system<I, P>(
     mut commands: Commands,
 ) -> Observers<P>
 where
-    I: CreateProjection<UndecidedTextureSender, Projection = P>,
+    I: CreateProjection<TextureSenderTarget, Projection = P>,
     for<'a> <I as BeginProjectionPass>::ProjectionPass<'a>: ProjectionPassAdd<'a, P>,
 {
     let mut needs_repaint = false;
@@ -814,7 +812,7 @@ where
                     },
                 ));
 
-                instance.create_projection(state, sender, &parameters)
+                instance.create_projection(state, TextureSenderTarget::from(sender), &parameters)
             })
         })
         .collect();

@@ -11,21 +11,31 @@ use cem_probe::{
     label_and_value,
     label_and_value_with_config,
 };
+use cem_render::texture::channel::{
+    ImageSender,
+    UndecidedTextureSender,
+};
 use cem_solver::{
     FieldComponent,
     fdtd::{
         cpu::{
             FdtdCpuSolverInstance,
             LatticeForEach,
-            project::FdtdCpuProjectionPass,
+            project::{
+                FdtdCpuImageProjection,
+                FdtdCpuProjectionPass,
+            },
         },
         wgpu::{
             FdtdWgpuSolverInstance,
             FdtdWgpuSolverState,
+            FdtdWgpuTextureProjection,
+            project::FdtdWgpuProjectionPass,
         },
     },
     project::{
         CreateProjection,
+        FdtdImageTarget,
         ProjectionParameters,
         ProjectionPassAdd,
     },
@@ -35,12 +45,6 @@ use nalgebra::{
     Matrix4,
     UnitVector3,
     Vector2,
-};
-
-use crate::renderer::texture::channel::{
-    ImageSender,
-    TextureSender,
-    UndecidedTextureSender,
 };
 
 #[derive(Clone, Debug, Component)]
@@ -122,10 +126,9 @@ impl Index<FieldComponent> for FieldNames {
     }
 }
 
-#[derive(Debug)]
-pub struct FdtdCpuTextureSenderProjection {
-    image_sender: ImageSender,
-    parameters: ProjectionParameters,
+#[derive(derive_more::From, Debug)]
+pub struct TextureSenderTarget {
+    pub texture_sender: UndecidedTextureSender,
 }
 
 /// note: we could of course implement ImageTarget directly on the ImageSender,
@@ -133,11 +136,11 @@ pub struct FdtdCpuTextureSenderProjection {
 /// from gpu to cpu and back (and have a conflicting implemetation compile
 /// error).
 #[derive(Debug)]
-pub struct CopyImageToTexture {
+pub struct CopyToTextureImageTarget {
     pub image_sender: ImageSender,
 }
 
-impl cem_solver::project::ImageTarget for CopyImageToTexture {
+impl FdtdImageTarget for CopyToTextureImageTarget {
     type Pixel = image::Rgba<u8>;
     type Container = Vec<u8>;
     type Error = Infallible;
@@ -156,26 +159,30 @@ impl cem_solver::project::ImageTarget for CopyImageToTexture {
     }
 }
 
-pub type FdtdCpuImageToTextureProjection =
-    cem_solver::fdtd::cpu::project::ImageProjection<CopyImageToTexture>;
+#[derive(Debug)]
+pub struct FdtdCpuTextureSenderProjection {
+    pub projection: FdtdCpuImageProjection<CopyToTextureImageTarget>,
+}
 
-impl<Threading> CreateProjection<UndecidedTextureSender> for FdtdCpuSolverInstance<Threading>
+impl<Threading> CreateProjection<TextureSenderTarget> for FdtdCpuSolverInstance<Threading>
 where
     Threading: LatticeForEach,
 {
-    type Projection = FdtdCpuImageToTextureProjection;
+    type Projection = FdtdCpuTextureSenderProjection;
 
     fn create_projection(
         &self,
         state: &Self::State,
-        target: UndecidedTextureSender,
+        target: TextureSenderTarget,
         parameters: &ProjectionParameters,
-    ) -> FdtdCpuImageToTextureProjection {
+    ) -> FdtdCpuTextureSenderProjection {
         let _ = state;
 
-        let image_sender = target.send_images();
+        let image_sender = target.texture_sender.send_images();
         tracing::debug!(size = ?image_sender.size(), "creating projection with image sender");
-        self.create_projection(state, CopyImageToTexture { image_sender }, parameters)
+        let projection =
+            self.create_projection(state, CopyToTextureImageTarget { image_sender }, parameters);
+        FdtdCpuTextureSenderProjection { projection }
     }
 }
 
@@ -183,34 +190,37 @@ impl<'a, Threading> ProjectionPassAdd<'a, FdtdCpuTextureSenderProjection>
     for FdtdCpuProjectionPass<'a, Threading>
 {
     fn add_projection(&mut self, projection: &'a mut FdtdCpuTextureSenderProjection) {
-        let mut image_buffer = projection.image_sender.update_image();
-        self.project_to_image(&mut image_buffer, &projection.parameters);
+        self.add_projection(&mut projection.projection);
     }
 }
 
-impl CreateProjection<UndecidedTextureSender> for FdtdWgpuSolverInstance {
-    type Projection = cem_solver::fdtd::wgpu::project::TextureProjection;
+#[derive(Debug)]
+pub struct FdtdWgpuTextureSenderProjection {
+    pub projection: FdtdWgpuTextureProjection,
+}
+
+impl CreateProjection<TextureSenderTarget> for FdtdWgpuSolverInstance {
+    type Projection = FdtdWgpuTextureSenderProjection;
 
     fn create_projection(
         &self,
         state: &FdtdWgpuSolverState,
-        target: UndecidedTextureSender,
+        target: TextureSenderTarget,
         parameters: &ProjectionParameters,
-    ) -> cem_solver::fdtd::wgpu::TextureProjection {
-        let texture_sender = target.send_texture();
-        self.create_projection(state, texture_sender, parameters)
+    ) -> FdtdWgpuTextureSenderProjection {
+        let texture_sender = target.texture_sender.send_texture();
+        tracing::debug!(size = ?texture_sender.size, format = ?texture_sender.format, "creating projection with texture sender");
+        let projection = self.create_projection(
+            state,
+            texture_sender.texture_and_view.texture.clone(),
+            parameters,
+        );
+        FdtdWgpuTextureSenderProjection { projection }
     }
 }
 
-impl CreateProjection<TextureSender> for FdtdWgpuSolverInstance {
-    type Projection = cem_solver::fdtd::wgpu::project::TextureProjection;
-
-    fn create_projection(
-        &self,
-        state: &FdtdWgpuSolverState,
-        target: TextureSender,
-        parameters: &ProjectionParameters,
-    ) -> cem_solver::fdtd::wgpu::TextureProjection {
-        self.create_projection(state, target.texture_and_view.view.clone(), parameters)
+impl<'a> ProjectionPassAdd<'a, FdtdWgpuTextureSenderProjection> for FdtdWgpuProjectionPass<'a> {
+    fn add_projection(&mut self, projection: &'a mut FdtdWgpuTextureSenderProjection) {
+        self.add_projection(&mut projection.projection);
     }
 }

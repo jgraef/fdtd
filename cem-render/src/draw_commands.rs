@@ -23,7 +23,7 @@ use cem_util::{
 };
 use nalgebra::Point3;
 
-use crate::renderer::{
+use crate::{
     Command,
     command::CommandSender,
     mesh::{

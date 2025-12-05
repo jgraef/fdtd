@@ -1,5 +1,4 @@
 pub mod scene;
-pub mod serde;
 
 use std::thread::JoinHandle;
 

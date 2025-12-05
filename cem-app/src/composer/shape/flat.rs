@@ -3,6 +3,12 @@ use std::{
     sync::Arc,
 };
 
+use cem_render::mesh::{
+    GenerateMesh,
+    IntoGenerateMesh,
+    MeshBuilder,
+    WindingOrder,
+};
 use cem_scene::spatial::{
     Collider,
     traits::{
@@ -24,13 +30,6 @@ use parry3d::{
         Ray,
         RayCast as _,
     },
-};
-
-use crate::renderer::mesh::{
-    GenerateMesh,
-    IntoGenerateMesh,
-    MeshBuilder,
-    WindingOrder,
 };
 
 #[derive(Clone, Copy, Debug, Default)]

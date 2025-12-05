@@ -1,4 +1,11 @@
 use bevy_ecs::entity::Entity;
+use cem_render::{
+    DrawCommand,
+    camera::{
+        CameraProjection,
+        Viewport,
+    },
+};
 use cem_scene::{
     Scene,
     transform::LocalTransform,
@@ -12,16 +19,7 @@ use nalgebra::{
 };
 use parry3d::query::Ray;
 
-use crate::{
-    composer::camera::CameraWorldMut,
-    renderer::{
-        DrawCommand,
-        camera::{
-            CameraProjection,
-            Viewport,
-        },
-    },
-};
+use crate::composer::camera::CameraWorldMut;
 
 #[derive(derive_more::Debug)]
 pub struct SceneView<'a> {

@@ -38,7 +38,7 @@ use cem_util::wgpu::{
     },
 };
 
-use crate::renderer::{
+use crate::{
     Command,
     camera::{
         CameraBindGroup,
@@ -90,17 +90,15 @@ use crate::renderer::{
 pub fn begin_frame(renderer: Res<SharedRenderer>, mut state: ResMut<RendererState>) {
     assert!(state.write_staging.is_none());
 
-    let command_encoder =
-        renderer
-            .wgpu_context
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("render/prepare_world"),
-            });
+    let command_encoder = renderer
+        .device
+        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("render/prepare_world"),
+        });
 
     let write_staging = WriteStagingTransaction::new(
-        renderer.wgpu_context.staging_pool.belt(),
-        renderer.wgpu_context.device.clone(),
+        renderer.staging_pool.belt(),
+        renderer.device.clone(),
         command_encoder,
     );
 
@@ -110,10 +108,7 @@ pub fn begin_frame(renderer: Res<SharedRenderer>, mut state: ResMut<RendererStat
 pub fn end_frame(renderer: Res<SharedRenderer>, mut state: ResMut<RendererState>) {
     // finish all staged writes
     let command_encoder = state.write_staging.take().unwrap().commit();
-    renderer
-        .wgpu_context
-        .queue
-        .submit([command_encoder.finish()]);
+    renderer.queue.submit([command_encoder.finish()]);
 }
 
 #[derive(QueryData)]
@@ -289,7 +284,7 @@ pub fn update_mesh_bind_group(
     }
 
     let mesh_bind_group = MeshBindGroup::new(
-        &renderer.wgpu_context.device,
+        &renderer.device,
         &renderer.mesh_bind_group_layout,
         mesh,
         albedo_texture,
@@ -356,7 +351,7 @@ pub fn create_camera_bind_groups(
             );
             let camera_bind_group = CameraBindGroup::new(
                 &renderer.camera_bind_group_layout,
-                &renderer.wgpu_context.device,
+                &renderer.device,
                 &camera_data,
                 state.instance_buffer.buffer.buffer().unwrap(),
             );
@@ -426,7 +421,7 @@ pub fn update_camera_bind_groups(
                 camera_config,
             );
             camera_bind_group.update(
-                &renderer.wgpu_context.device,
+                &renderer.device,
                 &mut write_staging,
                 &camera_data,
                 updated_instance_buffer,

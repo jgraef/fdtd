@@ -13,7 +13,7 @@ use cem_util::wgpu::buffer::{
 use nalgebra::Matrix4;
 use palette::LinSrgba;
 
-use crate::renderer::{
+use crate::{
     MaterialData,
     components::Outline,
     draw_commands::DrawCommandBuffer,

@@ -1,4 +1,4 @@
-use crate::renderer::renderer::{
+use crate::renderer::{
     Renderer,
     RendererConfig,
 };

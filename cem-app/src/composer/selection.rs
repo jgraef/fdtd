@@ -18,6 +18,7 @@ use bevy_reflect::{
     prelude::ReflectDefault,
 };
 use cem_probe::PropertiesUi;
+use cem_render::components::Outline;
 use cem_scene::probe::{
     ComponentName,
     ReflectComponentUi,
@@ -27,8 +28,6 @@ use serde::{
     Deserialize,
     Serialize,
 };
-
-use crate::renderer::components::Outline;
 
 /// Tag component for entities that are selected.
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, Component, Reflect)]

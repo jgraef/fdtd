@@ -32,6 +32,17 @@ use bevy_ecs::{
         Query,
     },
 };
+use cem_render::{
+    DrawCommandInfo,
+    camera::{
+        CameraConfig,
+        CameraProjection,
+    },
+    components::ClearColor,
+    material,
+    mesh::LoadMesh,
+    plugin::RenderPlugin,
+};
 use cem_scene::{
     PopulateScene,
     Scene,
@@ -115,20 +126,11 @@ use crate::{
         AppConfig,
         ComposerConfig,
     },
-    debug::DebugUi,
-    lipsum,
-    renderer::{
-        DrawCommandInfo,
+    debug::{
+        DebugUi,
         RendererDebugUi,
-        camera::{
-            CameraConfig,
-            CameraProjection,
-        },
-        components::ClearColor,
-        material,
-        mesh::LoadMesh,
-        plugin::RenderPlugin,
     },
+    lipsum,
     solver::{
         config::{
             FixedVolume,
@@ -579,8 +581,12 @@ impl ComposerState {
         };
 
         let response = egui::Popup::context_menu(response).show(|ui| {
-            //ui.label(self.scene.entity_debug_label(entity));
-            ui.label(format!("{entity:?}"));
+            let name = self.scene.world.entity(entity).get::<Name>().map_or_else(
+                || egui::RichText::from(entity.to_string()),
+                |name| egui::RichText::from(&**name),
+            );
+
+            ui.label(name);
             ui.separator();
 
             if ui.button("Cut").clicked() {
@@ -605,8 +611,7 @@ impl ComposerState {
             ui.separator();
 
             if ui.button("Properties").clicked() {
-                let _ = self
-                    .scene
+                self.scene
                     .world
                     .entity_mut(entity)
                     .insert(EntityWindow::default());

@@ -4,6 +4,10 @@ use std::{
     sync::Arc,
 };
 
+use cem_render::{
+    RendererConfig,
+    plugin::RenderPlugin,
+};
 use cem_util::{
     egui::file_dialog::FileDialog,
     wgpu::buffer::StagingPool,
@@ -37,10 +41,6 @@ use crate::{
     menubar::{
         MenuBar,
         RecentlyOpenedFiles,
-    },
-    renderer::{
-        RendererConfig,
-        plugin::RenderPlugin,
     },
     solver::runner::SolverRunner,
 };
@@ -294,8 +294,12 @@ impl App {
             style.visuals.popup_shadow.spread = 0;
         });
 
-        let render_plugin =
-            RenderPlugin::new(context.wgpu_context.clone(), context.renderer_config);
+        let render_plugin = RenderPlugin::new(
+            context.wgpu_context.device.clone(),
+            context.wgpu_context.queue.clone(),
+            context.wgpu_context.staging_pool.clone(),
+            context.renderer_config,
+        );
         let mut composers = Composers::new(render_plugin);
         let solver_runner = SolverRunner::from_app_context(&context);
 

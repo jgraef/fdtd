@@ -26,7 +26,7 @@ use crate::{
     project::{
         BeginProjectionPass,
         CreateProjection,
-        ImageTarget,
+        FdtdImageTarget,
         ProjectionParameters,
         ProjectionPass,
         ProjectionPassAdd,
@@ -34,9 +34,9 @@ use crate::{
 };
 
 #[derive(Debug)]
-pub struct ImageProjection<Target>
+pub struct FdtdCpuImageProjection<Target>
 where
-    Target: ImageTarget,
+    Target: FdtdImageTarget,
 {
     target: Target,
     parameters: ProjectionParameters,
@@ -45,30 +45,30 @@ where
 impl<Threading, Target> CreateProjection<Target> for FdtdCpuSolverInstance<Threading>
 where
     Threading: LatticeForEach,
-    Target: ImageTarget<Pixel = image::Rgba<u8>>,
+    Target: FdtdImageTarget<Pixel = image::Rgba<u8>>,
 {
-    type Projection = ImageProjection<Target>;
+    type Projection = FdtdCpuImageProjection<Target>;
 
     fn create_projection(
         &self,
         state: &FdtdCpuSolverState,
         target: Target,
         parameters: &ProjectionParameters,
-    ) -> ImageProjection<Target> {
+    ) -> FdtdCpuImageProjection<Target> {
         let _ = state;
-        ImageProjection {
+        FdtdCpuImageProjection {
             target,
             parameters: parameters.clone(),
         }
     }
 }
 
-impl<'a, Threading, Target> ProjectionPassAdd<'a, ImageProjection<Target>>
+impl<'a, Threading, Target> ProjectionPassAdd<'a, FdtdCpuImageProjection<Target>>
     for FdtdCpuProjectionPass<'a, Threading>
 where
-    Target: ImageTarget<Pixel = image::Rgba<u8>>,
+    Target: FdtdImageTarget<Pixel = image::Rgba<u8>>,
 {
-    fn add_projection(&mut self, projection: &'a mut ImageProjection<Target>) {
+    fn add_projection(&mut self, projection: &'a mut FdtdCpuImageProjection<Target>) {
         if let Err(error) = projection.target.with_image_buffer(|image| {
             self.project_to_image(image, &projection.parameters);
         }) {

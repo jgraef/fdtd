@@ -122,6 +122,7 @@ impl<'a> BvhTransaction<'a> {
 
     pub fn remove(&mut self, leaf_index: &LeafIndex) {
         self.bvh.bvh.remove(leaf_index.leaf_index);
+        self.bvh.leaf_index_map.remove(leaf_index.leaf_index);
         self.changed = true;
     }
 

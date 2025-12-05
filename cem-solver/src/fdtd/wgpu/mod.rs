@@ -29,7 +29,7 @@ use nalgebra::{
 };
 use wgpu::util::DeviceExt;
 
-pub use self::project::TextureProjection;
+pub use self::project::FdtdWgpuTextureProjection;
 use crate::{
     DomainDescription,
     Field,
