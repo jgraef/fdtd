@@ -77,11 +77,3 @@ enum Command {
         format: String,
     },
 }
-
-// todo bevy-migration remove this
-#[macro_export]
-macro_rules! impl_register_component {
-    ($($tt:tt)*) => {
-        // nop
-    };
-}

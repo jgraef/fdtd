@@ -1,36 +1,30 @@
 use std::time::Duration;
 
+use cem_probe::{
+    HasChangeValue,
+    PropertiesUi,
+    PropertiesUiExt,
+    TrackChanges,
+    label_and_value,
+};
 use cem_solver::{
     fdtd,
-    material::{
-        Material,
-        PhysicalConstants,
-    },
+    material::PhysicalConstants,
 };
 use nalgebra::Vector3;
 
-use crate::{
-    impl_register_component,
-    solver::{
-        config::{
-            FixedVolume,
-            SceneAabbVolume,
-            SolverConfig,
-            SolverConfigCommon,
-            SolverConfigFdtd,
-            SolverConfigSpecifics,
-            StopCondition,
-            Volume,
-        },
-        runner::SolverRunner,
+use crate::solver::{
+    config::{
+        FixedVolume,
+        SceneAabbVolume,
+        SolverConfig,
+        SolverConfigCommon,
+        SolverConfigFdtd,
+        SolverConfigSpecifics,
+        StopCondition,
+        Volume,
     },
-    util::egui::probe::{
-        HasChangeValue,
-        PropertiesUi,
-        PropertiesUiExt,
-        TrackChanges,
-        label_and_value,
-    },
+    runner::SolverRunner,
 };
 
 impl SolverRunner {
@@ -263,34 +257,6 @@ impl From<&Volume> for VolumeType {
     }
 }
 
-impl PropertiesUi for PhysicalConstants {
-    type Config = ();
-
-    fn properties_ui(&mut self, ui: &mut egui::Ui, _config: &Self::Config) -> egui::Response {
-        // todo: combo box with predefined defaults (e.g. REDUCED, SI)
-        let mut changes = TrackChanges::default();
-
-        let response = egui::Frame::new()
-            .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    if ui.small_button("SI").clicked() {
-                        *self = Self::SI;
-                    }
-                    if ui.small_button("Reduced").clicked() {
-                        *self = Self::REDUCED;
-                    }
-                });
-
-                label_and_value(ui, "eps_0", &mut changes, &mut self.vacuum_permittivity);
-                label_and_value(ui, "mu_0", &mut changes, &mut self.vacuum_permeability);
-                ui.label(format!("c: {:e}", self.speed_of_light()));
-            })
-            .response;
-
-        changes.propagated(response)
-    }
-}
-
 #[derive(Debug)]
 pub struct SolverConfigUiWindow {
     pub selection: Option<usize>,
@@ -399,45 +365,3 @@ impl SolverConfigUiWindow {
             });
     }
 }
-
-impl PropertiesUi for Material {
-    type Config = ();
-
-    fn properties_ui(&mut self, ui: &mut egui::Ui, config: &Self::Config) -> egui::Response {
-        let _ = config;
-        let mut changes = TrackChanges::default();
-
-        let response = egui::Frame::new()
-            .show(ui, |ui| {
-                label_and_value(
-                    ui,
-                    "Relative Permeability",
-                    &mut changes,
-                    &mut self.relative_permeability,
-                );
-                label_and_value(
-                    ui,
-                    "Magnetic Conductivity",
-                    &mut changes,
-                    &mut self.magnetic_conductivity,
-                );
-                label_and_value(
-                    ui,
-                    "Relative Permittivity",
-                    &mut changes,
-                    &mut self.relative_permittivity,
-                );
-                label_and_value(
-                    ui,
-                    "Electrical Conductivity",
-                    &mut changes,
-                    &mut self.eletrical_conductivity,
-                );
-            })
-            .response;
-
-        changes.propagated(response)
-    }
-}
-
-impl_register_component!(Material where ComponentUi, default);

@@ -6,6 +6,7 @@ use std::{
     },
 };
 
+use cem_util::path::format_path;
 use serde::{
     Deserialize,
     Serialize,
@@ -19,7 +20,6 @@ use crate::{
     },
     composer::menubar::ComposerMenuElements,
     error::ResultExt,
-    util::format_path,
 };
 
 pub struct MenuBar<'a> {

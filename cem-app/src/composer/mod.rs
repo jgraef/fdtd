@@ -1,6 +1,5 @@
-// todo: bevy-migrate: entity ui
-//pub mod entity;
 pub mod camera;
+pub mod entity_window;
 pub mod file_formats;
 pub mod menubar;
 pub mod selection;
@@ -21,7 +20,6 @@ use std::{
 };
 
 use bevy_ecs::{
-    component::Component,
     entity::Entity,
     name::{
         Name,
@@ -80,6 +78,10 @@ use crate::{
     Error,
     composer::{
         camera::CameraWorldMut,
+        entity_window::{
+            EntityWindow,
+            show_entity_windows,
+        },
         file_formats::{
             FileFormat,
             guess_file_format_from_path,
@@ -101,7 +103,6 @@ use crate::{
         },
         undo::{
             HadesId,
-            UndoAction,
             UndoBuffer,
         },
         view::{
@@ -383,10 +384,6 @@ struct ComposerState {
 
     solver_configs: Vec<SolverConfig>,
     solver_config_window: SolverConfigUiWindow,
-
-    // note: only used as a temporary scratch buffer. this is queries from the scene right before
-    // the windows are rendered
-    entity_windows: Vec<(Entity, EntityWindow)>,
 }
 
 impl ComposerState {
@@ -449,7 +446,6 @@ impl ComposerState {
             undo_buffer,
             solver_configs,
             solver_config_window: SolverConfigUiWindow::default(),
-            entity_windows: vec![],
         }
     }
 
@@ -556,37 +552,12 @@ impl ComposerState {
 
                 self.context_menu(&view_response);
             }
-
-            {
-                assert!(self.entity_windows.is_empty());
-                for (entity, window) in self
-                    .scene
-                    .world
-                    .query::<(Entity, &EntityWindow)>()
-                    .iter(&mut self.scene.world)
-                {
-                    self.entity_windows.push((entity, *window));
-                }
-
-                // todo: bevy-migrate: entity-ui
-                /*for (entity, window) in &self.entity_windows {
-                    EntityPropertiesWindow::new(
-                        egui::Id::new("entity_properties").with(entity),
-                        &mut self.scene,
-                        *entity,
-                    )
-                    .deletable(window.despawn_button)
-                    .show(ctx, entity::default_title);
-                }*/
-
-                //self.scene.apply_deferred();
-
-                self.entity_windows.clear();
-            }
-
-            self.solver_config_window
-                .show(ctx, &mut self.solver_configs);
         });
+
+        self.solver_config_window
+            .show(ctx, &mut self.solver_configs);
+
+        show_entity_windows(ctx, &mut self.scene.world);
     }
 
     pub fn context_menu(&mut self, response: &egui::Response) {
@@ -693,7 +664,7 @@ impl ComposerState {
         _entities: impl IntoIterator<Item = Entity>,
         mut _before_deletion: impl FnMut(&mut Scene, Entity),
     ) -> Vec<HadesId> {
-        // todo: bevy-migrate: entity serialization
+        // todo: bevy-migrate: undo
         /*entities
         .into_iter()
         .filter_map(|entity| {
@@ -713,13 +684,17 @@ impl ComposerState {
             }
         })
         .collect()*/
-        todo!();
+        todo!("undo buffer");
     }
 
     pub fn delete(&mut self, entities: impl IntoIterator<Item = Entity>) {
-        let hades_ids = self.send_to_hades(entities, |_, _| {});
-        self.undo_buffer
-            .push_undo(UndoAction::DeleteEntity { hades_ids });
+        // todo: bevy-migrate: undo
+        //let hades_ids = self.send_to_hades(entities, |_, _| {});
+        //self.undo_buffer
+        //    .push_undo(UndoAction::DeleteEntity { hades_ids });
+        entities.into_iter().for_each(|entity| {
+            self.scene.world.despawn(entity);
+        });
     }
 
     pub fn copy(&mut self, _ctx: &egui::Context, _entities: impl IntoIterator<Item = Entity>) {
@@ -749,7 +724,8 @@ impl ComposerState {
         tracing::debug!("copying entities to clipboard: {} bytes", encoded.len());
         ctx.copy_text(encoded);
          */
-        todo!();
+        // todo: bevy-migrate: copy/paste
+        tracing::debug!("todo: copy/paste");
     }
 
     pub fn paste(&mut self, _text: &str) {
@@ -774,7 +750,8 @@ impl ComposerState {
                 }
             }
         }*/
-        todo!();
+        // todo: bevy-migrate: copy/paste
+        tracing::debug!("todo: copy/paste");
     }
 }
 
@@ -950,19 +927,6 @@ enum SceneClipboard<E> {
 }
 
 pub const CLIPBOARD_PREFIX: &str = "data:application/x-fdtd;base64,";
-
-#[derive(Clone, Copy, Debug, Component)]
-pub struct EntityWindow {
-    pub despawn_button: bool,
-}
-
-impl Default for EntityWindow {
-    fn default() -> Self {
-        Self {
-            despawn_button: true,
-        }
-    }
-}
 
 impl DebugUi for &mut Composers {
     fn show_debug(self, ui: &mut egui::Ui) {

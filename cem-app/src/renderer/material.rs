@@ -3,19 +3,39 @@ use std::sync::Arc;
 use bevy_ecs::{
     component::Component,
     lifecycle::HookContext,
+    reflect::ReflectComponent,
     world::DeferredWorld,
+};
+use bevy_reflect::{
+    Reflect,
+    prelude::ReflectDefault,
 };
 use bitflags::bitflags;
 use bytemuck::{
     Pod,
     Zeroable,
 };
-use cem_scene::assets::{
-    AssetError,
-    LoadAsset,
-    LoadingProgress,
-    LoadingState,
+use cem_probe::{
+    HasChangeValue,
+    PropertiesUi,
+    TrackChanges,
+    label_and_value,
+    label_and_value_with_config,
+    std::NumericPropertyUiConfig,
 };
+use cem_scene::{
+    assets::{
+        AssetError,
+        LoadAsset,
+        LoadingProgress,
+        LoadingState,
+    },
+    probe::{
+        ComponentName,
+        ReflectComponentUi,
+    },
+};
+use cem_util::palette::ColorExt;
 use palette::{
     LinSrgba,
     Srgb,
@@ -27,26 +47,12 @@ use serde::{
     Serialize,
 };
 
-use crate::{
-    impl_register_component,
-    renderer::{
-        systems::UpdateMeshBindGroupMessage,
-        texture::{
-            TextureAndView,
-            TextureLoaderContext,
-            TextureSource,
-        },
-    },
-    util::{
-        egui::probe::{
-            HasChangeValue,
-            PropertiesUi,
-            TrackChanges,
-            label_and_value,
-            label_and_value_with_config,
-            std::NumericPropertyUiConfig,
-        },
-        palette::ColorExt,
+use crate::renderer::{
+    systems::UpdateMeshBindGroupMessage,
+    texture::{
+        TextureAndView,
+        TextureLoaderContext,
+        TextureSource,
     },
 };
 
@@ -89,9 +95,11 @@ pub mod presets {
 ///   default to black or white, depending of a texture is used for that
 ///   material (see [`MaterialData::new`]). But this requires some work with the
 ///   serde-integration (we can use the `serde_with` crate).
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, Component)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, Component, Reflect)]
+#[reflect(Component, ComponentUi, @ComponentName::new("Material"), Default)]
 pub struct Material {
     #[serde(with = "crate::util::serde::palette")]
+    #[reflect(ignore)]
     pub albedo: Srgba,
 
     pub metalness: f32,
@@ -286,10 +294,10 @@ impl PropertiesUi for Material {
     }
 }
 
-impl_register_component!(Material where Changed, ComponentUi, default);
-
-#[derive(Clone, Copy, Debug, Component)]
+#[derive(Clone, Copy, Debug, Component, Reflect)]
+#[reflect(Component, ComponentUi, @ComponentName::new("Wireframe"), Default)]
 pub struct Wireframe {
+    #[reflect(ignore)]
     pub color: Srgba,
 }
 
@@ -317,8 +325,6 @@ impl PropertiesUi for Wireframe {
         self.color.properties_ui(ui, &Default::default())
     }
 }
-
-impl_register_component!(Wireframe where Changed, ComponentUi, default);
 
 #[derive(Clone, Debug, Component)]
 #[component(on_add = albedo_texture_added, on_insert = albedo_texture_added, on_remove = albedo_texture_removed)]

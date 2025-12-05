@@ -5,6 +5,12 @@ use std::{
 };
 
 use bevy_ecs::component::Component;
+use cem_probe::{
+    PropertiesUi,
+    TrackChanges,
+    label_and_value,
+    label_and_value_with_config,
+};
 use cem_solver::{
     FieldComponent,
     fdtd::{
@@ -24,28 +30,17 @@ use cem_solver::{
         ProjectionPassAdd,
     },
 };
+use cem_util::egui::FilePickerConfig;
 use nalgebra::{
     Matrix4,
     UnitVector3,
     Vector2,
 };
 
-use crate::{
-    impl_register_component,
-    renderer::texture::channel::{
-        ImageSender,
-        TextureSender,
-        UndecidedTextureSender,
-    },
-    util::egui::{
-        FilePickerConfig,
-        probe::{
-            PropertiesUi,
-            TrackChanges,
-            label_and_value,
-            label_and_value_with_config,
-        },
-    },
+use crate::renderer::texture::channel::{
+    ImageSender,
+    TextureSender,
+    UndecidedTextureSender,
 };
 
 #[derive(Clone, Debug, Component)]
@@ -95,8 +90,6 @@ impl PropertiesUi for Observer {
         changes.propagated(response)
     }
 }
-
-impl_register_component!(Observer where ComponentUi);
 
 pub fn test_color_map(scale: f32, axis: UnitVector3<f32>) -> Matrix4<f32> {
     let mut m = Matrix4::zeros();

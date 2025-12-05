@@ -51,7 +51,13 @@ use cem_solver::{
     },
     source::Source,
 };
-use cem_util::format_size;
+use cem_util::{
+    egui::{
+        EguiUtilContextExt,
+        RepaintTrigger,
+    },
+    format_size,
+};
 use color_eyre::eyre::bail;
 use nalgebra::{
     Isometry3,
@@ -91,13 +97,7 @@ use crate::{
         },
         observer::Observer,
     },
-    util::{
-        egui::{
-            EguiUtilContextExt,
-            RepaintTrigger,
-        },
-        spawn_thread,
-    },
+    util::spawn_thread,
 };
 
 #[derive(Debug)]
@@ -117,7 +117,7 @@ impl SolverRunner {
                 context.wgpu_context.staging_pool.clone(),
             ),
             repaint_trigger: context.egui_context.repaint_trigger(),
-            error_sink: context.egui_context.error_sink(),
+            error_sink: UiErrorSink::from(&context.egui_context),
             active_solver: None,
         }
     }
@@ -568,12 +568,9 @@ impl Solver {
 #[derive(derive_more::Debug)]
 struct SceneDomainDescription<'a> {
     world: &'a mut World,
-
     resolution: &'a Resolution,
     physical_constants: &'a PhysicalConstants,
-
     coordinate_transformations: &'a CoordinateTransformations,
-
     default_material: &'a Material,
 }
 
@@ -589,15 +586,12 @@ impl<'a> SceneDomainDescription<'a> {
             world,
             resolution,
             physical_constants,
-            //materials,
-            //pmls,
             coordinate_transformations,
             default_material,
         }
     }
 }
 
-// todo: bevy-migrate
 impl<'a> DomainDescription<Point3<usize>> for SceneDomainDescription<'a> {
     fn material(&mut self, point: &Point3<usize>) -> Material {
         let point = self

@@ -17,23 +17,21 @@ use bevy_ecs::{
     entity::Entity,
 };
 use bitflags::bitflags;
+use cem_util::{
+    ReusableSharedBuffer,
+    ReusableSharedBufferGuard,
+};
 use nalgebra::Point3;
 
-use crate::{
-    renderer::{
-        Command,
-        command::CommandSender,
-        mesh::{
-            Mesh,
-            MeshBindGroup,
-        },
-        pipeline::Stencil,
-        renderer::Renderer,
+use crate::renderer::{
+    Command,
+    command::CommandSender,
+    mesh::{
+        Mesh,
+        MeshBindGroup,
     },
-    util::{
-        ReusableSharedBuffer,
-        ReusableSharedBufferGuard,
-    },
+    pipeline::Stencil,
+    renderer::Renderer,
 };
 
 #[derive(Debug, Default)]

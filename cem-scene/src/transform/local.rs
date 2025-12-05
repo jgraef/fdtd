@@ -1,4 +1,8 @@
-use bevy_ecs::component::Component;
+use bevy_ecs::{
+    component::Component,
+    reflect::ReflectComponent,
+};
+use bevy_reflect::Reflect;
 use nalgebra::{
     Isometry3,
     Point3,
@@ -8,11 +12,17 @@ use nalgebra::{
     Vector3,
 };
 
-#[derive(Clone, Copy, Debug, Default, Component)]
+#[cfg(feature = "probe")]
+use crate::probe::ReflectComponentUi;
+
+#[derive(Clone, Copy, Debug, Default, Component, Reflect)]
+#[reflect(Component)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "probe", reflect(ComponentUi, @crate::probe::ComponentName::new("Local Transform")))]
 pub struct LocalTransform {
     /// Rotation followed by translation that transforms points from the
     /// object's local frame to the global frame.
+    #[reflect(ignore)]
     pub isometry: Isometry3<f32>,
 }
 
@@ -106,5 +116,15 @@ impl From<Point3<f32>> for LocalTransform {
 impl From<UnitQuaternion<f32>> for LocalTransform {
     fn from(value: UnitQuaternion<f32>) -> Self {
         Self::from(Isometry3::from_parts(Default::default(), value))
+    }
+}
+
+#[cfg(feature = "probe")]
+impl cem_probe::PropertiesUi for LocalTransform {
+    type Config = ();
+
+    fn properties_ui(&mut self, ui: &mut egui::Ui, config: &Self::Config) -> egui::Response {
+        let _ = config;
+        self.isometry.properties_ui(ui, &Default::default())
     }
 }

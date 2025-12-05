@@ -4,7 +4,10 @@ use std::{
     sync::Arc,
 };
 
-use cem_util::wgpu::buffer::StagingPool;
+use cem_util::{
+    egui::file_dialog::FileDialog,
+    wgpu::buffer::StagingPool,
+};
 use chrono::Local;
 use color_eyre::eyre::{
     Error,
@@ -12,7 +15,6 @@ use color_eyre::eyre::{
 };
 use eframe::NativeOptions;
 use egui::ViewportBuilder;
-use egui_file_dialog::FileDialog;
 use egui_wgpu::{
     SurfaceErrorAction,
     WgpuConfiguration,

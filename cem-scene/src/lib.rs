@@ -3,6 +3,8 @@
 
 pub mod assets;
 pub mod plugin;
+#[cfg(feature = "probe")]
+pub mod probe;
 pub mod schedule;
 pub mod spatial;
 pub mod transform;
@@ -16,6 +18,7 @@ use bevy_ecs::{
         Messages,
         message_update_system,
     },
+    reflect::AppTypeRegistry,
     resource::Resource,
     schedule::{
         IntoScheduleConfigs,
@@ -37,8 +40,6 @@ use crate::{
     transform::TransformHierarchyPlugin,
 };
 
-// todo: bevy-migrate: remove this and use World (with extension traits)
-// instead.
 #[derive(Debug)]
 pub struct Scene {
     pub world: World,
@@ -77,6 +78,7 @@ impl Default for SceneBuilder {
 
         let mut world = World::new();
         world.insert_resource(schedules);
+        world.insert_resource(AppTypeRegistry::new_with_derived_types());
 
         Self {
             world,

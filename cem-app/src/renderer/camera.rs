@@ -1,12 +1,29 @@
 use std::f32::consts::FRAC_PI_4;
 
-use bevy_ecs::component::Component;
+use bevy_ecs::{
+    component::Component,
+    reflect::ReflectComponent,
+};
+use bevy_reflect::Reflect;
 use bitflags::bitflags;
 use bytemuck::{
     Pod,
     Zeroable,
 };
-use cem_scene::transform::GlobalTransform;
+use cem_probe::{
+    PropertiesUi,
+    TrackChanges,
+    label_and_value,
+    label_and_value_with_config,
+    std::NumericPropertyUiConfig,
+};
+use cem_scene::{
+    probe::{
+        ComponentName,
+        ReflectComponentUi,
+    },
+    transform::GlobalTransform,
+};
 use cem_util::wgpu::buffer::WriteStaging;
 use nalgebra::{
     Matrix4,
@@ -30,22 +47,12 @@ use serde::{
 };
 use wgpu::util::DeviceExt;
 
-use crate::{
-    impl_register_component,
-    renderer::{
-        components::ClearColor,
-        draw_commands::DrawCommandFlags,
-        light::{
-            AmbientLight,
-            PointLight,
-        },
-    },
-    util::egui::probe::{
-        PropertiesUi,
-        TrackChanges,
-        label_and_value,
-        label_and_value_with_config,
-        std::NumericPropertyUiConfig,
+use crate::renderer::{
+    components::ClearColor,
+    draw_commands::DrawCommandFlags,
+    light::{
+        AmbientLight,
+        PointLight,
     },
 };
 
@@ -149,7 +156,7 @@ impl Default for CameraProjection {
     }
 }
 
-#[derive(Clone, Copy, Debug, Component, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, Component)]
 pub struct Viewport {
     pub viewport: egui::Rect,
 }
@@ -309,7 +316,8 @@ bitflags! {
     }
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, Component)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, Component, Reflect)]
+#[reflect(Component, ComponentUi, @ComponentName::new("Camera Config"))]
 pub struct CameraConfig {
     // todo: should this just contain the DrawCommandPipelineEnableFlags?
     pub show_mesh_opaque: bool,
@@ -390,5 +398,3 @@ impl PropertiesUi for CameraConfig {
         changes.propagated(response)
     }
 }
-
-impl_register_component!(CameraConfig where ComponentUi, default);

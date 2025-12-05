@@ -3,6 +3,8 @@
 pub mod fdtd;
 pub mod feec;
 pub mod material;
+#[cfg(feature = "probe")]
+pub mod probe;
 pub mod project;
 pub mod source;
 

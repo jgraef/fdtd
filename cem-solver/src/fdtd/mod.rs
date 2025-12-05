@@ -8,10 +8,6 @@ pub mod wgpu;
 use std::fmt::Debug;
 
 use nalgebra::Vector3;
-use serde::{
-    Deserialize,
-    Serialize,
-};
 
 use crate::{
     fdtd::strider::Strider,
@@ -63,7 +59,8 @@ pub fn estimate_temporal_resolution_from_max_frequency(max_frequency: f64) -> f6
     1.0f64 / (9.0f64 * 3.0f64 * max_frequency)
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Resolution {
     pub spatial: Vector3<f64>,
     pub temporal: f64,

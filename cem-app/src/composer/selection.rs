@@ -3,6 +3,7 @@ use bevy_ecs::{
     component::Component,
     entity::Entity,
     query::With,
+    reflect::ReflectComponent,
     system::{
         Commands,
         In,
@@ -12,22 +13,26 @@ use bevy_ecs::{
     },
     world::World,
 };
+use bevy_reflect::{
+    Reflect,
+    prelude::ReflectDefault,
+};
+use cem_probe::PropertiesUi;
+use cem_scene::probe::{
+    ComponentName,
+    ReflectComponentUi,
+};
+use cem_util::egui::EguiUtilUiExt;
 use serde::{
     Deserialize,
     Serialize,
 };
 
-use crate::{
-    impl_register_component,
-    renderer::components::Outline,
-    util::egui::{
-        EguiUtilUiExt,
-        probe::PropertiesUi,
-    },
-};
+use crate::renderer::components::Outline;
 
 /// Tag component for entities that are selected.
-#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, Component)]
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, Component, Reflect)]
+#[reflect(Component, ComponentUi, @ComponentName::new("Selected"), Default)]
 pub struct Selected;
 
 impl PropertiesUi for Selected {
@@ -39,10 +44,9 @@ impl PropertiesUi for Selected {
     }
 }
 
-impl_register_component!(Selected where ComponentUi, default);
-
 /// Tag component for entities that can be selected.
-#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, Component)]
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, Component, Reflect)]
+#[reflect(Component, ComponentUi, @ComponentName::new("Selectable"), Default)]
 pub struct Selectable;
 
 impl PropertiesUi for Selectable {
@@ -53,8 +57,6 @@ impl PropertiesUi for Selectable {
         ui.noop()
     }
 }
-
-impl_register_component!(Selectable where ComponentUi, default);
 
 /// System parameter to query and modify the selection.
 ///

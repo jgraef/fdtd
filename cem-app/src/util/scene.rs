@@ -67,8 +67,6 @@ impl SceneExt for cem_scene::Scene {
     }
 }
 
-// todo: bevy-migrate: split this up into the crates where the actual components
-// are defined
 pub trait EntityBuilderExt {
     fn transform(self, transform: impl Into<LocalTransform>) -> Self;
     fn material(self, material: impl Into<Material>) -> Self;

@@ -1,4 +1,23 @@
-use bevy_ecs::component::Component;
+use bevy_ecs::{
+    component::Component,
+    reflect::ReflectComponent,
+};
+use bevy_reflect::{
+    Reflect,
+    prelude::ReflectDefault,
+};
+use cem_probe::{
+    PropertiesUi,
+    TrackChanges,
+    label_and_value,
+    label_and_value_with_config,
+    std::NumericPropertyUiConfig,
+};
+use cem_scene::probe::{
+    ComponentName,
+    ReflectComponentUi,
+};
+use cem_util::egui::EguiUtilUiExt;
 use palette::{
     Srgb,
     Srgba,
@@ -8,22 +27,9 @@ use serde::{
     Serialize,
 };
 
-use crate::{
-    impl_register_component,
-    util::egui::{
-        EguiUtilUiExt,
-        probe::{
-            PropertiesUi,
-            TrackChanges,
-            label_and_value,
-            label_and_value_with_config,
-            std::NumericPropertyUiConfig,
-        },
-    },
-};
-
 /// Tag for entities that should be rendered
-#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, Component)]
+#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, Component, Reflect)]
+#[reflect(Component, ComponentUi, @ComponentName::new("Hidden"), Default)]
 pub struct Hidden;
 
 impl PropertiesUi for Hidden {
@@ -34,12 +40,13 @@ impl PropertiesUi for Hidden {
     }
 }
 
-impl_register_component!(Hidden where ComponentUi, default);
-
 // todo: respect eguis theme. we might just pass this in from the view when
 // rendering and remove this component.
-#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, Component)]
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, Component, Reflect)]
+#[reflect(Component, ComponentUi, @ComponentName::new("Clear Color"), Default)]
 pub struct ClearColor {
+    #[serde(with = "crate::util::serde::palette")]
+    #[reflect(ignore)]
     pub clear_color: Srgb,
 }
 
@@ -63,11 +70,11 @@ impl PropertiesUi for ClearColor {
     }
 }
 
-impl_register_component!(ClearColor where ComponentUi, default);
-
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, Component)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, Component, Reflect)]
+#[reflect(Component, ComponentUi, @ComponentName::new("Outline"), Default)]
 pub struct Outline {
     #[serde(with = "crate::util::serde::palette")]
+    #[reflect(ignore)]
     pub color: Srgba,
 
     pub thickness: f32,
@@ -104,5 +111,3 @@ impl PropertiesUi for Outline {
         changes.propagated(response)
     }
 }
-
-impl_register_component!(Outline where ComponentUi, default);

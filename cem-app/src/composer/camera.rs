@@ -158,7 +158,6 @@ impl<'a> CameraWorldMut<'a> {
                         camera_projection.distance_to_fit_aabb_into_fov(&scene_aabb, &margin);
 
                     // apply translation to camera
-                    // todo bevy-migrate - or should we mutate it directly?
                     camera_local_transform.translate_local(&Translation3::from(translation));
                 },
                 (self.camera_entity, *margin),

@@ -1,5 +1,3 @@
-pub mod probe;
-
 use std::{
     path::{
         Path,
@@ -12,19 +10,16 @@ use std::{
     },
 };
 
+pub use egui_file_dialog as file_dialog;
 use egui_file_dialog::{
     DialogState,
     FileDialog,
 };
 use parking_lot::Mutex;
 
-use crate::{
-    app::WgpuContext,
-    error::UiErrorSink,
-    util::{
-        FormatPath,
-        format_path,
-    },
+use crate::path::{
+    FormatPath,
+    format_path,
 };
 
 /// iOS-style toggle switch:
@@ -272,8 +267,6 @@ impl Default for FilePickerConfig {
 
 pub trait EguiUtilContextExt {
     fn repaint_trigger(&self) -> RepaintTrigger;
-    fn wgpu_context(&self) -> WgpuContext;
-    fn error_sink(&self) -> UiErrorSink;
 }
 
 impl EguiUtilContextExt for egui::Context {
@@ -283,15 +276,6 @@ impl EguiUtilContextExt for egui::Context {
             egui: self.clone(),
             viewport: self.viewport_id(),
         }
-    }
-
-    fn wgpu_context(&self) -> WgpuContext {
-        self.data(|data| data.get_temp(egui::Id::NULL))
-            .expect("no wgpu context available")
-    }
-
-    fn error_sink(&self) -> UiErrorSink {
-        UiErrorSink::from(self)
     }
 }
 
