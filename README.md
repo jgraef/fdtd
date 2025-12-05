@@ -4,8 +4,6 @@ This app is work-in-progress. It's intended to model electromagnetic behavior. I
 
 # TODO
 
- - use bevy-ecs
-  - reflect feature seems to work with older version of wgpu-types
  - use types from nonmax crate in half-edge graph and maybe fdtd impl?
  - fix transparency:
   - when overlapping: order-independent transparency?
@@ -21,7 +19,6 @@ This app is work-in-progress. It's intended to model electromagnetic behavior. I
  - load/save files (whole scene)
  - limit how often a running solver projects into textures. done, but needs to be in config somewhere
  - tree view context menu
- - spatial queries: SpatialQuery trait. Like hecs::Query, but also knows how to find/filter entities from the bvh.
  - make simulation volume an entity (visible via edges?)
  - PRs for `egui_ltreeview`
  - fdtd: compress material buffer:
