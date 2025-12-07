@@ -29,7 +29,7 @@ impl<'a> ComposerMenuElements<'a> {
     pub fn edit_menu_buttons(&mut self, ui: &mut egui::Ui) {
         let (has_file_open, can_undo, can_redo, has_selected) = self
             .composers
-            .with_active(|composer| {
+            .with_active_mut(|composer| {
                 (
                     true,
                     composer.has_undos(),
@@ -43,13 +43,13 @@ impl<'a> ComposerMenuElements<'a> {
             .add_enabled(can_undo, egui::Button::new("Undo"))
             .clicked()
         {
-            self.composers.with_active(|composer| composer.undo());
+            self.composers.with_active_mut(|composer| composer.undo());
         }
         if ui
             .add_enabled(can_redo, egui::Button::new("Redo"))
             .clicked()
         {
-            self.composers.with_active(|composer| composer.redo());
+            self.composers.with_active_mut(|composer| composer.redo());
         }
 
         ui.separator();
@@ -110,7 +110,9 @@ impl<'a> ComposerMenuElements<'a> {
     }
 
     pub fn selection_menu_buttons(&mut self, ui: &mut egui::Ui) {
-        let mut selection = self.composers.with_active(|composer| composer.selection());
+        let mut selection = self
+            .composers
+            .with_active_mut(|composer| composer.selection());
 
         let has_file_open = selection.is_some();
         let has_anything_selected = selection
@@ -143,7 +145,7 @@ impl<'a> ComposerMenuElements<'a> {
         ui.menu_button("Camera", |ui| {
             setup_menu(ui);
 
-            let mut camera = self.composers.with_active(|composer| composer.camera());
+            let mut camera = self.composers.with_active_mut(|composer| composer.camera());
             let has_file_open = camera.is_some();
             let fit_camera_margin = Vector2::zeros();
 
@@ -224,7 +226,7 @@ impl<'a> ComposerMenuElements<'a> {
                 .clicked()
             {
                 self.composers
-                    .with_active(|composer| composer.open_camera_window());
+                    .with_active_mut(|composer| composer.open_camera_window());
             }
         });
     }
@@ -238,7 +240,7 @@ impl<'a> ComposerMenuElements<'a> {
             .clicked()
         {
             self.composers
-                .with_active(|composer| composer.open_solver_config_window());
+                .with_active_mut(|composer| composer.open_solver_config_window());
         }
     }
 
@@ -248,7 +250,7 @@ impl<'a> ComposerMenuElements<'a> {
 
         let mut i = 0;
 
-        self.composers.with_active(|composer| {
+        self.composers.with_active_mut(|composer| {
             for solver_config in composer.solver_configs.iter() {
                 if ui.add(solver_button(solver_config)).clicked() {
                     tracing::debug!(

@@ -15,12 +15,12 @@ use palette::LinSrgba;
 
 use crate::{
     MaterialData,
-    components::Outline,
     draw_commands::DrawCommandBuffer,
     material::{
         AlbedoTexture,
         Material,
         MaterialTexture,
+        Outline,
         Wireframe,
     },
     mesh::{

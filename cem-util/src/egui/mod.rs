@@ -1,4 +1,5 @@
 use std::{
+    collections::VecDeque,
     path::{
         Path,
         PathBuf,
@@ -16,6 +17,10 @@ use egui_file_dialog::{
     FileDialog,
 };
 use parking_lot::Mutex;
+use serde::{
+    Deserialize,
+    Serialize,
+};
 
 use crate::path::{
     FormatPath,
@@ -329,3 +334,82 @@ impl RepaintTrigger {
 
 #[derive(Clone)]
 struct LastRepaint(Arc<Mutex<Instant>>);
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+struct RecentlyOpenedFilesData {
+    files: VecDeque<PathBuf>,
+}
+
+/// Container to store recently opened files in egui's memory
+#[derive(Clone, Debug)]
+pub struct RecentlyOpenedFiles {
+    ctx: egui::Context,
+    limit: Option<usize>,
+    id: egui::Id,
+}
+
+impl RecentlyOpenedFiles {
+    pub fn new(ctx: egui::Context, id: egui::Id, limit: impl Into<Option<usize>>) -> Self {
+        Self {
+            ctx,
+            limit: limit.into(),
+            id,
+        }
+    }
+
+    pub fn get(&self) -> Vec<PathBuf> {
+        self.ctx.data_mut(|data| {
+            data.get_persisted_mut_or_default::<RecentlyOpenedFilesData>(self.id)
+                .files
+                .iter()
+                .cloned()
+                .collect()
+        })
+    }
+
+    pub fn insert(&self, path: impl Into<PathBuf>) {
+        self.ctx.data_mut(|data| {
+            let data = data.get_persisted_mut_or_default::<RecentlyOpenedFilesData>(self.id);
+
+            data.files.push_front(path.into());
+
+            if let Some(limit) = self.limit {
+                let too_many = data.files.len().saturating_sub(limit);
+                for _ in 0..too_many {
+                    data.files.pop_back();
+                }
+            }
+        });
+    }
+
+    pub fn move_to_top(&self, path: impl AsRef<Path>) {
+        self.ctx.data_mut(|data| {
+            let data = data.get_persisted_mut_or_default::<RecentlyOpenedFilesData>(self.id);
+
+            let path = path.as_ref();
+
+            if let Some(first) = data.files.front()
+                && first == path
+            {
+                // the passed in path is already at the top
+                return;
+            }
+
+            let mut owned_path = None;
+            data.files.retain_mut(|file| {
+                if file == path {
+                    // if we already have a PathBuf for this in the list we take it out
+                    owned_path = Some(std::mem::take(file));
+                    false
+                }
+                else {
+                    true
+                }
+            });
+
+            // either reuse the PathBuf we found or create one from the passed in path
+            data.files
+                .push_front(owned_path.unwrap_or_else(|| path.to_owned()));
+        });
+    }
+}

@@ -4,7 +4,11 @@ use bevy_ecs::{
     component::Component,
     reflect::ReflectComponent,
 };
-use bevy_reflect::Reflect;
+use bevy_reflect::{
+    Reflect,
+    ReflectSerialize,
+    prelude::ReflectDefault,
+};
 use bitflags::bitflags;
 use bytemuck::{
     Pod,
@@ -35,6 +39,7 @@ use nalgebra::{
 };
 use palette::{
     LinSrgba,
+    Srgb,
     Srgba,
     WithAlpha,
 };
@@ -49,7 +54,6 @@ use serde::{
 use wgpu::util::DeviceExt;
 
 use crate::{
-    components::ClearColor,
     draw_commands::DrawCommandFlags,
     light::{
         AmbientLight,
@@ -57,10 +61,12 @@ use crate::{
     },
 };
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, Component)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, Component, Reflect)]
+#[reflect(Component, Default, Serialize)]
 pub struct CameraProjection {
     // note: not public because nalgebra seems to have the z-axis inverted relative to our
     // coordinate systems
+    #[reflect(ignore)]
     projection: Perspective3<f32>,
 }
 
@@ -322,7 +328,7 @@ bitflags! {
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, Component, Reflect)]
-#[reflect(Component, ComponentUi, @ComponentName::new("Camera Config"))]
+#[reflect(Component, ComponentUi, @ComponentName::new("Camera Config"), Default, Serialize)]
 pub struct CameraConfig {
     // todo: should this just contain the DrawCommandPipelineEnableFlags?
     pub show_mesh_opaque: bool,
@@ -401,5 +407,35 @@ impl PropertiesUi for CameraConfig {
             .response;
 
         changes.propagated(response)
+    }
+}
+
+// todo: respect eguis theme. we might just pass this in from the view when
+// rendering and remove this component.
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, Component, Reflect)]
+#[reflect(Component, ComponentUi, @ComponentName::new("Clear Color"), Default, Serialize)]
+pub struct ClearColor {
+    #[serde(with = "cem_util::palette::serde")]
+    #[reflect(ignore)]
+    pub clear_color: Srgb,
+}
+
+impl From<Srgb> for ClearColor {
+    fn from(value: Srgb) -> Self {
+        Self { clear_color: value }
+    }
+}
+
+impl From<Srgb<u8>> for ClearColor {
+    fn from(value: Srgb<u8>) -> Self {
+        Self::from(value.into_format::<f32>())
+    }
+}
+
+impl PropertiesUi for ClearColor {
+    type Config = ();
+
+    fn properties_ui(&mut self, ui: &mut egui::Ui, _config: &Self::Config) -> egui::Response {
+        self.clear_color.properties_ui(ui, &())
     }
 }

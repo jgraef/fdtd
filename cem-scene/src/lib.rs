@@ -5,6 +5,8 @@ pub mod plugin;
 #[cfg(feature = "probe")]
 pub mod probe;
 pub mod schedule;
+#[cfg(feature = "serde")]
+pub mod serde;
 pub mod spatial;
 pub mod transform;
 

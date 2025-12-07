@@ -1,11 +1,11 @@
 use std::num::NonZero;
 
 use cem_render::{
-    components::Outline,
     light::{
         AmbientLight,
         PointLight,
     },
+    material::Outline,
 };
 use palette::Srgb;
 use serde::{

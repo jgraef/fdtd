@@ -11,13 +11,25 @@ use bevy_ecs::{
         With,
         Without,
     },
+    reflect::ReflectComponent,
     system::{
         In,
         InMut,
         Query,
     },
 };
-use cem_render::components::Outline;
+use bevy_reflect::{
+    Reflect,
+    ReflectSerialize,
+    prelude::ReflectDefault,
+};
+use cem_probe::PropertiesUi;
+use cem_render::material::Outline;
+use cem_scene::probe::{
+    ComponentName,
+    ReflectComponentUi,
+};
+use cem_util::egui::EguiUtilUiExt;
 use egui_ltreeview::{
     Action,
     IndentHintStyle,
@@ -162,8 +174,18 @@ fn render_object_tree_system(
 }
 
 /// Tag for entities that are to be shown in the object tree
-#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, Component)]
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, Component, Reflect)]
+#[reflect(Component, ComponentUi, @ComponentName::new("Show in Tree"), Default, Serialize)]
 pub struct ShowInTree;
+
+impl PropertiesUi for ShowInTree {
+    type Config = ();
+
+    fn properties_ui(&mut self, ui: &mut egui::Ui, config: &Self::Config) -> egui::Response {
+        let _ = config;
+        ui.noop()
+    }
+}
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum ObjectTreeId {

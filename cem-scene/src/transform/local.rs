@@ -2,7 +2,10 @@ use bevy_ecs::{
     component::Component,
     reflect::ReflectComponent,
 };
-use bevy_reflect::Reflect;
+use bevy_reflect::{
+    Reflect,
+    ReflectSerialize,
+};
 use nalgebra::{
     Isometry3,
     Point3,
@@ -17,7 +20,11 @@ use crate::probe::ReflectComponentUi;
 
 #[derive(Clone, Copy, Debug, Default, Component, Reflect)]
 #[reflect(Component)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    reflect(Serialize)
+)]
 #[cfg_attr(feature = "probe", reflect(ComponentUi, @crate::probe::ComponentName::new("Local Transform")))]
 pub struct LocalTransform {
     /// Rotation followed by translation that transforms points from the

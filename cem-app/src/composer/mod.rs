@@ -2,6 +2,7 @@ pub mod camera;
 pub mod entity_window;
 pub mod file_formats;
 pub mod menubar;
+pub mod presets;
 pub mod selection;
 pub mod shape;
 pub mod tree;
@@ -9,10 +10,13 @@ pub mod undo;
 pub mod view;
 
 use std::{
-    borrow::Cow,
-    convert::Infallible,
+    fmt::Display,
     fs::File,
-    io::BufReader,
+    io::{
+        BufReader,
+        BufWriter,
+        Write,
+    },
     path::{
         Path,
         PathBuf,
@@ -37,10 +41,8 @@ use cem_render::{
     camera::{
         CameraConfig,
         CameraProjection,
+        ClearColor,
     },
-    components::ClearColor,
-    material,
-    mesh::LoadMesh,
     plugin::RenderPlugin,
 };
 use cem_scene::{
@@ -48,38 +50,22 @@ use cem_scene::{
     Scene,
     SceneBuilder,
     builtin_plugins,
-    spatial::Collider,
     transform::LocalTransform,
 };
 use cem_solver::{
-    FieldComponent,
-    fdtd::{
-        self,
-        pml::GradedPml,
-    },
+    fdtd,
     material::{
         Material,
         PhysicalConstants,
-    },
-    source::{
-        ContinousWave,
-        ScalarSourceFunctionExt,
-        Source,
     },
 };
 use color_eyre::eyre::bail;
 use nalgebra::{
     Isometry3,
     Point3,
-    Vector2,
     Vector3,
 };
 use nec_file::NecFile;
-use palette::WithAlpha;
-use parry3d::shape::{
-    Ball,
-    Cuboid,
-};
 use serde::{
     Deserialize,
     Serialize,
@@ -97,21 +83,18 @@ use crate::{
             FileFormat,
             guess_file_format_from_path,
             nec::PopulateWithNec,
+            project_file::{
+                ProjectFileData,
+                SaveToFile,
+            },
         },
         menubar::ComposerMenuElements,
+        presets::ExampleScene,
         selection::{
-            Selectable,
             Selected,
             SelectionWorldMut,
         },
-        shape::flat::{
-            Quad,
-            QuadMeshConfig,
-        },
-        tree::{
-            ObjectTreeState,
-            ShowInTree,
-        },
+        tree::ObjectTreeState,
         undo::{
             HadesId,
             UndoBuffer,
@@ -142,16 +125,8 @@ use crate::{
             StopCondition,
             Volume,
         },
-        observer::{
-            Observer,
-            test_color_map,
-        },
         runner::SolverRunner,
         ui::SolverConfigUiWindow,
-    },
-    util::scene::{
-        EntityBuilderExt,
-        SceneExt,
     },
 };
 
@@ -210,9 +185,8 @@ impl Composers {
 
             for (i, composer) in self.composers.iter().enumerate() {
                 let is_active = self.active.is_some_and(|active| active == i);
-                let title = format!("🗋 {}", composer.title);
 
-                let button = egui::Button::new(title)
+                let button = egui::Button::new(composer.title.tab_title())
                     .corner_radius(egui::CornerRadius {
                         nw: 4,
                         ne: 4,
@@ -277,16 +251,13 @@ impl Composers {
                     let mut state =
                         ComposerState::new(app_config.composer.clone(), self.render_plugin.clone());
 
+                    state.set_path(path);
+
                     PopulateWithNec {
                         nec_file: &nec_file,
                         material: palette::named::ORANGERED.into(),
                     }
                     .populate_scene(&mut state.scene)?;
-
-                    state.path = Some(path.to_owned());
-                    if let Some(file_name) = path.file_name() {
-                        state.title = file_name.to_string_lossy().into_owned().into();
-                    }
 
                     state.camera().fit_to_scene(&Default::default());
 
@@ -296,7 +267,7 @@ impl Composers {
             }
         }
         else {
-            tracing::debug!("todo: unknown file format");
+            bail!("Unknown file format: {}", path.display());
         }
 
         Ok(())
@@ -313,11 +284,27 @@ impl Composers {
         !self.composers.is_empty()
     }
 
-    fn active_mut(&mut self) -> Option<&mut ComposerState> {
-        self.active.and_then(|index| self.composers.get_mut(index))
+    pub fn save_path(&self) -> Option<&Path> {
+        self.with_active(|composer| composer.path.as_deref())
+            .flatten()
     }
 
-    fn with_active<'a, R>(&'a mut self, f: impl FnOnce(&'a mut ComposerState) -> R) -> Option<R>
+    fn active(&self) -> Option<&ComposerState> {
+        self.active.map(|index| &self.composers[index])
+    }
+
+    fn active_mut(&mut self) -> Option<&mut ComposerState> {
+        self.active.map(|index| &mut self.composers[index])
+    }
+
+    fn with_active<'a, R>(&'a self, f: impl FnOnce(&'a ComposerState) -> R) -> Option<R>
+    where
+        R: 'a,
+    {
+        self.active().map(f)
+    }
+
+    fn with_active_mut<'a, R>(&'a mut self, f: impl FnOnce(&'a mut ComposerState) -> R) -> Option<R>
     where
         R: 'a,
     {
@@ -330,7 +317,7 @@ impl Composers {
         &mut self,
         f: impl FnOnce(&mut ComposerState, Vec<Entity>) -> R,
     ) -> Option<R> {
-        self.with_active(|composer| {
+        self.with_active_mut(|composer| {
             let selected = composer.selection().entities();
             f(composer, selected)
         })
@@ -345,6 +332,11 @@ impl Composers {
             solver_runner,
         }
     }
+
+    pub fn save_file(&mut self, path: Option<&Path>) -> Result<(), Error> {
+        self.with_active_mut(|state| state.save_file(path))
+            .unwrap_or(Ok(()))
+    }
 }
 
 /// State for an open file
@@ -357,7 +349,7 @@ struct ComposerState {
     /// This might need to keep track of how it's saved (e.g. file format)
     path: Option<PathBuf>,
 
-    title: Cow<'static, str>,
+    title: Title,
 
     /// Whether the file was modified, since it was loaded or saved.
     modified: bool,
@@ -393,6 +385,10 @@ impl ComposerState {
         let mut scene_builder = SceneBuilder::default();
         scene_builder.register_plugins(builtin_plugins());
         scene_builder.register_plugin(render_plugin);
+
+        // serialize_world relies on this being registered
+        // todo: make serialization a plugin?
+        scene_builder.world.register_component::<SaveToFile>();
 
         // the only view we have right now
         // todo: don't create camera here. for a proper project file it will be
@@ -438,7 +434,7 @@ impl ComposerState {
         Self {
             config,
             path: None,
-            title: "Untitled".into(),
+            title: Default::default(),
             modified: false,
             scene,
             camera_entity,
@@ -623,6 +619,58 @@ impl ComposerState {
         }
     }
 
+    pub fn save_file(&mut self, path: Option<&Path>) -> Result<(), Error> {
+        // get the path we'll save to and update the path stored in the composer if
+        // applicable.
+        let path = match (path, &self.path) {
+            (None, None) => {
+                // make sure this never happens. would be bad if someone tries to save their
+                // project and it crashes right there
+                bail!(
+                    "Tried to save without path. This is a bug and should never happen. If it does, report it, and try \"Save As\"."
+                );
+            }
+            (Some(path), None) => {
+                // save with path and we need to set the path in the composer
+                self.set_path(path);
+                path
+            }
+            (None, Some(path)) => {
+                // save without path, but we have one in the composer
+                &path
+            }
+            (Some(path), Some(_)) => {
+                // save with path, and we already have one.
+
+                // i think the intended behavior is to set the new path in the composer
+                self.set_path(path);
+
+                path
+            }
+        };
+
+        let mut writer = BufWriter::new(File::create(path)?);
+        /*ron::Options::default().to_io_writer_pretty(
+            writer,
+            &WorldSerialize::new(&self.scene.world),
+            Default::default(),
+        )?;*/
+        let ron = ron::ser::to_string_pretty(
+            &ProjectFileData::from_world(&self.scene.world),
+            Default::default(),
+        )?;
+        tracing::debug!(%ron, "serialized world");
+        writer.write_all(ron.as_bytes())?;
+
+        Ok(())
+    }
+
+    fn set_path(&mut self, path: impl Into<PathBuf>) {
+        let path = path.into();
+        self.title.set_from_path(&path);
+        self.path = Some(path);
+    }
+
     pub fn has_undos(&self) -> bool {
         self.undo_buffer.has_undos()
     }
@@ -789,140 +837,6 @@ fn make_config(name: &str, parallelization: Option<Parallelization>) -> SolverCo
     }
 }
 
-#[derive(Clone, Copy, Debug)]
-pub struct ExampleScene;
-
-impl PopulateScene for ExampleScene {
-    type Error = Infallible;
-
-    fn populate_scene(&self, scene: &mut Scene) -> Result<(), Self::Error> {
-        // device
-
-        let em_material = Material {
-            relative_permittivity: 3.9,
-            ..Material::VACUUM
-        };
-
-        let cube = scene
-            .add_object(
-                Point3::new(-0.2, 0.0, 0.0),
-                Cuboid::new(Vector3::repeat(0.1)),
-            )
-            .material(material::presets::BRASS)
-            .insert(em_material)
-            .id();
-
-        let ball = scene
-            .add_object(Point3::new(0.4, 0.0, 0.0), Ball::new(0.1))
-            .material(material::presets::BLACKBOARD)
-            .insert(em_material)
-            .id();
-
-        scene.world.entity_mut(cube).add_child(ball);
-
-        // pml (wip)
-
-        {
-            let cuboid = Cuboid::new(Vector3::new(0.05, 0.5, 0.5));
-            let transform = LocalTransform::from(Point3::new(-0.45, 0.0, 0.0));
-            let normal = Vector3::x_axis();
-            let pml = GradedPml {
-                m: 4.0,
-                m_a: 3.0,
-                sigma_max: 2.5,
-                kappa_max: 2.5,
-                a_max: 0.1,
-                normal,
-            };
-            scene.world.spawn((
-                Name::new("PML"),
-                pml,
-                transform,
-                Collider::from(cuboid),
-                material::Wireframe::new(palette::named::PURPLE.into_format().with_alpha(1.0)),
-                LoadMesh::from_shape(cuboid, ()),
-                Selectable,
-                ShowInTree,
-            ));
-        }
-
-        // observer
-
-        {
-            let half_extents = Vector2::repeat(0.5);
-            let quad = Quad::new(half_extents);
-            scene.world.spawn((
-                Name::new("Observer"),
-                Observer {
-                    write_to_gif: None,
-                    display_as_texture: true,
-                    field: FieldComponent::E,
-                    color_map: test_color_map(1.0, Vector3::z_axis()),
-                    half_extents,
-                },
-                material::LoadAlbedoTexture::new("assets/test_pattern.png"),
-                material::Material::from(material::presets::OFFICE_PAPER),
-                LocalTransform::identity(),
-                Collider::from(quad),
-                Selectable,
-                ShowInTree,
-                LoadMesh::from_shape(quad, QuadMeshConfig { back_face: true }),
-            ));
-        }
-
-        // source
-
-        {
-            let shape = Ball::new(0.01);
-            scene.world.spawn((
-                Name::new("Source"),
-                Source::from(
-                    //GaussianPulse::new(0.05, 0.01)
-                    ContinousWave::new(0.0, 5.0)
-                        .with_amplitudes(Vector3::z() * 50.0, Vector3::zeros()),
-                ),
-                LocalTransform::identity(),
-                material::Material::from(material::presets::COPPER),
-                Collider::from(shape),
-                LoadMesh::from_shape(shape, Default::default()),
-                Selectable,
-                ShowInTree,
-            ));
-        }
-
-        Ok(())
-    }
-}
-
-pub struct PresetScene;
-
-impl PopulateScene for PresetScene {
-    type Error = Infallible;
-
-    fn populate_scene(&self, scene: &mut Scene) -> Result<(), Self::Error> {
-        let presets = material::presets::ALL;
-
-        let per_line = (presets.len() as f32).sqrt().round() as usize;
-
-        let mut x = 0;
-        let mut y = 0;
-        for preset in presets {
-            scene
-                .add_object(Point3::new(x as f32, y as f32, -5.0), Ball::new(0.25))
-                .material(**preset)
-                .name(preset.name);
-
-            x += 1;
-            if x == per_line {
-                x = 0;
-                y += 1;
-            }
-        }
-
-        Ok(())
-    }
-}
-
 #[derive(Serialize, Deserialize)]
 enum SceneClipboard<E> {
     Entities {
@@ -940,7 +854,7 @@ impl DebugUi for &mut Composers {
         }
         else {
             for composer in &mut self.composers {
-                ui.collapsing(&*composer.title, |ui| {
+                ui.collapsing(composer.title.as_str(), |ui| {
                     composer
                         .scene
                         .world
@@ -1010,4 +924,30 @@ fn draw_composer_debug_ui_system(
             ui.label(format!("Outlines: {:?}", info.num_outlines));
         });
     });
+}
+
+#[derive(Debug, Default)]
+struct Title(Option<String>);
+
+impl Display for Title {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+impl Title {
+    fn as_str(&self) -> &str {
+        self.0.as_ref().map_or("Untitled", |title| title.as_str())
+    }
+
+    fn set_from_path(&mut self, path: impl AsRef<Path>) {
+        self.0 = path
+            .as_ref()
+            .file_name()
+            .map(|file_name| file_name.to_string_lossy().into_owned().into());
+    }
+
+    fn tab_title(&self) -> impl egui::IntoAtoms<'_> {
+        ("🗋 ", self.as_str())
+    }
 }

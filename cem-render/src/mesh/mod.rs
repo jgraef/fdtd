@@ -280,9 +280,7 @@ impl WindingOrder {
 #[derive(Clone, Debug, Component)]
 pub enum LoadMesh {
     Generator {
-        generator: Arc<dyn GenerateMeshTraits>,
-        normals: bool,
-        uvs: bool,
+        generator: Arc<dyn LoadFromMeshGenerator>,
     },
     /*File {
         path: PathBuf,
@@ -296,9 +294,6 @@ impl LoadMesh {
     {
         Self::Generator {
             generator: Arc::new(generator),
-            // todo: from parameters
-            normals: true,
-            uvs: true,
         }
     }
 
@@ -334,13 +329,9 @@ impl LoadingState for LoadMesh {
         context: &mut RenderResourceManager,
     ) -> Result<LoadingProgress<Mesh>, AssetError> {
         let mesh = match self {
-            LoadMesh::Generator {
-                generator,
-                normals,
-                uvs,
-            } => {
+            LoadMesh::Generator { generator } => {
                 let mut mesh_builder = MeshBufferBuilder::new(Some(Renderer::WINDING_ORDER));
-                generator.generate(&mut mesh_builder, *normals, *uvs);
+                generator.generate(&mut mesh_builder, true, true);
                 mesh_builder.finish(context.device(), &format!("{generator:?}"))
             } //LoadMesh::File { path: _ } => todo!("load mesh from file"),
         };
@@ -349,9 +340,9 @@ impl LoadingState for LoadMesh {
     }
 }
 
-pub trait GenerateMeshTraits: GenerateMesh + Debug + Send + Sync + 'static {}
+pub trait LoadFromMeshGenerator: GenerateMesh + Debug + Send + Sync + 'static {}
 
-impl<T> GenerateMeshTraits for T where T: GenerateMesh + Debug + Send + Sync + 'static {}
+impl<T> LoadFromMeshGenerator for T where T: GenerateMesh + Debug + Send + Sync + 'static {}
 
 pub trait GenerateMesh {
     fn generate(&self, mesh_builder: &mut dyn MeshBuilder, normals: bool, uvs: bool);

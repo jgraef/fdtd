@@ -21,6 +21,7 @@ use cem_scene::{
 };
 
 use crate::composer::{
+    file_formats::project_file::SaveToFile,
     selection::Selectable,
     tree::ShowInTree,
 };
@@ -62,6 +63,7 @@ impl SceneExt for cem_scene::Scene {
             .mesh(mesh)
             .tagged::<ShowInTree>(true)
             .tagged::<Selectable>(true)
+            .tagged::<SaveToFile>(true)
     }
 }
 

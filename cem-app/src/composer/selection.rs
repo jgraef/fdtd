@@ -15,10 +15,11 @@ use bevy_ecs::{
 };
 use bevy_reflect::{
     Reflect,
+    ReflectSerialize,
     prelude::ReflectDefault,
 };
 use cem_probe::PropertiesUi;
-use cem_render::components::Outline;
+use cem_render::material::Outline;
 use cem_scene::probe::{
     ComponentName,
     ReflectComponentUi,
@@ -31,7 +32,7 @@ use serde::{
 
 /// Tag component for entities that are selected.
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, Component, Reflect)]
-#[reflect(Component, ComponentUi, @ComponentName::new("Selected"), Default)]
+#[reflect(Component, ComponentUi, @ComponentName::new("Selected"), Default, Serialize)]
 pub struct Selected;
 
 impl PropertiesUi for Selected {
@@ -45,7 +46,7 @@ impl PropertiesUi for Selected {
 
 /// Tag component for entities that can be selected.
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, Component, Reflect)]
-#[reflect(Component, ComponentUi, @ComponentName::new("Selectable"), Default)]
+#[reflect(Component, ComponentUi, @ComponentName::new("Selectable"), Default, Serialize)]
 pub struct Selectable;
 
 impl PropertiesUi for Selectable {

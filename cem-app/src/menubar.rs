@@ -1,21 +1,8 @@
-use std::{
-    collections::VecDeque,
-    path::{
-        Path,
-        PathBuf,
-    },
-};
-
 use cem_util::path::format_path;
-use serde::{
-    Deserialize,
-    Serialize,
-};
 
 use crate::{
     app::{
         App,
-        FileDialogAction,
         GithubUrls,
     },
     composer::menubar::ComposerMenuElements,
@@ -60,20 +47,17 @@ impl<'a> MenuBar<'a> {
             ui.separator();
 
             if ui.button("Open File").clicked() {
-                self.app.file_dialog.set_user_data(FileDialogAction::Open);
-                self.app.file_dialog.pick_file();
+                self.app.file_dialog_state.open_file();
             }
             ui.menu_button("Open Recent", |ui| {
-                let recently_open = RecentlyOpenedFiles::get(ui.ctx());
-
-                if !recently_open.files.is_empty() {
-                    for path in recently_open.files {
-                        if ui.button(format_path(&path)).clicked() {
-                            RecentlyOpenedFiles::move_to_top(ui.ctx(), &path);
-
+                let files = self.app.recently_opened_files.get();
+                if !files.is_empty() {
+                    for path in &files {
+                        if ui.button(format_path(path)).clicked() {
+                            self.app.recently_opened_files.insert(path);
                             self.app
                                 .composers
-                                .open_file(&self.app.config, &path)
+                                .open_file(&self.app.config, path)
                                 .ok_or_handle(&*ui);
                         }
                     }
@@ -92,8 +76,14 @@ impl<'a> MenuBar<'a> {
                 )
                 .clicked()
             {
-                tracing::debug!("todo: save");
+                if self.app.composers.save_path().is_some() {
+                    self.app.composers.save_file(None).ok_or_handle(&*ui);
+                }
+                else {
+                    self.app.file_dialog_state.save_file(None);
+                }
             }
+
             if ui
                 .add_enabled(
                     self.app.composers.has_file_open(),
@@ -101,8 +91,9 @@ impl<'a> MenuBar<'a> {
                 )
                 .clicked()
             {
-                self.app.file_dialog.set_user_data(FileDialogAction::SaveAs);
-                self.app.file_dialog.pick_file();
+                self.app
+                    .file_dialog_state
+                    .save_file(self.app.composers.save_path());
             }
 
             ui.separator();
@@ -195,53 +186,6 @@ impl<'a> MenuBar<'a> {
                 let debug_open_id = egui::Id::new("debug_open");
                 ui.data_mut(|data| data.insert_persisted(debug_open_id, true));
             }
-        });
-    }
-}
-
-/// Container to store recently opened files in egui's memory
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct RecentlyOpenedFiles {
-    pub files: VecDeque<PathBuf>,
-}
-
-impl RecentlyOpenedFiles {
-    pub fn get(ctx: &egui::Context) -> Self {
-        ctx.memory_mut(|memory| {
-            memory
-                .data
-                .get_persisted_mut_or_default::<Self>(egui::Id::NULL)
-                .clone()
-        })
-    }
-
-    pub fn insert(ctx: &egui::Context, path: impl AsRef<Path>, limit: usize) {
-        ctx.memory_mut(|memory| {
-            let this = memory
-                .data
-                .get_persisted_mut_or_default::<Self>(egui::Id::NULL);
-
-            this.files.push_front(path.as_ref().to_owned());
-
-            if this.files.len() > limit {
-                this.files.pop_back();
-            }
-        });
-    }
-
-    pub fn move_to_top(ctx: &egui::Context, path: impl AsRef<Path>) {
-        ctx.memory_mut(|memory| {
-            let this = memory
-                .data
-                .get_persisted_mut_or_default::<Self>(egui::Id::NULL);
-
-            let path = path.as_ref().to_owned();
-            let files = std::mem::take(&mut this.files);
-
-            // i think there's more efficient ways to do this, but meh
-            this.files = files.into_iter().filter(|x: &PathBuf| x != &path).collect();
-
-            this.files.push_front(path);
         });
     }
 }

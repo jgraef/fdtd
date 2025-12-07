@@ -1,6 +1,7 @@
 use std::{
     borrow::Cow,
     num::NonZero,
+    path::Path,
     sync::Arc,
 };
 
@@ -9,7 +10,10 @@ use cem_render::{
     plugin::RenderPlugin,
 };
 use cem_util::{
-    egui::file_dialog::FileDialog,
+    egui::{
+        RecentlyOpenedFiles,
+        file_dialog::FileDialog,
+    },
     wgpu::buffer::StagingPool,
 };
 use chrono::Local;
@@ -30,7 +34,10 @@ use image::RgbaImage;
 use crate::{
     args::Args,
     build_info::BUILD_INFO,
-    composer::Composers,
+    composer::{
+        Composers,
+        file_formats::FileFormat,
+    },
     config::AppConfig,
     error::{
         ErrorDialog,
@@ -38,10 +45,7 @@ use crate::{
         show_error_dialog,
     },
     files::AppFiles,
-    menubar::{
-        MenuBar,
-        RecentlyOpenedFiles,
-    },
+    menubar::MenuBar,
     solver::runner::SolverRunner,
 };
 
@@ -264,7 +268,8 @@ pub(super) fn run_app(args: Args) -> Result<(), Error> {
 pub struct App {
     pub app_files: AppFiles,
     pub config: AppConfig,
-    pub file_dialog: FileDialog,
+    pub recently_opened_files: RecentlyOpenedFiles,
+    pub file_dialog_state: FileDialogState,
     pub show_about: bool,
     pub solver_runner: SolverRunner,
     pub composers: Composers,
@@ -303,10 +308,11 @@ impl App {
         let mut composers = Composers::new(render_plugin);
         let solver_runner = SolverRunner::from_app_context(&context);
 
-        // create file dialog for opening and saving files
-        let file_dialog = FileDialog::new()
-            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-            .add_file_filter_extensions("NEC", vec!["nec"]);
+        let recently_opened_files = RecentlyOpenedFiles::new(
+            context.egui_context.clone(),
+            egui::Id::NULL,
+            context.config.recently_opened_files_limit,
+        );
 
         if context.args.new_file {
             // command line telling us to directly go to a new file
@@ -315,11 +321,7 @@ impl App {
         else if let Some(path) = &context.args.file {
             // if a file was passed via command line argument, open it
 
-            RecentlyOpenedFiles::insert(
-                &context.egui_context,
-                path,
-                context.config.recently_opened_files_limit,
-            );
+            recently_opened_files.insert(path);
 
             composers
                 .open_file(&context.config, path)
@@ -331,7 +333,8 @@ impl App {
         Self {
             app_files: context.app_files,
             config: context.config,
-            file_dialog,
+            recently_opened_files,
+            file_dialog_state: Default::default(),
             show_about: false,
             solver_runner,
             composers,
@@ -422,45 +425,15 @@ impl eframe::App for App {
 
         self.show_debug_window(ctx);
 
-        self.file_dialog.update(ctx);
-        if let Some(path) = self.file_dialog.take_picked() {
-            if let Some(file_dialog_action) =
-                self.file_dialog.user_data::<FileDialogAction>().copied()
-            {
-                match file_dialog_action {
-                    FileDialogAction::Open => {
-                        RecentlyOpenedFiles::insert(
-                            ctx,
-                            &path,
-                            self.config.recently_opened_files_limit,
-                        );
-
-                        self.composers
-                            .open_file(&self.config, path)
-                            .ok_or_handle(ctx);
-                    }
-                    FileDialogAction::SaveAs => {
-                        tracing::debug!("todo: save as");
-                    }
-                }
-            }
-            else {
-                tracing::warn!("File dialog without action");
-            }
-        }
+        self.file_dialog_state.update(
+            ctx,
+            &self.recently_opened_files,
+            &mut self.composers,
+            &self.config,
+        );
 
         show_error_dialog(ctx);
     }
-}
-
-fn todo_label(ui: &mut egui::Ui) {
-    ui.label("todo");
-}
-
-#[derive(Clone, Copy, Debug)]
-pub enum FileDialogAction {
-    Open,
-    SaveAs,
 }
 
 #[derive(Clone)]
@@ -522,4 +495,102 @@ fn show_about_window(ctx: &egui::Context, is_open: &mut bool) {
                 );
             }
         });
+}
+
+#[derive(Debug)]
+pub enum FileDialogState {
+    None,
+    OpenFile { file_dialog: FileDialog },
+    SaveFile { file_dialog: FileDialog },
+}
+
+impl Default for FileDialogState {
+    fn default() -> Self {
+        Self::None
+    }
+}
+
+impl FileDialogState {
+    pub fn open_file(&mut self) {
+        tracing::debug!("open open file dialog");
+
+        let mut file_dialog = FileDialog::new().anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0]);
+
+        for file_format in FileFormat::iter() {
+            if file_format.can_open() {
+                file_dialog = file_dialog.add_file_filter_extensions(
+                    file_format.display_name(),
+                    file_format.file_extensions().iter().copied().collect(),
+                );
+            }
+        }
+
+        file_dialog.pick_file();
+
+        *self = Self::OpenFile { file_dialog };
+    }
+
+    pub fn save_file(&mut self, default_path: Option<&Path>) {
+        tracing::debug!("open save file dialog");
+
+        let mut file_dialog = FileDialog::new().anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0]);
+
+        for file_format in FileFormat::iter() {
+            if file_format.can_save() {
+                file_dialog = file_dialog.add_save_extension(
+                    file_format.display_name(),
+                    file_format.canonical_file_extension(),
+                );
+            }
+        }
+
+        if let Some(default_path) = default_path {
+            if let Some(parent) = default_path.parent() {
+                file_dialog = file_dialog.initial_directory(parent.to_owned());
+            }
+            else {
+                tracing::error!(default_path = %default_path.display(), "Default path provided to FileDialogState::save has no parent");
+            }
+
+            if let Some(file_name) = default_path.file_name()
+                && let Some(file_name) = file_name.to_str()
+            {
+                file_dialog = file_dialog.default_file_name(file_name);
+            }
+            else {
+                tracing::error!(default_path = %default_path.display(), "Default path provided to FileDialogState::save has no file name or is not valid UTF-8");
+                file_dialog = file_dialog.default_file_name("Untitled.cem");
+            }
+        }
+
+        file_dialog.save_file();
+
+        *self = Self::SaveFile { file_dialog };
+    }
+
+    pub fn update(
+        &mut self,
+        ctx: &egui::Context,
+        recently_opened_files: &RecentlyOpenedFiles,
+        composers: &mut Composers,
+        config: &AppConfig,
+    ) {
+        match self {
+            FileDialogState::None => {}
+            FileDialogState::OpenFile { file_dialog } => {
+                file_dialog.update(ctx);
+                if let Some(path) = file_dialog.take_picked() {
+                    recently_opened_files.insert(&path);
+                    composers.open_file(&config, path).ok_or_handle(ctx);
+                }
+            }
+            FileDialogState::SaveFile { file_dialog } => {
+                file_dialog.update(ctx);
+                if let Some(path) = file_dialog.take_picked() {
+                    recently_opened_files.insert(&path);
+                    composers.save_file(Some(&path)).ok_or_handle(ctx);
+                }
+            }
+        }
+    }
 }

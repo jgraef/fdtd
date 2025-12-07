@@ -47,17 +47,14 @@ use crate::{
         CameraConfig,
         CameraData,
         CameraProjection,
+        ClearColor,
         Viewport,
     },
     command::{
         CommandReceiver,
         CommandSender,
     },
-    components::{
-        ClearColor,
-        Hidden,
-        Outline,
-    },
+    components::Hidden,
     draw_commands::{
         DrawCommand,
         DrawCommandFlags,
@@ -71,6 +68,7 @@ use crate::{
         AlbedoTexture,
         Material,
         MaterialTexture,
+        Outline,
         Wireframe,
     },
     mesh::{

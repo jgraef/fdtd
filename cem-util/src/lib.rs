@@ -12,9 +12,13 @@ pub mod palette;
 #[cfg(feature = "wgpu")]
 pub mod wgpu;
 
+#[cfg(feature = "serde")]
+pub mod serde;
+
 pub mod boo;
 pub mod cache;
 pub mod exclusive;
+pub mod io;
 pub mod oneshot;
 pub mod path;
 
