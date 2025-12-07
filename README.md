@@ -2,6 +2,8 @@
 
 This app is work-in-progress. It's intended to model electromagnetic behavior. Initially we implemented [FDTD][1], but are now working on [FEEC][2] too. These methods are not limited to electromagnetic modeling though, so we might also model other things as well.
 
+![Screenshot of the App showing the main screen with a FDTD simulation in progress.](https://media.githubusercontent.com/media/jgraef/fdtd/refs/heads/main/doc/screenshot.png)
+
 # TODO
 
  - use types from nonmax crate in half-edge graph and maybe fdtd impl?
