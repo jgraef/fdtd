@@ -479,7 +479,6 @@ pub fn grab_draw_list_for_camera(
 
 pub fn commit_resource_transaction(mut transaction: ResMut<RenderResourceTransactionState>) {
     if let Some(transaction) = transaction.0.take() {
-        tracing::debug!("commiting resource transaction");
         transaction.commit();
     }
 }

@@ -533,7 +533,9 @@ impl FileDialogState {
     pub fn save_file(&mut self, default_path: Option<&Path>) {
         tracing::debug!("open save file dialog");
 
-        let mut file_dialog = FileDialog::new().anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0]);
+        let mut file_dialog = FileDialog::new()
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .default_file_name("Untitled.cem");
 
         for file_format in FileFormat::iter() {
             if file_format.can_save() {
@@ -559,7 +561,6 @@ impl FileDialogState {
             }
             else {
                 tracing::error!(default_path = %default_path.display(), "Default path provided to FileDialogState::save has no file name or is not valid UTF-8");
-                file_dialog = file_dialog.default_file_name("Untitled.cem");
             }
         }
 

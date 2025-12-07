@@ -1,5 +1,21 @@
 use std::fmt::Debug;
 
+#[cfg(feature = "bevy_ecs")]
+use bevy_ecs::reflect::ReflectComponent;
+#[cfg(all(feature = "serde", feature = "bevy_ecs"))]
+use bevy_reflect::ReflectSerialize;
+#[cfg(feature = "probe")]
+use cem_probe::{
+    PropertiesUi,
+    TrackChanges,
+    label_and_value,
+};
+#[cfg(all(feature = "probe", feature = "bevy_ecs"))]
+use cem_scene::probe::{
+    ComponentName,
+    ReflectComponentUi,
+};
+
 #[derive(Clone, Copy)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct PhysicalConstants {
@@ -47,10 +63,45 @@ impl PhysicalConstants {
     }
 }
 
+#[cfg(feature = "probe")]
+impl PropertiesUi for PhysicalConstants {
+    type Config = ();
+
+    fn properties_ui(&mut self, ui: &mut egui::Ui, _config: &Self::Config) -> egui::Response {
+        // todo: combo box with predefined defaults (e.g. REDUCED, SI)
+        let mut changes = TrackChanges::default();
+
+        let response = egui::Frame::new()
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    if ui.small_button("SI").clicked() {
+                        *self = Self::SI;
+                    }
+                    if ui.small_button("Reduced").clicked() {
+                        *self = Self::REDUCED;
+                    }
+                });
+
+                label_and_value(ui, "eps_0", &mut changes, &mut self.vacuum_permittivity);
+                label_and_value(ui, "mu_0", &mut changes, &mut self.vacuum_permeability);
+                ui.label(format!("c: {:e}", self.speed_of_light()));
+            })
+            .response;
+
+        changes.propagated(response)
+    }
+}
+
 // todo: good cc-0 database: https://github.com/polyanskiy/refractiveindex.info-database/
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "bevy_ecs", derive(bevy_ecs::component::Component))]
+#[cfg_attr(
+    feature = "bevy_ecs",
+    derive(bevy_ecs::component::Component, bevy_reflect::Reflect),
+    reflect(Component)
+)]
+#[cfg_attr(all(feature = "probe", feature = "bevy_ecs"), reflect(ComponentUi, @ComponentName::new("Material")))]
+#[cfg_attr(all(feature = "serde", feature = "bevy_ecs"), reflect(Serialize))]
 pub struct Material {
     /// mu_r
     pub relative_permeability: f64,
@@ -75,5 +126,46 @@ impl Material {
 impl Default for Material {
     fn default() -> Self {
         Self::VACUUM
+    }
+}
+
+#[cfg(feature = "probe")]
+impl PropertiesUi for Material {
+    type Config = ();
+
+    fn properties_ui(&mut self, ui: &mut egui::Ui, config: &Self::Config) -> egui::Response {
+        let _ = config;
+        let mut changes = TrackChanges::default();
+
+        let response = egui::Frame::new()
+            .show(ui, |ui| {
+                label_and_value(
+                    ui,
+                    "Relative Permeability",
+                    &mut changes,
+                    &mut self.relative_permeability,
+                );
+                label_and_value(
+                    ui,
+                    "Magnetic Conductivity",
+                    &mut changes,
+                    &mut self.magnetic_conductivity,
+                );
+                label_and_value(
+                    ui,
+                    "Relative Permittivity",
+                    &mut changes,
+                    &mut self.relative_permittivity,
+                );
+                label_and_value(
+                    ui,
+                    "Electrical Conductivity",
+                    &mut changes,
+                    &mut self.eletrical_conductivity,
+                );
+            })
+            .response;
+
+        changes.propagated(response)
     }
 }
