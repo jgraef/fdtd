@@ -2,6 +2,7 @@
 pub mod parry;
 
 use std::{
+    convert::Infallible,
     fmt::Debug,
     ops::Range,
     sync::Arc,
@@ -10,6 +11,7 @@ use std::{
 use bevy_ecs::{
     component::Component,
     lifecycle::HookContext,
+    system::EntityCommands,
     world::DeferredWorld,
 };
 use bitflags::bitflags;
@@ -17,12 +19,7 @@ use bytemuck::{
     Pod,
     Zeroable,
 };
-use cem_scene::assets::{
-    AssetError,
-    LoadAsset,
-    LoadingProgress,
-    LoadingState,
-};
+use cem_scene::assets::LoadAsset;
 use cem_util::format_size;
 use nalgebra::{
     Point2,
@@ -100,15 +97,15 @@ impl MeshBindGroup {
         material_texture: Option<&MaterialTexture>,
         fallbacks: &Fallbacks,
     ) -> Self {
-        let (albedo_sampler, albedo_texture) = albedo_texture
-            .map_or((&fallbacks.sampler_clamp, &fallbacks.white), |texture| {
-                (texture.sampler.pick(fallbacks), &texture.texture.view)
-            });
+        let (albedo_sampler, albedo_texture) = albedo_texture.map_or(
+            (&fallbacks.sampler_nearest_clamp, &fallbacks.white),
+            |texture| (texture.sampler.pick(fallbacks), &texture.texture_view),
+        );
 
-        let (material_sampler, material_texture) = material_texture
-            .map_or((&fallbacks.sampler_clamp, &fallbacks.white), |texture| {
-                (texture.sampler.pick(fallbacks), &texture.texture.view)
-            });
+        let (material_sampler, material_texture) = material_texture.map_or(
+            (&fallbacks.sampler_nearest_clamp, &fallbacks.white),
+            |texture| (texture.sampler.pick(fallbacks), &texture.texture_view),
+        );
 
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("mesh bind group"),
@@ -322,21 +319,14 @@ impl LoadMesh {
 }
 
 impl LoadAsset for LoadMesh {
-    type State = Self;
-
-    fn start_loading(&self) -> Result<Self, AssetError> {
-        Ok(self.clone())
-    }
-}
-
-impl LoadingState for LoadMesh {
-    type Output = Mesh;
     type Context = RenderResourceManager<'static>;
+    type Error = Infallible;
 
-    fn poll(
-        &mut self,
+    fn load(
+        &self,
+        mut entity: EntityCommands,
         context: &mut RenderResourceManager,
-    ) -> Result<LoadingProgress<Mesh>, AssetError> {
+    ) -> Result<(), Infallible> {
         let mesh = match self {
             LoadMesh::Generator { generator } => {
                 let mut mesh_builder = MeshBufferBuilder::new(Some(Renderer::WINDING_ORDER));
@@ -345,7 +335,9 @@ impl LoadingState for LoadMesh {
             } //LoadMesh::File { path: _ } => todo!("load mesh from file"),
         };
 
-        Ok(LoadingProgress::Ready(mesh))
+        entity.insert(mesh);
+
+        Ok(())
     }
 }
 

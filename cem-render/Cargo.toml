@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+async-broadcast = "0.7.2"
 bevy_ecs = { version = "0.17.3", default-features = false, features = [
     "bevy_reflect",
     "reflect_auto_register",
@@ -13,7 +14,7 @@ bitflags = "2.10.0"
 bytemuck = { version = "1.24.0", features = ["derive"] }
 cem-probe = { workspace = true, optional = true }
 cem-scene.workspace = true
-cem-util = { workspace = true, features = ["image", "wgpu"] }
+cem-util = { workspace = true, features = ["image", "wgpu", "wgpu-image"] }
 derive_more = { version = "2.0.1", features = ["debug"] }
 egui = { version = "0.33.2", default-features = false, optional = true }
 image = { version = "0.25.9", default-features = false }

@@ -33,11 +33,11 @@ use bevy_ecs::{
 };
 use cem_scene::transform::GlobalTransform;
 use cem_util::wgpu::{
-    ImageTextureExt,
     buffer::{
         WriteStagingCommit,
         WriteStagingTransaction,
     },
+    image::ImageTextureExt,
 };
 
 use crate::{

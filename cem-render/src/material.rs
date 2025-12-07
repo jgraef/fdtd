@@ -4,6 +4,7 @@ use bevy_ecs::{
     component::Component,
     lifecycle::HookContext,
     reflect::ReflectComponent,
+    system::EntityCommands,
     world::DeferredWorld,
 };
 use bevy_reflect::{
@@ -25,12 +26,8 @@ use cem_probe::{
     std::NumericPropertyUiConfig,
 };
 use cem_scene::{
-    assets::{
-        AssetError,
-        LoadAsset,
-        LoadingProgress,
-        LoadingState,
-    },
+    assets::LoadAsset,
+    async_commands::SpawnAsync,
     probe::{
         ComponentName,
         ReflectComponentUi,
@@ -49,11 +46,11 @@ use serde::{
 };
 
 use crate::{
+    resource::RenderResourceManager,
     systems::UpdateMeshBindGroupMessage,
     texture::{
         Sampler,
-        TextureAndView,
-        TextureLoaderContext,
+        TextureLoadError,
         TextureSource,
     },
 };
@@ -331,7 +328,8 @@ impl PropertiesUi for Wireframe {
 #[derive(Clone, Debug, Component)]
 #[component(on_add = albedo_texture_added, on_insert = albedo_texture_added, on_remove = albedo_texture_removed)]
 pub struct AlbedoTexture {
-    pub texture: Arc<TextureAndView>,
+    pub texture: Arc<wgpu::Texture>,
+    pub texture_view: wgpu::TextureView,
     pub transparent: bool,
     pub sampler: Sampler,
 }
@@ -352,7 +350,8 @@ fn albedo_texture_removed(mut world: DeferredWorld, context: HookContext) {
 #[derive(Clone, Debug, Component)]
 #[component(on_add = material_texture_added, on_insert = material_texture_added, on_remove = material_texture_removed)]
 pub struct MaterialTexture {
-    pub texture: Arc<TextureAndView>,
+    pub texture: Arc<wgpu::Texture>,
+    pub texture_view: wgpu::TextureView,
     pub flags: MaterialTextureFlags,
     pub sampler: Sampler,
 }
@@ -484,7 +483,7 @@ impl MaterialData {
 #[derive(Clone, Debug, Component)]
 pub struct LoadAlbedoTexture {
     pub source: TextureSource,
-    pub transparency: Option<bool>,
+    pub transparent: Option<bool>,
     pub sampler: Sampler,
 }
 
@@ -492,13 +491,13 @@ impl LoadAlbedoTexture {
     pub fn new(source: impl Into<TextureSource>) -> Self {
         Self {
             source: source.into(),
-            transparency: None,
-            sampler: Default::default(),
+            transparent: None,
+            sampler: Sampler::LinearRepeat,
         }
     }
 
     pub fn with_transparency(mut self, enable: bool) -> Self {
-        self.transparency = Some(enable);
+        self.transparent = Some(enable);
         self
     }
 
@@ -515,37 +514,42 @@ impl From<TextureSource> for LoadAlbedoTexture {
 }
 
 impl LoadAsset for LoadAlbedoTexture {
-    type State = Self;
+    type Context = (RenderResourceManager<'static>, SpawnAsync<'static>);
+    type Error = TextureLoadError;
 
-    fn start_loading(&self) -> Result<Self, AssetError> {
-        Ok(self.clone())
-    }
-}
+    fn load(
+        &self,
+        entity: EntityCommands,
+        (render_resource_manager, spawn_async): &mut (RenderResourceManager, SpawnAsync),
+    ) -> Result<(), TextureLoadError> {
+        let entity = entity.id();
+        let render_resource_manager = render_resource_manager.as_async();
+        let source = self.source.clone();
+        let transparent = self.transparent;
+        let sampler = self.sampler.clone();
 
-impl LoadingState for LoadAlbedoTexture {
-    type Output = AlbedoTexture;
-    type Context = TextureLoaderContext<'static>;
+        spawn_async.spawn(async move |world| {
+            let loaded_texture = source.load(render_resource_manager).await?;
 
-    fn poll<'w>(
-        &mut self,
-        context: &mut TextureLoaderContext<'w>,
-    ) -> Result<LoadingProgress<AlbedoTexture>, AssetError> {
-        let loaded_texture = self.source.load(context).map_err(AssetError::custom)?;
+            let transparent = transparent
+                .or_else(|| {
+                    loaded_texture
+                        .image_info
+                        .map(|info| info.original_color_type.has_alpha())
+                })
+                .unwrap_or_default();
 
-        let transparent = self
-            .transparency
-            .or_else(|| {
-                loaded_texture
-                    .info
-                    .map(|info| info.original_color_type.has_alpha())
-            })
-            .unwrap_or_default();
+            world.entity(entity).insert(AlbedoTexture {
+                texture: loaded_texture.texture,
+                texture_view: loaded_texture.texture_view,
+                transparent,
+                sampler,
+            });
 
-        Ok(LoadingProgress::Ready(AlbedoTexture {
-            texture: loaded_texture.texture_and_view,
-            transparent,
-            sampler: self.sampler.clone(),
-        }))
+            Ok::<(), TextureLoadError>(())
+        });
+
+        Ok(())
     }
 }
 
@@ -561,7 +565,7 @@ impl LoadMaterialTexture {
         Self {
             source: source.into(),
             flags,
-            sampler: Default::default(),
+            sampler: Sampler::LinearRepeat,
         }
     }
 
@@ -572,28 +576,34 @@ impl LoadMaterialTexture {
 }
 
 impl LoadAsset for LoadMaterialTexture {
-    type State = Self;
+    type Context = (RenderResourceManager<'static>, SpawnAsync<'static>);
+    type Error = TextureLoadError;
 
-    fn start_loading(&self) -> Result<Self, AssetError> {
-        Ok(self.clone())
-    }
-}
+    fn load(
+        &self,
+        entity: EntityCommands,
+        (render_resource_manager, spawn_async): &mut (RenderResourceManager, SpawnAsync),
+    ) -> Result<(), TextureLoadError> {
+        let entity = entity.id();
+        let render_resource_manager = render_resource_manager.as_async();
+        let source = self.source.clone();
+        let flags = self.flags;
+        let sampler = self.sampler.clone();
 
-impl LoadingState for LoadMaterialTexture {
-    type Output = MaterialTexture;
-    type Context = TextureLoaderContext<'static>;
+        spawn_async.spawn(async move |world| {
+            let loaded_texture = source.load(render_resource_manager).await?;
 
-    fn poll<'w, 's>(
-        &mut self,
-        context: &mut TextureLoaderContext<'w>,
-    ) -> Result<LoadingProgress<MaterialTexture>, AssetError> {
-        let loaded_texture = self.source.load(context).map_err(AssetError::custom)?;
+            world.entity(entity).insert(MaterialTexture {
+                texture: loaded_texture.texture,
+                texture_view: loaded_texture.texture_view,
+                flags,
+                sampler,
+            });
 
-        Ok(LoadingProgress::Ready(MaterialTexture {
-            texture: loaded_texture.texture_and_view,
-            flags: self.flags,
-            sampler: self.sampler.clone(),
-        }))
+            Ok::<(), TextureLoadError>(())
+        });
+
+        Ok(())
     }
 }
 

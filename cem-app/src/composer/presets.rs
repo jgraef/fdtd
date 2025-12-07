@@ -7,10 +7,7 @@ use cem_render::{
         IntoGenerateMesh,
         LoadMesh,
     },
-    texture::{
-        Sampler,
-        TextureSource,
-    },
+    texture::TextureSource,
 };
 use cem_scene::{
     PopulateScene,
@@ -28,7 +25,7 @@ use cem_solver::{
         Source,
     },
 };
-use cem_util::wgpu::MipLevels;
+use cem_util::wgpu::image::MipLevels;
 use nalgebra::{
     Point3,
     UnitQuaternion,
@@ -111,8 +108,7 @@ impl PopulateScene for ExampleScene {
                 MipLevels::Auto {
                     filter: image::imageops::FilterType::CatmullRom,
                 },
-            ))
-            .with_sampler(Sampler::Repeat),
+            )),
             LoadMesh::from_generator(HalfSpace.into_generate_mesh(()).unwrap()),
             Collider::from(HalfSpace),
             Name::new("Ground"),

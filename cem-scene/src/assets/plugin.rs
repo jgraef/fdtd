@@ -7,10 +7,7 @@ use crate::{
     SceneBuilder,
     assets::{
         LoadAsset,
-        systems::{
-            poll_loaders,
-            start_loading,
-        },
+        systems::start_loading,
     },
     plugin::Plugin,
     schedule,
@@ -21,6 +18,8 @@ pub struct AssetPlugin;
 
 impl Plugin for AssetPlugin {
     fn setup(&self, builder: &mut SceneBuilder) {
+        // note: this doesn't do anything but we'll keep it since we will probably add
+        // stuff (e.g. resources) at some point
         let _ = builder;
     }
 }
@@ -37,14 +36,12 @@ impl AssetExt for SceneBuilder {
         A: LoadAsset,
     {
         self.add_systems(
-            schedule::PostUpdate,
+            schedule::PostStartup,
             start_loading::<A>.in_set(AssetLoaderSystems::StartLoading),
         )
         .add_systems(
             schedule::PostUpdate,
-            poll_loaders::<A::State>
-                .in_set(AssetLoaderSystems::PollLoaders)
-                .after(AssetLoaderSystems::StartLoading),
+            start_loading::<A>.in_set(AssetLoaderSystems::StartLoading),
         )
     }
 }
@@ -52,5 +49,4 @@ impl AssetExt for SceneBuilder {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, SystemSet)]
 pub enum AssetLoaderSystems {
     StartLoading,
-    PollLoaders,
 }

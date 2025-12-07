@@ -22,6 +22,7 @@ use bevy_ecs::{
 use cem_render::{
     material,
     resource::RenderResourceManager,
+    texture::Sampler,
 };
 use cem_scene::{
     Scene,
@@ -118,8 +119,12 @@ use crate::{
 #[derive(Debug)]
 pub struct SolverRunner {
     fdtd_wgpu: FdtdWgpuBackend,
+
+    // todo: these 2 should probably be resources in the scene? (the repaint trigger kind of is in
+    // form of a AsyncUpdateTrigger)
     repaint_trigger: RepaintTrigger,
     error_sink: UiErrorSink,
+
     active_solver: Option<Solver>,
 }
 
@@ -792,7 +797,9 @@ where
                 );
 
                 commands.entity(entity).insert((
-                    material::LoadAlbedoTexture::new(receiver).with_transparency(false),
+                    material::LoadAlbedoTexture::new(receiver)
+                        .with_transparency(false)
+                        .with_sampler(Sampler::LinearClamp),
                     material::Material {
                         transparent: true,
                         ..Default::default()

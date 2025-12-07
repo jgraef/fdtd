@@ -210,11 +210,7 @@ impl CreateProjection<TextureSenderTarget> for FdtdWgpuSolverInstance {
     ) -> FdtdWgpuTextureSenderProjection {
         let texture_sender = target.texture_sender.send_texture();
         tracing::debug!(size = ?texture_sender.size, format = ?texture_sender.format, "creating projection with texture sender");
-        let projection = self.create_projection(
-            state,
-            texture_sender.texture_and_view.texture.clone(),
-            parameters,
-        );
+        let projection = self.create_projection(state, texture_sender.texture.clone(), parameters);
         FdtdWgpuTextureSenderProjection { projection }
     }
 }

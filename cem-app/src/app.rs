@@ -305,7 +305,7 @@ impl App {
             context.wgpu_context.staging_pool.clone(),
             context.renderer_config,
         );
-        let mut composers = Composers::new(render_plugin);
+        let mut composers = Composers::new(&context.egui_context, render_plugin);
         let solver_runner = SolverRunner::from_app_context(&context);
 
         let recently_opened_files = RecentlyOpenedFiles::new(

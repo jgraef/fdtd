@@ -13,7 +13,6 @@ use cem_util::wgpu::{
         WriteStagingTransaction,
     },
     create_texture_from_linsrgba,
-    create_texture_view_from_texture,
 };
 use palette::LinSrgba;
 
@@ -302,8 +301,9 @@ impl Deref for SharedRenderer {
 pub struct Fallbacks {
     pub white: wgpu::TextureView,
     pub black: wgpu::TextureView,
-    pub sampler_clamp: wgpu::Sampler,
-    pub sampler_repeat: wgpu::Sampler,
+    pub sampler_nearest_clamp: wgpu::Sampler,
+    pub sampler_linear_clamp: wgpu::Sampler,
+    pub sampler_linear_repeat: wgpu::Sampler,
 }
 
 impl Fallbacks {
@@ -311,26 +311,34 @@ impl Fallbacks {
     where
         S: WriteStaging,
     {
-        let white = create_texture_from_linsrgba(
-            LinSrgba::new(255, 255, 255, 255),
-            wgpu::TextureUsages::TEXTURE_BINDING,
-            "white",
-            device,
-            &mut write_staging,
-        );
-        let white = create_texture_view_from_texture(&white, "white");
+        let mut color_texture = |color, label| {
+            create_texture_from_linsrgba(
+                color,
+                wgpu::TextureUsages::TEXTURE_BINDING,
+                label,
+                device,
+                &mut write_staging,
+            )
+            .create_view(&wgpu::TextureViewDescriptor {
+                label: Some(label),
+                ..Default::default()
+            })
+        };
+        let white = color_texture(LinSrgba::new(255, 255, 255, 255), "white");
+        let black = color_texture(LinSrgba::new(0, 0, 0, 255), "black");
 
-        let black = create_texture_from_linsrgba(
-            LinSrgba::new(0, 0, 0, 255),
-            wgpu::TextureUsages::TEXTURE_BINDING,
-            "black",
-            device,
-            &mut write_staging,
-        );
-        let black = create_texture_view_from_texture(&black, "black");
+        let sampler_neatest_clamp = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("default texture sampler (nearest, clamp)"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::FilterMode::Nearest,
+            ..Default::default()
+        });
 
-        let sampler_clamp = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("default texture sampler (clamp)"),
+        let sampler_linear_clamp = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("default texture sampler (linear, clamp)"),
             address_mode_u: wgpu::AddressMode::ClampToEdge,
             address_mode_v: wgpu::AddressMode::ClampToEdge,
             mag_filter: wgpu::FilterMode::Linear,
@@ -339,8 +347,8 @@ impl Fallbacks {
             ..Default::default()
         });
 
-        let sampler_repeat = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("default texture sampler (repeat)"),
+        let sampler_linear_repeat = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("default texture sampler (linear, repeat)"),
             address_mode_u: wgpu::AddressMode::Repeat,
             address_mode_v: wgpu::AddressMode::Repeat,
             mag_filter: wgpu::FilterMode::Linear,
@@ -352,8 +360,9 @@ impl Fallbacks {
         Self {
             white,
             black,
-            sampler_clamp,
-            sampler_repeat,
+            sampler_nearest_clamp: sampler_neatest_clamp,
+            sampler_linear_clamp,
+            sampler_linear_repeat,
         }
     }
 }

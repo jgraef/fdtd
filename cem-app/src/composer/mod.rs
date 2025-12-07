@@ -49,7 +49,9 @@ use cem_scene::{
     PopulateScene,
     Scene,
     SceneBuilder,
+    async_commands::AsyncUpdateTrigger,
     builtin_plugins,
+    plugin::Plugin,
     transform::LocalTransform,
 };
 use cem_solver::{
@@ -58,6 +60,10 @@ use cem_solver::{
         Material,
         PhysicalConstants,
     },
+};
+use cem_util::egui::{
+    EguiUtilContextExt,
+    RepaintTrigger,
 };
 use color_eyre::eyre::bail;
 use nalgebra::{
@@ -135,15 +141,18 @@ use crate::{
 pub struct Composers {
     composers: Vec<ComposerState>,
     active: Option<usize>,
-    render_plugin: RenderPlugin,
+    composer_plugin: ComposerPlugin,
 }
 
 impl Composers {
-    pub fn new(render_plugin: RenderPlugin) -> Self {
+    pub fn new(ctx: &egui::Context, render_plugin: RenderPlugin) -> Self {
         Self {
             composers: vec![],
             active: None,
-            render_plugin,
+            composer_plugin: ComposerPlugin {
+                render_plugin,
+                repaint_trigger: ctx.repaint_trigger(),
+            },
         }
     }
 
@@ -220,7 +229,8 @@ impl Composers {
 
     /// Creates a new file with an example scene
     pub fn new_file(&mut self, app_config: &AppConfig) {
-        let mut state = ComposerState::new(app_config.composer.clone(), self.render_plugin.clone());
+        let mut state =
+            ComposerState::new(app_config.composer.clone(), self.composer_plugin.clone());
 
         ExampleScene
             .populate_scene(&mut state.scene)
@@ -249,8 +259,10 @@ impl Composers {
                     let nec_file = NecFile::from_reader(reader)?;
                     tracing::debug!("{nec_file:#?}");
 
-                    let mut state =
-                        ComposerState::new(app_config.composer.clone(), self.render_plugin.clone());
+                    let mut state = ComposerState::new(
+                        app_config.composer.clone(),
+                        self.composer_plugin.clone(),
+                    );
 
                     state.set_path(path);
 
@@ -340,6 +352,26 @@ impl Composers {
     }
 }
 
+#[derive(Clone, Debug)]
+struct ComposerPlugin {
+    pub render_plugin: RenderPlugin,
+    pub repaint_trigger: RepaintTrigger,
+}
+
+impl Plugin for ComposerPlugin {
+    fn setup(&self, builder: &mut SceneBuilder) {
+        builder.register_plugins(builtin_plugins());
+        builder.register_plugin(self.render_plugin.clone());
+
+        // serialize_world relies on this being registered
+        // todo: make serialization a plugin?
+        builder.world.register_component::<SaveToFile>();
+
+        let repaint_trigger = self.repaint_trigger.clone();
+        builder.insert_resource(AsyncUpdateTrigger::new(move || repaint_trigger.repaint()));
+    }
+}
+
 /// State for an open file
 #[derive(derive_more::Debug)]
 struct ComposerState {
@@ -382,14 +414,9 @@ struct ComposerState {
 }
 
 impl ComposerState {
-    fn new(config: ComposerConfig, render_plugin: RenderPlugin) -> Self {
+    fn new(config: ComposerConfig, composer_plugin: ComposerPlugin) -> Self {
         let mut scene_builder = SceneBuilder::default();
-        scene_builder.register_plugins(builtin_plugins());
-        scene_builder.register_plugin(render_plugin);
-
-        // serialize_world relies on this being registered
-        // todo: make serialization a plugin?
-        scene_builder.world.register_component::<SaveToFile>();
+        scene_builder.register_plugin(composer_plugin);
 
         // the only view we have right now
         // todo: don't create camera here. for a proper project file it will be

@@ -12,34 +12,28 @@ use parking_lot::{
     RwLockWriteGuard,
 };
 
-use crate::{
-    command::CommandSender,
-    texture::TextureAndView,
-};
+use crate::command::CommandSender;
 
 pub(crate) fn texture_channel(
-    texture_and_view: Arc<TextureAndView>,
+    texture: wgpu::Texture,
     size: Vector2<u32>,
-
     command_sender: CommandSender,
 ) -> (UndecidedTextureSender, TextureReceiver) {
     let shared = Arc::new(Shared {
-        texture_and_view: texture_and_view.clone(),
+        texture: texture.clone(),
         size,
         image_buffer: RwLock::new(None),
         command_sender,
     });
 
     let sender = UndecidedTextureSender { shared };
-    let receiver = TextureReceiver {
-        inner: texture_and_view,
-    };
+    let receiver = TextureReceiver { inner: texture };
     (sender, receiver)
 }
 
 #[derive(Clone, Debug)]
 pub struct TextureReceiver {
-    pub(super) inner: Arc<TextureAndView>,
+    pub(super) inner: wgpu::Texture,
 }
 
 #[derive(Debug)]
@@ -57,7 +51,7 @@ impl CopyImageToTextureCommand {
         if image_buffer.dirty {
             image_buffer.dirty = false;
 
-            copy_image_to_texture(&image_buffer.buffer, &self.shared.texture_and_view.texture);
+            copy_image_to_texture(&image_buffer.buffer, &self.shared.texture);
         }
     }
 }
@@ -84,10 +78,10 @@ impl UndecidedTextureSender {
     }
 
     pub fn send_texture(self) -> TextureSender {
-        let texture_and_view = self.shared.texture_and_view.clone();
-        let format = texture_and_view.texture.format();
+        let texture = self.shared.texture.clone();
+        let format = texture.format();
         TextureSender {
-            texture_and_view,
+            texture,
             size: self.shared.size,
             format,
         }
@@ -96,7 +90,7 @@ impl UndecidedTextureSender {
 
 #[derive(Clone, Debug)]
 pub struct TextureSender {
-    pub texture_and_view: Arc<TextureAndView>,
+    pub texture: wgpu::Texture,
     pub size: Vector2<u32>,
     pub format: wgpu::TextureFormat,
 }
@@ -172,7 +166,7 @@ impl<'a> DerefMut for ImageGuard<'a> {
 
 #[derive(Debug)]
 struct Shared {
-    texture_and_view: Arc<TextureAndView>,
+    texture: wgpu::Texture,
     size: Vector2<u32>,
     command_sender: CommandSender,
     image_buffer: RwLock<Option<ImageBuffer>>,

@@ -1,6 +1,7 @@
 #![warn(clippy::todo, unused_qualifications)]
 
 pub mod assets;
+pub mod async_commands;
 pub mod plugin;
 #[cfg(feature = "probe")]
 pub mod probe;
@@ -33,6 +34,7 @@ use bevy_ecs::{
 
 use crate::{
     assets::AssetPlugin,
+    async_commands::AsyncPlugin,
     plugin::{
         Plugin,
         PluginRegistry,
@@ -142,6 +144,7 @@ pub fn builtin_plugins() -> &'static PluginRegistry {
         builtin.register(AssetPlugin);
         builtin.register(TransformHierarchyPlugin);
         builtin.register(SpatialQueryPlugin);
+        builtin.register(AsyncPlugin);
         builtin
     })
 }

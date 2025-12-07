@@ -6,72 +6,22 @@ use std::{
     sync::Arc,
 };
 
-use bevy_ecs::system::{
-    ResMut,
-    SystemParam,
-};
-use cem_util::wgpu::{
+use cem_util::wgpu::image::{
     MipLevels,
     UnsupportedColorSpace,
-    create_texture_view_from_texture,
 };
 
 use crate::{
     renderer::Fallbacks,
-    resource::RenderResourceManager,
+    resource::AsyncRenderResourceManager,
     texture::{
-        cache::{
-            ImageInfo,
-            TextureCache,
-        },
+        cache::ImageInfo,
         channel::TextureReceiver,
     },
 };
 
 pub mod cache;
 pub mod channel;
-
-#[derive(Debug, SystemParam)]
-pub struct TextureLoaderContext<'w> {
-    pub texture_cache: ResMut<'w, TextureCache>,
-    pub render_resource_manager: RenderResourceManager<'w>,
-}
-
-impl<'w> TextureLoaderContext<'w> {
-    pub fn load_texture_from_file<P>(
-        &mut self,
-        path: P,
-        mip_levels: MipLevels,
-    ) -> Result<(Arc<TextureAndView>, ImageInfo), TextureLoadError>
-    where
-        P: AsRef<Path>,
-    {
-        let path = path.as_ref();
-        self.texture_cache.get_or_insert(path, || {
-            tracing::debug!(path = %path.display(), ?mip_levels, "loading texture from file");
-
-            let label = path.display().to_string();
-
-            let image = image::ImageReader::open(path)?.decode()?;
-            let original_color_type = image.color();
-            let image = image.into_rgba8();
-
-            let texture = self.render_resource_manager.create_texture_from_image(
-                &label,
-                &image,
-                wgpu::TextureUsages::TEXTURE_BINDING,
-                mip_levels,
-            )?;
-
-            Ok((
-                TextureAndView::from_texture(texture, &label),
-                ImageInfo {
-                    original_color_type,
-                },
-            ))
-        })
-    }
-}
 
 #[derive(Debug, thiserror::Error)]
 pub enum TextureLoadError {
@@ -104,23 +54,23 @@ impl TextureSource {
         }
     }
 
-    pub fn load(
+    pub async fn load(
         &self,
-        context: &mut TextureLoaderContext,
+        mut render_resource_manager: AsyncRenderResourceManager,
     ) -> Result<LoadedTexture, TextureLoadError> {
         match self {
             TextureSource::File { path, mip_levels } => {
-                let (texture_and_view, info) = context.load_texture_from_file(path, *mip_levels)?;
-
-                Ok(LoadedTexture {
-                    texture_and_view,
-                    info: Some(info),
-                })
+                render_resource_manager
+                    .load_texture_from_file(path, *mip_levels)
+                    .await
             }
             TextureSource::Channel { receiver } => {
+                let texture = Arc::new(receiver.inner.clone());
+                let texture_view = texture.create_view(&Default::default());
                 Ok(LoadedTexture {
-                    texture_and_view: receiver.inner.clone(),
-                    info: None,
+                    texture,
+                    texture_view,
+                    image_info: None,
                 })
             }
         }
@@ -129,8 +79,9 @@ impl TextureSource {
 
 #[derive(Clone, Debug)]
 pub struct LoadedTexture {
-    pub texture_and_view: Arc<TextureAndView>,
-    pub info: Option<ImageInfo>,
+    pub texture: Arc<wgpu::Texture>,
+    pub texture_view: wgpu::TextureView,
+    pub image_info: Option<ImageInfo>,
 }
 
 impl From<PathBuf> for TextureSource {
@@ -161,31 +112,19 @@ impl From<TextureReceiver> for TextureSource {
 }
 
 #[derive(Clone, Debug)]
-pub struct TextureAndView {
-    pub texture: wgpu::Texture,
-    pub view: wgpu::TextureView,
-}
-
-impl TextureAndView {
-    pub fn from_texture(texture: wgpu::Texture, label: &str) -> Self {
-        let view = create_texture_view_from_texture(&texture, label);
-        Self { texture, view }
-    }
-}
-
-#[derive(Clone, Debug, Default)]
 pub enum Sampler {
-    #[default]
-    Clamp,
-    Repeat,
+    NearestClamp,
+    LinearClamp,
+    LinearRepeat,
     Custom(wgpu::Sampler),
 }
 
 impl Sampler {
     pub(crate) fn pick<'a>(&'a self, fallbacks: &'a Fallbacks) -> &'a wgpu::Sampler {
         match self {
-            Sampler::Clamp => &fallbacks.sampler_clamp,
-            Sampler::Repeat => &fallbacks.sampler_repeat,
+            Sampler::NearestClamp => &fallbacks.sampler_nearest_clamp,
+            Sampler::LinearClamp => &fallbacks.sampler_linear_clamp,
+            Sampler::LinearRepeat => &fallbacks.sampler_linear_repeat,
             Sampler::Custom(sampler) => sampler,
         }
     }
