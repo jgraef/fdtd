@@ -638,7 +638,7 @@ impl ComposerState {
             }
             (None, Some(path)) => {
                 // save without path, but we have one in the composer
-                &path
+                path
             }
             (Some(path), Some(_)) => {
                 // save with path, and we already have one.
@@ -952,7 +952,7 @@ impl Title {
         self.0 = path
             .as_ref()
             .file_name()
-            .map(|file_name| file_name.to_string_lossy().into_owned().into());
+            .map(|file_name| file_name.to_string_lossy().into_owned());
     }
 
     fn tab_title(&self) -> impl egui::IntoAtoms<'_> {

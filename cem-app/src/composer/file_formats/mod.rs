@@ -53,10 +53,7 @@ impl FileFormat {
     }
 
     pub fn can_save(&self) -> bool {
-        match self {
-            Self::Cem => true,
-            _ => false,
-        }
+        matches!(self, Self::Cem)
     }
 
     pub fn canonical_file_extension(&self) -> &'static str {

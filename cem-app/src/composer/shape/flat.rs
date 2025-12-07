@@ -173,6 +173,7 @@ impl IntoGenerateMesh for Plane {
     type Error = Infallible;
 
     fn into_generate_mesh(self, config: Self::Config) -> Result<Self::GenerateMesh, Self::Error> {
+        #[allow(clippy::let_unit_value)]
         let _ = config;
         Ok(PlaneMeshGenerator)
     }
@@ -281,6 +282,7 @@ impl IntoGenerateMesh for HalfSpace {
     type Error = Infallible;
 
     fn into_generate_mesh(self, config: Self::Config) -> Result<Self::GenerateMesh, Self::Error> {
+        #[allow(clippy::let_unit_value)]
         let _ = config;
         Ok(PlaneMeshGenerator)
     }

@@ -54,7 +54,7 @@ where
             .world
             .try_query_filtered::<Entity, F>()
             .unwrap()
-            .iter(&self.world)
+            .iter(self.world)
         {
             entities_seq.serialize_element(&EntitySerialize {
                 world: self.world,
@@ -84,26 +84,27 @@ impl<'world> Serialize for EntitySerialize<'world> {
 
         let entity = self.world.entity(self.entity);
 
-        let reflect_components = entity
-            .archetype()
-            .components()
-            .into_iter()
-            .copied()
-            .filter_map(|component_id| {
-                let type_id = self.world.components().get_info(component_id)?.type_id()?;
-                let type_registration = self.type_registry.get(type_id)?;
+        let reflect_components =
+            entity
+                .archetype()
+                .components()
+                .iter()
+                .copied()
+                .filter_map(|component_id| {
+                    let type_id = self.world.components().get_info(component_id)?.type_id()?;
+                    let type_registration = self.type_registry.get(type_id)?;
 
-                if type_registration.contains::<ReflectSerialize>() {
-                    let reflect_component = type_registration
-                        .data::<ReflectComponent>()?
-                        .reflect(entity)?;
+                    if type_registration.contains::<ReflectSerialize>() {
+                        let reflect_component = type_registration
+                            .data::<ReflectComponent>()?
+                            .reflect(entity)?;
 
-                    Some(reflect_component)
-                }
-                else {
-                    None
-                }
-            });
+                        Some(reflect_component)
+                    }
+                    else {
+                        None
+                    }
+                });
 
         for reflect_component in reflect_components {
             let reflect_serializer = ReflectSerializer::new(reflect_component, self.type_registry);

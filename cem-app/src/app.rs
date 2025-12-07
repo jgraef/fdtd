@@ -497,17 +497,16 @@ fn show_about_window(ctx: &egui::Context, is_open: &mut bool) {
         });
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub enum FileDialogState {
+    #[default]
     None,
-    OpenFile { file_dialog: FileDialog },
-    SaveFile { file_dialog: FileDialog },
-}
-
-impl Default for FileDialogState {
-    fn default() -> Self {
-        Self::None
-    }
+    OpenFile {
+        file_dialog: FileDialog,
+    },
+    SaveFile {
+        file_dialog: FileDialog,
+    },
 }
 
 impl FileDialogState {
@@ -520,7 +519,7 @@ impl FileDialogState {
             if file_format.can_open() {
                 file_dialog = file_dialog.add_file_filter_extensions(
                     file_format.display_name(),
-                    file_format.file_extensions().iter().copied().collect(),
+                    file_format.file_extensions().to_vec(),
                 );
             }
         }
@@ -582,7 +581,7 @@ impl FileDialogState {
                 file_dialog.update(ctx);
                 if let Some(path) = file_dialog.take_picked() {
                     recently_opened_files.insert(&path);
-                    composers.open_file(&config, path).ok_or_handle(ctx);
+                    composers.open_file(config, path).ok_or_handle(ctx);
                 }
             }
             FileDialogState::SaveFile { file_dialog } => {
