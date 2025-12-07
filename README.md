@@ -6,34 +6,32 @@ This app is work-in-progress. It's intended to model electromagnetic behavior. I
 
 # TODO
 
- - use types from nonmax crate in half-edge graph and maybe fdtd impl?
- - fix transparency:
+- load/save files (whole scene)
+- manipulating objects's isometry in scene view
+- use types from nonmax crate in half-edge graph and maybe fdtd impl?
+- fix transparency:
   - when overlapping: order-independent transparency?
   - we can't apply gamma correction / tone map in the pbr shader because the values are later alpha-blended. we would need to do tone map / gamma in a separate render pass.
- - control UI for solver:
+- control UI for solver:
   - share a small struct (with CondVar) to control and read stats from the solver thread.
   - i think we could even replace the solver instance if the simulation volume changes, although this was not intended.
- - hierarchy:
-  - fix hierarchy when deleting a parent
- - staging belt:
+- staging belt:
   - read (gpu to host)
- - read-only properties UI
- - load/save files (whole scene)
- - limit how often a running solver projects into textures. done, but needs to be in config somewhere
- - tree view context menu
- - make simulation volume an entity (visible via edges?)
- - PRs for `egui_ltreeview`
- - fdtd: compress material buffer:
+- read-only properties UI
+- limit how often a running solver projects into textures. done, but needs to be in config somewhere
+- tree view context menu
+- make simulation volume an entity (visible via edges?)
+- PRs for `egui_ltreeview`
+- fdtd: compress material buffer:
   - most points in the lattice contain the same material values
   - turn the current buffer into a buffer that only contains indices to a second buffer that holds the actual data
   - we could then also store the original properties (eps, mu, etc.) for rendering.
- - manipulating objects's isometry in scene view
- - pass more config to properties_ui for floats for proper formatting
- - keybindings
- - 2D scene view
- - Point lights: Not properly implemented right now, as we only need a point light colocated with the camera, for which we don't need any information that the shader already has.
- - use pipeline cache (persistent)
- - spatial: add tags whether an entity supports a certain spatial query. then in the query methods we can filter by that.
+- pass more config to properties_ui for floats for proper formatting
+- keybindings
+- 2D scene view
+- Point lights: Not properly implemented right now, as we only need a point light colocated with the camera, for which we don't need any information that the shader already has.
+- use pipeline cache (persistent)
+- spatial: add tags whether an entity supports a certain spatial query. then in the query methods we can filter by that.
 
 [1]: https://en.wikipedia.org/wiki/Finite-difference_time-domain_method
 [2]: https://en.wikipedia.org/wiki/Finite_element_exterior_calculus
