@@ -1,5 +1,7 @@
 pub mod buffer;
 
+use std::num::NonZero;
+
 use nalgebra::Vector2;
 use palette::LinSrgba;
 
@@ -8,13 +10,20 @@ pub use self::image::*;
 use crate::wgpu::buffer::WriteStaging;
 
 pub fn create_texture(
+    label: &str,
     size: &Vector2<u32>,
     usage: wgpu::TextureUsages,
     format: wgpu::TextureFormat,
-    label: &str,
+    mip_level_count: NonZero<u32>,
     device: &wgpu::Device,
 ) -> wgpu::Texture {
-    device.create_texture(&texture_descriptor(size, usage, format, label))
+    device.create_texture(&texture_descriptor(
+        label,
+        size,
+        usage,
+        format,
+        mip_level_count,
+    ))
 }
 
 pub fn create_texture_view_from_texture(texture: &wgpu::Texture, label: &str) -> wgpu::TextureView {
@@ -38,10 +47,11 @@ where
     let size = Vector2::repeat(1);
 
     let texture = create_texture(
+        label,
         &size,
         usage | wgpu::TextureUsages::COPY_DST,
         wgpu::TextureFormat::Rgba8Unorm,
-        label,
+        const { NonZero::new(1).unwrap() },
         device,
     );
 
@@ -71,10 +81,11 @@ where
 }
 
 pub fn texture_descriptor<'a>(
+    label: &'a str,
     size: &Vector2<u32>,
     usage: wgpu::TextureUsages,
     format: wgpu::TextureFormat,
-    label: &'a str,
+    mip_level_count: NonZero<u32>,
 ) -> wgpu::TextureDescriptor<'a> {
     wgpu::TextureDescriptor {
         label: Some(label),
@@ -83,11 +94,9 @@ pub fn texture_descriptor<'a>(
             height: size.y,
             depth_or_array_layers: 1,
         },
-        mip_level_count: 1,
+        mip_level_count: mip_level_count.get(),
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
-        // todo: need to be able to pick this. but usually we're working with srgba when
-        // writing/reading a texture
         format,
         usage,
         view_formats: &[],
@@ -122,6 +131,9 @@ impl TextureSourceLayout {
 
 #[cfg(feature = "image")]
 mod image {
+    use std::num::NonZero;
+
+    use image::imageops::FilterType;
     use nalgebra::Vector2;
 
     use crate::{
@@ -138,14 +150,16 @@ mod image {
 
         fn texture_descriptor<'a>(
             &self,
-            usage: wgpu::TextureUsages,
             label: &'a str,
+            usage: wgpu::TextureUsages,
+            mip_level_count: NonZero<u32>,
         ) -> Result<wgpu::TextureDescriptor<'a>, UnsupportedColorSpace>;
 
         fn create_texture<S>(
             &self,
-            usage: wgpu::TextureUsages,
             label: &str,
+            usage: wgpu::TextureUsages,
+            mip_levels: MipLevels,
             device: &wgpu::Device,
             write_staging: S,
         ) -> Result<wgpu::Texture, UnsupportedColorSpace>
@@ -154,6 +168,17 @@ mod image {
 
         fn write_to_texture<S>(&self, texture: &wgpu::Texture, write_staging: S)
         where
+            S: WriteStaging,
+        {
+            self.write_to_texture_mip_level(texture, MipLevel::Original, write_staging);
+        }
+
+        fn write_to_texture_mip_level<S>(
+            &self,
+            texture: &wgpu::Texture,
+            mip_level: MipLevel,
+            write_staging: S,
+        ) where
             S: WriteStaging;
     }
 
@@ -179,36 +204,69 @@ mod image {
 
         fn texture_descriptor<'a>(
             &self,
-            usage: wgpu::TextureUsages,
             label: &'a str,
+            usage: wgpu::TextureUsages,
+            mip_level_count: NonZero<u32>,
         ) -> Result<wgpu::TextureDescriptor<'a>, UnsupportedColorSpace> {
             Ok(texture_descriptor(
+                label,
                 &self.size(),
                 usage,
                 self.texture_format()?,
-                label,
+                mip_level_count,
             ))
         }
 
         fn create_texture<S>(
             &self,
-            usage: wgpu::TextureUsages,
             label: &str,
+            usage: wgpu::TextureUsages,
+            mip_levels: MipLevels,
             device: &wgpu::Device,
-            write_staging: S,
+            mut write_staging: S,
         ) -> Result<wgpu::Texture, UnsupportedColorSpace>
         where
             S: WriteStaging,
         {
-            let texture = device.create_texture(
-                &self.texture_descriptor(usage | wgpu::TextureUsages::COPY_DST, label)?,
-            );
-            self.write_to_texture(&texture, write_staging);
+            let (mip_level_count, mip_levels) = mip_levels.get(self.size());
+
+            let texture = device.create_texture(&self.texture_descriptor(
+                label,
+                usage | wgpu::TextureUsages::COPY_DST,
+                mip_level_count,
+            )?);
+
+            let mut image_buffer;
+            let mut previous_level = self;
+
+            for mip_level in mip_levels {
+                let current_level = match mip_level {
+                    MipLevel::Original => previous_level,
+                    MipLevel::Downsampled {
+                        level,
+                        size,
+                        filter,
+                    } => {
+                        tracing::debug!(?level, ?size, ?filter, "creating mipmap for image");
+                        image_buffer =
+                            image::imageops::resize(previous_level, size.x, size.y, filter);
+                        &image_buffer
+                    }
+                };
+
+                current_level.write_to_texture_mip_level(&texture, mip_level, &mut write_staging);
+                previous_level = current_level;
+            }
+
             Ok(texture)
         }
 
-        fn write_to_texture<S>(&self, texture: &wgpu::Texture, mut write_staging: S)
-        where
+        fn write_to_texture_mip_level<S>(
+            &self,
+            texture: &wgpu::Texture,
+            mip_level: MipLevel,
+            mut write_staging: S,
+        ) where
             S: WriteStaging,
         {
             // note: images with width < 256 need padding. we do this while copying the
@@ -218,18 +276,25 @@ mod image {
 
             let texture_size = Vector2::new(texture.width(), texture.height());
 
+            // get actual mip level number and the texture size we have at that level
+            let (mip_level, mip_level_size) = match mip_level {
+                MipLevel::Original => (0, texture_size),
+                MipLevel::Downsampled {
+                    level,
+                    size,
+                    filter: _,
+                } => (level, size),
+            };
+
             let samples = self.as_flat_samples();
 
             let image_size = Vector2::new(samples.layout.width, samples.layout.height);
             assert_eq!(
-                image_size, texture_size,
-                "provided image size doesn't match texture"
+                image_size, mip_level_size,
+                "provided image size ({image_size:?}) doesn't match texture size at this mip level ({mip_level_size:?} @ {mip_level})"
             );
-            assert_eq!(
-                samples.layout.channel_stride, 1,
-                "todo: channel stride not 4"
-            );
-            assert_eq!(samples.layout.width_stride, 4, "todo: width stride not 4");
+            assert_eq!(samples.layout.channel_stride, 1, "channel stride not 4");
+            assert_eq!(samples.layout.width_stride, 4, "width stride not 4");
 
             const BYTES_PER_PIXEL: usize = 4;
             let bytes_per_row_unpadded: u32 = samples.layout.width * BYTES_PER_PIXEL as u32;
@@ -243,13 +308,13 @@ mod image {
                 },
                 wgpu::TexelCopyTextureInfo {
                     texture,
-                    mip_level: 0,
+                    mip_level,
                     origin: Default::default(),
                     aspect: Default::default(),
                 },
                 wgpu::Extent3d {
-                    width: texture_size.x,
-                    height: texture_size.y,
+                    width: mip_level_size.x,
+                    height: mip_level_size.y,
                     depth_or_array_layers: 1,
                 },
             );
@@ -258,7 +323,7 @@ mod image {
             let mut destination_offset = 0;
             let n = bytes_per_row_unpadded as usize;
 
-            for _ in 0..self.height() {
+            for _ in 0..image_size.y {
                 view[destination_offset..][..n]
                     .copy_from_slice(&samples.samples[source_offset..][..n]);
                 source_offset += samples.layout.height_stride;
@@ -271,5 +336,189 @@ mod image {
     #[error("Unsupported color space: primaries={:?}, transfer={:?}", .cicp.primaries, .cicp.transfer)]
     pub struct UnsupportedColorSpace {
         cicp: image::metadata::Cicp,
+    }
+
+    #[derive(Clone, Copy, Debug, Default)]
+    pub enum MipLevels {
+        #[default]
+        One,
+        Fixed {
+            mip_level_count: NonZero<u32>,
+            filter: FilterType,
+        },
+        Auto {
+            filter: FilterType,
+        },
+    }
+
+    impl MipLevels {
+        pub fn get(&self, size: Vector2<u32>) -> (NonZero<u32>, impl Iterator<Item = MipLevel>) {
+            let (mip_level_count, filter) = match self {
+                MipLevels::One => (const { NonZero::new(1).unwrap() }, None),
+                MipLevels::Fixed {
+                    mip_level_count,
+                    filter,
+                } => (*mip_level_count, Some(*filter)),
+                MipLevels::Auto { filter } => (mip_level_count_for_size(&size), Some(*filter)),
+            };
+
+            let mut current_size = size;
+            let mut level = 1;
+            let downsampled = std::iter::from_fn(move || {
+                (level < mip_level_count.get()).then(|| {
+                    current_size = current_size.map(|c| 1.max(c / 2));
+                    let mip_level = MipLevel::Downsampled {
+                        level,
+                        size: current_size,
+                        filter: filter.unwrap(),
+                    };
+                    level += 1;
+                    mip_level
+                })
+            });
+
+            (
+                mip_level_count,
+                [MipLevel::Original].into_iter().chain(downsampled),
+            )
+        }
+    }
+
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+    pub enum MipLevel {
+        #[default]
+        Original,
+        Downsampled {
+            level: u32,
+            size: Vector2<u32>,
+            filter: FilterType,
+        },
+    }
+
+    impl MipLevel {
+        pub fn level(&self) -> u32 {
+            match self {
+                MipLevel::Original => 0,
+                MipLevel::Downsampled {
+                    level,
+                    size: _,
+                    filter: _,
+                } => *level,
+            }
+        }
+    }
+
+    pub fn mip_level_count_for_size(size: &Vector2<u32>) -> NonZero<u32> {
+        let size = size.x.max(size.y);
+        NonZero::new(1 + size.checked_ilog2().unwrap_or_default()).unwrap()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::num::NonZero;
+
+    use image::imageops::FilterType;
+    use nalgebra::Vector2;
+
+    use crate::wgpu::{
+        MipLevel,
+        MipLevels,
+    };
+
+    #[test]
+    fn one_mip_level() {
+        let (num_levels, levels) = MipLevels::One.get(Vector2::repeat(512));
+        assert_eq!(num_levels.get(), 1);
+        assert_eq!(levels.collect::<Vec<_>>(), vec![MipLevel::Original]);
+    }
+
+    #[test]
+    fn multiple_fixed_mip_levels() {
+        let levels = MipLevels::Fixed {
+            mip_level_count: NonZero::new(5).unwrap(),
+            filter: FilterType::Nearest,
+        };
+        let (num_levels, levels) = levels.get(Vector2::repeat(512));
+        let levels = levels.collect::<Vec<_>>();
+        assert_eq!(num_levels.get(), 5);
+        assert_eq!(levels.len(), 5);
+        assert_eq!(levels[0], MipLevel::Original);
+        assert_eq!(
+            levels[1],
+            MipLevel::Downsampled {
+                level: 1,
+                size: Vector2::repeat(256),
+                filter: FilterType::Nearest
+            }
+        );
+        assert_eq!(
+            levels[2],
+            MipLevel::Downsampled {
+                level: 2,
+                size: Vector2::repeat(128),
+                filter: FilterType::Nearest
+            }
+        );
+        assert_eq!(
+            levels[3],
+            MipLevel::Downsampled {
+                level: 3,
+                size: Vector2::repeat(64),
+                filter: FilterType::Nearest
+            }
+        );
+        assert_eq!(
+            levels[4],
+            MipLevel::Downsampled {
+                level: 4,
+                size: Vector2::repeat(32),
+                filter: FilterType::Nearest
+            }
+        );
+    }
+
+    #[test]
+    fn auto_mip_levels() {
+        let levels = MipLevels::Auto {
+            filter: FilterType::Nearest,
+        };
+        let (num_levels, levels) = levels.get(Vector2::repeat(16));
+        let levels = levels.collect::<Vec<_>>();
+        assert_eq!(num_levels.get(), 5);
+        assert_eq!(levels.len(), 5);
+        assert_eq!(levels[0], MipLevel::Original);
+        assert_eq!(
+            levels[1],
+            MipLevel::Downsampled {
+                level: 1,
+                size: Vector2::repeat(8),
+                filter: FilterType::Nearest
+            }
+        );
+        assert_eq!(
+            levels[2],
+            MipLevel::Downsampled {
+                level: 2,
+                size: Vector2::repeat(4),
+                filter: FilterType::Nearest
+            }
+        );
+        assert_eq!(
+            levels[3],
+            MipLevel::Downsampled {
+                level: 3,
+                size: Vector2::repeat(2),
+                filter: FilterType::Nearest
+            }
+        );
+        assert_eq!(
+            levels[4],
+            MipLevel::Downsampled {
+                level: 4,
+                size: Vector2::repeat(1),
+                filter: FilterType::Nearest
+            }
+        );
     }
 }

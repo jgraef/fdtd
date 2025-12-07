@@ -11,11 +11,13 @@ use bevy_ecs::system::{
     SystemParam,
 };
 use cem_util::wgpu::{
+    MipLevels,
     UnsupportedColorSpace,
     create_texture_view_from_texture,
 };
 
 use crate::{
+    renderer::Fallbacks,
     resource::RenderResourceManager,
     texture::{
         cache::{
@@ -39,13 +41,14 @@ impl<'w> TextureLoaderContext<'w> {
     pub fn load_texture_from_file<P>(
         &mut self,
         path: P,
+        mip_levels: MipLevels,
     ) -> Result<(Arc<TextureAndView>, ImageInfo), TextureLoadError>
     where
         P: AsRef<Path>,
     {
         let path = path.as_ref();
         self.texture_cache.get_or_insert(path, || {
-            tracing::debug!(path = %path.display(), "loaing texture from file");
+            tracing::debug!(path = %path.display(), ?mip_levels, "loading texture from file");
 
             let label = path.display().to_string();
 
@@ -54,9 +57,10 @@ impl<'w> TextureLoaderContext<'w> {
             let image = image.into_rgba8();
 
             let texture = self.render_resource_manager.create_texture_from_image(
+                &label,
                 &image,
                 wgpu::TextureUsages::TEXTURE_BINDING,
-                &label,
+                mip_levels,
             )?;
 
             Ok((
@@ -83,18 +87,30 @@ pub enum TextureLoadError {
 
 #[derive(Clone, Debug)]
 pub enum TextureSource {
-    File { path: PathBuf },
-    Channel { receiver: TextureReceiver },
+    File {
+        path: PathBuf,
+        mip_levels: MipLevels,
+    },
+    Channel {
+        receiver: TextureReceiver,
+    },
 }
 
 impl TextureSource {
+    pub fn from_path_with_mip_levels(path: impl Into<PathBuf>, mip_levels: MipLevels) -> Self {
+        Self::File {
+            path: path.into(),
+            mip_levels,
+        }
+    }
+
     pub fn load(
         &self,
         context: &mut TextureLoaderContext,
     ) -> Result<LoadedTexture, TextureLoadError> {
         match self {
-            TextureSource::File { path } => {
-                let (texture_and_view, info) = context.load_texture_from_file(path)?;
+            TextureSource::File { path, mip_levels } => {
+                let (texture_and_view, info) = context.load_texture_from_file(path, *mip_levels)?;
 
                 Ok(LoadedTexture {
                     texture_and_view,
@@ -119,7 +135,10 @@ pub struct LoadedTexture {
 
 impl From<PathBuf> for TextureSource {
     fn from(value: PathBuf) -> Self {
-        Self::File { path: value }
+        Self::File {
+            path: value,
+            mip_levels: MipLevels::One,
+        }
     }
 }
 
@@ -151,5 +170,23 @@ impl TextureAndView {
     pub fn from_texture(texture: wgpu::Texture, label: &str) -> Self {
         let view = create_texture_view_from_texture(&texture, label);
         Self { texture, view }
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub enum Sampler {
+    #[default]
+    Clamp,
+    Repeat,
+    Custom(wgpu::Sampler),
+}
+
+impl Sampler {
+    pub(crate) fn pick<'a>(&'a self, fallbacks: &'a Fallbacks) -> &'a wgpu::Sampler {
+        match self {
+            Sampler::Clamp => &fallbacks.sampler_clamp,
+            Sampler::Repeat => &fallbacks.sampler_repeat,
+            Sampler::Custom(sampler) => sampler,
+        }
     }
 }

@@ -1,4 +1,7 @@
-use std::sync::Arc;
+use std::{
+    num::NonZero,
+    sync::Arc,
+};
 
 use bevy_ecs::{
     resource::Resource,
@@ -10,6 +13,7 @@ use bevy_ecs::{
 };
 use cem_util::wgpu::{
     ImageTextureExt,
+    MipLevels,
     UnsupportedColorSpace,
     buffer::{
         SubmitOnDrop,
@@ -53,24 +57,34 @@ impl<'w> RenderResourceManager<'w> {
 
     pub fn create_texture(
         &mut self,
+        label: &str,
         size: &Vector2<u32>,
         usage: wgpu::TextureUsages,
         format: wgpu::TextureFormat,
-        label: &str,
+        mip_level_count: NonZero<u32>,
     ) -> wgpu::Texture {
-        create_texture(size, usage, format, label, &self.renderer.device)
+        create_texture(
+            label,
+            size,
+            usage,
+            format,
+            mip_level_count,
+            &self.renderer.device,
+        )
     }
 
     pub fn create_texture_from_image(
         &mut self,
+        label: &str,
         image: &image::RgbaImage,
         usage: wgpu::TextureUsages,
-        label: &str,
+        mip_levels: MipLevels,
     ) -> Result<wgpu::Texture, UnsupportedColorSpace> {
         self.transaction.with(&self.renderer, |transaction| {
             image.create_texture(
-                usage,
                 label,
+                usage,
+                mip_levels,
                 &self.renderer.device,
                 &mut transaction.write_staging,
             )
@@ -100,7 +114,13 @@ impl<'w> RenderResourceManager<'w> {
         usage: wgpu::TextureUsages,
         label: &str,
     ) -> (UndecidedTextureSender, TextureReceiver) {
-        let texture = self.create_texture(size, usage, wgpu::TextureFormat::Rgba8Unorm, label);
+        let texture = self.create_texture(
+            label,
+            size,
+            usage,
+            wgpu::TextureFormat::Rgba8Unorm,
+            const { NonZero::new(1).unwrap() },
+        );
 
         texture_channel(
             Arc::new(TextureAndView::from_texture(texture, label)),
@@ -109,6 +129,8 @@ impl<'w> RenderResourceManager<'w> {
         )
     }
 
+    // todo: if we want to use this somewhere we would likely want it to write the
+    // image into all mip levels
     pub fn write_to_texture(&mut self, image: &image::RgbaImage, texture: &wgpu::Texture) {
         self.transaction.with(&self.renderer, |transaction| {
             image.write_to_texture(texture, &mut transaction.write_staging);

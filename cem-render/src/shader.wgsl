@@ -86,18 +86,21 @@ var<storage, read> index_buffer: array<u32>;
 var<storage, read> vertex_buffer: array<VertexData>;
 
 @group(1) @binding(2)
-var texture_sampler: sampler;
+var sampler_albedo: sampler;
 
 @group(1) @binding(3)
 var texture_albedo: texture_2d<f32>;
 
 @group(1) @binding(4)
+var sampler_material: sampler;
+
+@group(1) @binding(5)
 var texture_material: texture_2d<f32>;
 
 struct VertexData {
     position: vec4f,
     normal: vec4f,
-    uv: vec2f,
+    uv: vec3f,
 }
 
 
@@ -112,7 +115,7 @@ struct VertexOutputSolid {
     @builtin(position) fragment_position: vec4f,
     @location(0) world_position: vec4f,
     @location(1) world_normal: vec4f,
-    @location(2) texture_position: vec2f,
+    @location(2) texture_position: vec3f,
     @location(3) @interpolate(flat, either) instance_index: u32,
 }
 
@@ -163,38 +166,6 @@ fn vs_main_solid(input: VertexInput) -> VertexOutputSolid {
     return output;
 }
 
-@vertex
-fn vs_main_plane(input: VertexInput) -> VertexOutputFlat {
-    // https://stackoverflow.com/a/12965697
-
-    var output: VertexOutputFlat;
-
-    let instance = instance_buffer[input.instance_index];
-
-    // we only actually use the combined transform, so we could pass the combined to the shader directly
-    let combined_camera_matrix = camera.projection * camera.transform;
-
-    var vertices: array<vec4f, 5> = array(
-        vec4f( 0, 0, 0, 1),
-        vec4f( 1, 0, 0, 0),
-        vec4f( 0, 1, 0, 0),
-        vec4f(-1, 0, 0, 0),
-        vec4f( 0,-1, 0, 0),
-    );
-
-    var indices: array<u32, 12> = array(
-        0, 1, 2,
-        0, 2, 3,
-        0, 3, 4,
-        0, 4, 1,
-    );
-
-    output.fragment_position = vertices[indices[input.vertex_index]];
-    output.color = instance.material.albedo;
-
-    return output;
-}
-
 fn calculate_normal(v1: vec3f, v2: vec3f, v3: vec3f,) -> vec3f {
     return cross(v2 - v1, v3 - v1);
 }
@@ -239,13 +210,14 @@ fn pbr_shader(input: VertexOutputSolid, instance: Instance) -> vec4f {
     var color: vec3f;
 
     // sample material textures
+    let texture_position = input.texture_position.xy / input.texture_position.z;
     if (instance.material.flags & FLAG_MATERIAL_ALBEDO_TEXTURE) != 0 {
-        let albedo_and_alpha = textureSample(texture_albedo, texture_sampler, input.texture_position);
+        let albedo_and_alpha = textureSample(texture_albedo, sampler_albedo, texture_position);
         albedo *= albedo_and_alpha.rgb;
         alpha *= albedo_and_alpha.a;
     }
     if (instance.material.flags & FLAG_MATERIAL_ANY_ORM) != 0 {
-        let material = textureSample(texture_material, texture_sampler, input.texture_position);
+        let material = textureSample(texture_material, sampler_material, texture_position);
         if (instance.material.flags & FLAG_MATERIAL_METALLIC_TEXTURE) != 0 {
             metalness *= material.r;
         }

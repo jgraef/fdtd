@@ -82,8 +82,8 @@ bitflags! {
 struct Vertex {
     position: Vector4<f32>,
     normal: Vector4<f32>,
-    uv: Point2<f32>,
-    _padding: [u32; 2],
+    uv: Vector3<f32>,
+    _padding: [u32; 1],
 }
 
 #[derive(Debug, Component)]
@@ -100,6 +100,16 @@ impl MeshBindGroup {
         material_texture: Option<&MaterialTexture>,
         fallbacks: &Fallbacks,
     ) -> Self {
+        let (albedo_sampler, albedo_texture) = albedo_texture
+            .map_or((&fallbacks.sampler_clamp, &fallbacks.white), |texture| {
+                (texture.sampler.pick(fallbacks), &texture.texture.view)
+            });
+
+        let (material_sampler, material_texture) = material_texture
+            .map_or((&fallbacks.sampler_clamp, &fallbacks.white), |texture| {
+                (texture.sampler.pick(fallbacks), &texture.texture.view)
+            });
+
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("mesh bind group"),
             layout: mesh_bind_group_layout,
@@ -114,19 +124,19 @@ impl MeshBindGroup {
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
-                    resource: wgpu::BindingResource::Sampler(&fallbacks.sampler),
+                    resource: wgpu::BindingResource::Sampler(albedo_sampler),
                 },
                 wgpu::BindGroupEntry {
                     binding: 3,
-                    resource: wgpu::BindingResource::TextureView(
-                        albedo_texture.map_or(&fallbacks.white, |texture| &texture.texture.view),
-                    ),
+                    resource: wgpu::BindingResource::TextureView(albedo_texture),
                 },
                 wgpu::BindGroupEntry {
                     binding: 4,
-                    resource: wgpu::BindingResource::TextureView(
-                        material_texture.map_or(&fallbacks.white, |texture| &texture.texture.view),
-                    ),
+                    resource: wgpu::BindingResource::Sampler(material_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: wgpu::BindingResource::TextureView(material_texture),
                 },
             ],
         });
@@ -236,7 +246,7 @@ impl MeshBuilder for MeshBufferBuilder {
         &mut self,
         position: Vector4<f32>,
         normal: Option<Vector4<f32>>,
-        uv: Option<Point2<f32>>,
+        uv: Option<Vector3<f32>>,
     ) {
         if normal.is_some() {
             self.flags.insert(MeshFlags::NORMALS);
@@ -361,7 +371,7 @@ pub trait MeshBuilder {
         self.push_vertex_homogeneous(
             position.to_homogeneous(),
             normal.map(|normal| normal.to_homogeneous()),
-            uv,
+            uv.map(|uv| uv.to_homogeneous()),
         )
     }
 
@@ -369,7 +379,7 @@ pub trait MeshBuilder {
         &mut self,
         position: Vector4<f32>,
         normal: Option<Vector4<f32>>,
-        uv: Option<Point2<f32>>,
+        uv: Option<Vector3<f32>>,
     );
 }
 

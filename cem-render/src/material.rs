@@ -51,6 +51,7 @@ use serde::{
 use crate::{
     systems::UpdateMeshBindGroupMessage,
     texture::{
+        Sampler,
         TextureAndView,
         TextureLoaderContext,
         TextureSource,
@@ -332,6 +333,7 @@ impl PropertiesUi for Wireframe {
 pub struct AlbedoTexture {
     pub texture: Arc<TextureAndView>,
     pub transparent: bool,
+    pub sampler: Sampler,
 }
 
 fn albedo_texture_added(mut world: DeferredWorld, context: HookContext) {
@@ -352,6 +354,7 @@ fn albedo_texture_removed(mut world: DeferredWorld, context: HookContext) {
 pub struct MaterialTexture {
     pub texture: Arc<TextureAndView>,
     pub flags: MaterialTextureFlags,
+    pub sampler: Sampler,
 }
 
 fn material_texture_added(mut world: DeferredWorld, context: HookContext) {
@@ -482,6 +485,7 @@ impl MaterialData {
 pub struct LoadAlbedoTexture {
     pub source: TextureSource,
     pub transparency: Option<bool>,
+    pub sampler: Sampler,
 }
 
 impl LoadAlbedoTexture {
@@ -489,11 +493,17 @@ impl LoadAlbedoTexture {
         Self {
             source: source.into(),
             transparency: None,
+            sampler: Default::default(),
         }
     }
 
     pub fn with_transparency(mut self, enable: bool) -> Self {
         self.transparency = Some(enable);
+        self
+    }
+
+    pub fn with_sampler(mut self, sampler: Sampler) -> Self {
+        self.sampler = sampler;
         self
     }
 }
@@ -534,6 +544,7 @@ impl LoadingState for LoadAlbedoTexture {
         Ok(LoadingProgress::Ready(AlbedoTexture {
             texture: loaded_texture.texture_and_view,
             transparent,
+            sampler: self.sampler.clone(),
         }))
     }
 }
@@ -542,6 +553,7 @@ impl LoadingState for LoadAlbedoTexture {
 pub struct LoadMaterialTexture {
     pub source: TextureSource,
     pub flags: MaterialTextureFlags,
+    pub sampler: Sampler,
 }
 
 impl LoadMaterialTexture {
@@ -549,7 +561,13 @@ impl LoadMaterialTexture {
         Self {
             source: source.into(),
             flags,
+            sampler: Default::default(),
         }
+    }
+
+    pub fn with_sampler(mut self, sampler: Sampler) -> Self {
+        self.sampler = sampler;
+        self
     }
 }
 
@@ -574,6 +592,7 @@ impl LoadingState for LoadMaterialTexture {
         Ok(LoadingProgress::Ready(MaterialTexture {
             texture: loaded_texture.texture_and_view,
             flags: self.flags,
+            sampler: self.sampler.clone(),
         }))
     }
 }

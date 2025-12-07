@@ -139,6 +139,15 @@ impl Renderer {
                 }
             };
 
+            let sampler = |binding| {
+                wgpu::BindGroupLayoutEntry {
+                    binding,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                }
+            };
+
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("mesh_bind_group_layout"),
                 entries: &[
@@ -146,17 +155,14 @@ impl Renderer {
                     vertex_buffer(0),
                     // vertex buffer
                     vertex_buffer(1),
-                    // sampler
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 2,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
-                    },
-                    // material - albedo
+                    // sampler - albedo
+                    sampler(2),
+                    // texture - albedo
                     texture(3),
-                    // material - material
-                    texture(4),
+                    // sampler - albedo
+                    sampler(4),
+                    // texture - material
+                    texture(5),
                 ],
             })
         };
@@ -296,7 +302,8 @@ impl Deref for SharedRenderer {
 pub struct Fallbacks {
     pub white: wgpu::TextureView,
     pub black: wgpu::TextureView,
-    pub sampler: wgpu::Sampler,
+    pub sampler_clamp: wgpu::Sampler,
+    pub sampler_repeat: wgpu::Sampler,
 }
 
 impl Fallbacks {
@@ -322,19 +329,31 @@ impl Fallbacks {
         );
         let black = create_texture_view_from_texture(&black, "black");
 
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("default texture sampler"),
+        let sampler_clamp = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("default texture sampler (clamp)"),
             address_mode_u: wgpu::AddressMode::ClampToEdge,
             address_mode_v: wgpu::AddressMode::ClampToEdge,
             mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
+
+        let sampler_repeat = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("default texture sampler (repeat)"),
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::Repeat,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
 
         Self {
             white,
             black,
-            sampler,
+            sampler_clamp,
+            sampler_repeat,
         }
     }
 }

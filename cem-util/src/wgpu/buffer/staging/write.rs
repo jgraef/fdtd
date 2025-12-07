@@ -81,6 +81,8 @@ pub trait WriteStaging {
             "Bytes per row does not respect `COPY_BYTES_PER_ROW_ALIGNMENT`"
         );
 
+        //tracing::debug!(?source_layout, ?destination, ?size, "copy to texture");
+
         let mut copy_size = wgpu::BufferAddress::from(size.height)
             * wgpu::BufferAddress::from(source_layout.bytes_per_row);
         if size.depth_or_array_layers > 1 {

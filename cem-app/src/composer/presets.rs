@@ -7,6 +7,10 @@ use cem_render::{
         IntoGenerateMesh,
         LoadMesh,
     },
+    texture::{
+        Sampler,
+        TextureSource,
+    },
 };
 use cem_scene::{
     PopulateScene,
@@ -24,6 +28,7 @@ use cem_solver::{
         Source,
     },
 };
+use cem_util::wgpu::MipLevels;
 use nalgebra::{
     Point3,
     UnitQuaternion,
@@ -40,7 +45,7 @@ use crate::{
     composer::{
         selection::Selectable,
         shape::flat::{
-            Plane,
+            HalfSpace,
             Quad,
             QuadMeshConfig,
         },
@@ -93,12 +98,24 @@ impl PopulateScene for ExampleScene {
                 Point3::origin(),
                 UnitQuaternion::face_towards(&Vector3::y(), &Vector3::z()),
             ),
-            render_material::Material::from_albedo(
-                palette::named::CHARTREUSE.into_format().with_alpha(1.0),
-            ),
-            LoadMesh::from_generator(Plane.into_generate_mesh(()).unwrap()),
-            Collider::from(Plane),
-            Name::new("Plane"),
+            //render_material::Material::from_albedo(
+            //    palette::named::CHARTREUSE.into_format().with_alpha(1.0),
+            //),
+            render_material::LoadAlbedoTexture::new(TextureSource::from_path_with_mip_levels(
+                // good options:
+                //"tmp/kenney_prototype-textures/PNG/Dark/texture_04.png",
+                //"tmp/kenney_prototype-textures/PNG/Light/texture_08.png",
+                "tmp/kenney_prototype-textures/PNG/Light/texture_03.png",
+                //"tmp/kenney_prototype-textures/PNG/Green/texture_05.png",
+                //"tmp/kenney_prototype-textures/PNG/Green/texture_10.png",
+                MipLevels::Auto {
+                    filter: image::imageops::FilterType::CatmullRom,
+                },
+            ))
+            .with_sampler(Sampler::Repeat),
+            LoadMesh::from_generator(HalfSpace.into_generate_mesh(()).unwrap()),
+            Collider::from(HalfSpace),
+            Name::new("Ground"),
         ));
 
         // pml (wip)

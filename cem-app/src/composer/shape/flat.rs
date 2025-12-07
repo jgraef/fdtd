@@ -193,19 +193,13 @@ impl GenerateMesh for PlaneMeshGenerator {
             Vector4::new(-1.0, 0.0, 0.0, 0.0),
             Vector4::new(0.0, -1.0, 0.0, 0.0),
         ];
-        const UVS: [Point2<f32>; 5] = [
-            Point2::new(0.5, 0.5),
-            Point2::new(1.0, 0.5),
-            Point2::new(0.5, 1.0),
-            Point2::new(0.0, 0.5),
-            Point2::new(0.5, 0.0),
-        ];
         const INDICES: [[u32; 3]; 4] = [[0, 1, 2], [0, 2, 3], [0, 3, 4], [0, 4, 1]];
 
         let normal = normals.then(|| Vector3::z().to_homogeneous());
 
-        for i in 0..5 {
-            mesh_builder.push_vertex_homogeneous(VERTICES[i], normal, uvs.then(|| UVS[i]));
+        for vertex in VERTICES {
+            let uv = uvs.then(|| Vector3::new(vertex.x, vertex.y, vertex.w));
+            mesh_builder.push_vertex_homogeneous(vertex, normal, uv);
         }
         for face in INDICES {
             mesh_builder.push_face(face, WindingOrder::CounterClockwise);
