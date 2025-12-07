@@ -73,7 +73,7 @@ impl Renderer {
     pub const WINDING_ORDER: WindingOrder = WindingOrder::CounterClockwise;
 
     pub const MESH_SHADER_MODULE: wgpu::ShaderModuleDescriptor<'static> =
-        wgpu::include_wgsl!("mesh.wgsl");
+        wgpu::include_wgsl!("shader.wgsl");
 
     // We need to flip the interpretation of the winding order here, because this
     // actually depends on the orientation of our Z axis.

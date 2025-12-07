@@ -28,6 +28,7 @@ use nalgebra::{
     Point2,
     Point3,
     Vector3,
+    Vector4,
 };
 use wgpu::util::DeviceExt;
 
@@ -78,14 +79,11 @@ bitflags! {
 
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 #[repr(C)]
-struct Vertex([f32; 8]);
-
-impl Vertex {
-    pub fn new(position: Point3<f32>, normal: Vector3<f32>, uv: Point2<f32>) -> Self {
-        Self([
-            position.x, position.y, position.z, uv.x, normal.x, normal.y, normal.z, uv.y,
-        ])
-    }
+struct Vertex {
+    position: Vector4<f32>,
+    normal: Vector4<f32>,
+    uv: Point2<f32>,
+    _padding: [u32; 2],
 }
 
 #[derive(Debug, Component)]
@@ -234,10 +232,10 @@ impl MeshBuilder for MeshBufferBuilder {
         self.index_buffer.push(face);
     }
 
-    fn push_vertex(
+    fn push_vertex_homogeneous(
         &mut self,
-        vertex: Point3<f32>,
-        normal: Option<Vector3<f32>>,
+        position: Vector4<f32>,
+        normal: Option<Vector4<f32>>,
         uv: Option<Point2<f32>>,
     ) {
         if normal.is_some() {
@@ -247,11 +245,12 @@ impl MeshBuilder for MeshBufferBuilder {
             self.flags.insert(MeshFlags::UVS);
         }
 
-        self.vertex_buffer.push(Vertex::new(
-            vertex,
-            normal.unwrap_or_default(),
-            uv.unwrap_or_default(),
-        ));
+        self.vertex_buffer.push(Vertex {
+            position,
+            normal: normal.unwrap_or_default(),
+            uv: uv.unwrap_or_default(),
+            _padding: [0; _],
+        });
     }
 }
 
@@ -350,11 +349,26 @@ pub trait GenerateMesh {
 
 pub trait MeshBuilder {
     fn reserve(&mut self, num_faces: usize, num_vertices: usize);
+
     fn push_face(&mut self, face: [u32; 3], winding_order: WindingOrder);
+
     fn push_vertex(
         &mut self,
-        vertex: Point3<f32>,
+        position: Point3<f32>,
         normal: Option<Vector3<f32>>,
+        uv: Option<Point2<f32>>,
+    ) {
+        self.push_vertex_homogeneous(
+            position.to_homogeneous(),
+            normal.map(|normal| normal.to_homogeneous()),
+            uv,
+        )
+    }
+
+    fn push_vertex_homogeneous(
+        &mut self,
+        position: Vector4<f32>,
+        normal: Option<Vector4<f32>>,
         uv: Option<Point2<f32>>,
     );
 }

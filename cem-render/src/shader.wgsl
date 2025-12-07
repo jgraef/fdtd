@@ -12,7 +12,7 @@ struct Camera {
     // 8 bytes padding
 };
 
-struct InstanceData {
+struct Instance {
     transform: mat4x4f,
     instance_flags: u32,
     mesh_flags: u32,
@@ -70,7 +70,7 @@ var<uniform> camera: Camera;
 // instance data
 
 @group(0) @binding(1)
-var<storage, read> instance_buffer: array<InstanceData>;
+var<storage, read> instance_buffer: array<Instance>;
 
 // this would be for camera-independent point lights
 //@group(1) @binding(1)
@@ -95,8 +95,9 @@ var texture_albedo: texture_2d<f32>;
 var texture_material: texture_2d<f32>;
 
 struct VertexData {
-    position_uvx: vec4f,
-    normal_uvy: vec4f,
+    position: vec4f,
+    normal: vec4f,
+    uv: vec2f,
 }
 
 
@@ -113,7 +114,6 @@ struct VertexOutputSolid {
     @location(1) world_normal: vec4f,
     @location(2) texture_position: vec2f,
     @location(3) @interpolate(flat, either) instance_index: u32,
-    //@location(4) @interpolate(flat, either) vertex_output_flags: u32,
 }
 
 struct VertexOutputFlat {
@@ -134,31 +134,63 @@ fn vs_main_solid(input: VertexInput) -> VertexOutputSolid {
     output.instance_index = input.instance_index;
 
     let vertex_data = get_vertex_data(input.vertex_index, instance.base_vertex);
-    let vertex_position = vertex_data.position_uvx.xyz;
+    let vertex_position = vertex_data.position;
 
     // we only actually use the combined transform, so we could pass the combined to the shader directly
     let combined_camera_matrix = camera.projection * camera.transform;
 
     // transform vertex position to world and view coordinates
-    output.world_position = instance.transform * vec4f(vertex_position, 1.0);
+    output.world_position = instance.transform * vertex_position;
     output.fragment_position = combined_camera_matrix * output.world_position;
     // vertex uv
-    output.texture_position = vec2f(vertex_data.position_uvx.w, vertex_data.normal_uvy.w);
+    output.texture_position = vertex_data.uv;
 
     // determine world normal for fragment shader
-    var vertex_normal = vertex_data.normal_uvy.xyz;
+    var vertex_normal = vertex_data.normal.xyz;
     if (instance.mesh_flags & FLAG_MESH_NORMALS) == 0 {
         let generator = instance.mesh_flags & FLAG_MESH_NORMALS_GENERATOR_MASK;
 
         if generator == FLAG_MESH_NORMALS_FROM_VERTEX {
-            vertex_normal = normalize(vertex_position);
+            vertex_normal = normalize(vertex_position.xyz);
         }
         else {
             // FLAG_MESH_NORMALS_FROM_FACE (default)
-            vertex_normal = calculate_face_normal(input.vertex_index, instance.base_vertex, vertex_position);;
+            vertex_normal = calculate_face_normal(input.vertex_index, instance.base_vertex, vertex_position.xyz);
         }
     }
     output.world_normal = instance.transform * vec4f(vertex_normal, 0.0);
+
+    return output;
+}
+
+@vertex
+fn vs_main_plane(input: VertexInput) -> VertexOutputFlat {
+    // https://stackoverflow.com/a/12965697
+
+    var output: VertexOutputFlat;
+
+    let instance = instance_buffer[input.instance_index];
+
+    // we only actually use the combined transform, so we could pass the combined to the shader directly
+    let combined_camera_matrix = camera.projection * camera.transform;
+
+    var vertices: array<vec4f, 5> = array(
+        vec4f( 0, 0, 0, 1),
+        vec4f( 1, 0, 0, 0),
+        vec4f( 0, 1, 0, 0),
+        vec4f(-1, 0, 0, 0),
+        vec4f( 0,-1, 0, 0),
+    );
+
+    var indices: array<u32, 12> = array(
+        0, 1, 2,
+        0, 2, 3,
+        0, 3, 4,
+        0, 4, 1,
+    );
+
+    output.fragment_position = vertices[indices[input.vertex_index]];
+    output.color = instance.material.albedo;
 
     return output;
 }
@@ -174,8 +206,8 @@ fn calculate_face_normal(vertex_index: u32, base_vertex: u32, vertex_position: v
 
     let face_normal = calculate_normal(
         vertex_position,
-        get_vertex_data(right_neighbor_vertex_index, base_vertex).position_uvx.xyz,
-        get_vertex_data(left_neighbor_vertex_index, base_vertex).position_uvx.xyz,
+        get_vertex_data(right_neighbor_vertex_index, base_vertex).position.xyz,
+        get_vertex_data(left_neighbor_vertex_index, base_vertex).position.xyz,
     );
 
     return face_normal;
@@ -194,7 +226,7 @@ fn fs_main_solid(input: VertexOutputSolid) -> FragmentOutput {
     return FragmentOutput(color);
 }
 
-fn pbr_shader(input: VertexOutputSolid, instance: InstanceData) -> vec4f {
+fn pbr_shader(input: VertexOutputSolid, instance: Instance) -> vec4f {
     // https://learnopengl.com/PBR/Theory
     // https://learnopengl.com/PBR/Lighting
 
@@ -403,7 +435,7 @@ fn vs_main_wireframe(input: VertexInput) -> VertexOutputFlat {
 
     var vertex_index = ((input.vertex_index + 1) % 6) / 2 + (input.vertex_index / 6) * 3;
     vertex_index = index_buffer[vertex_index];
-    let vertex_position = vertex_buffer[vertex_index].position_uvx.xyz;
+    let vertex_position = vertex_buffer[vertex_index].position.xyz;
 
     var output: VertexOutputFlat;
     output.color = instance.material.wireframe;
@@ -417,7 +449,7 @@ fn vs_main_outline(input: VertexInput) -> VertexOutputFlat {
     let instance = instance_buffer[input.instance_index];
 
     let vertex_index = index_buffer[input.vertex_index];
-    let vertex_position = vertex_buffer[vertex_index].position_uvx.xyz;
+    let vertex_position = vertex_buffer[vertex_index].position.xyz;
     let scaling = 1.0 + instance.outline_thickness;
 
     var output: VertexOutputFlat;

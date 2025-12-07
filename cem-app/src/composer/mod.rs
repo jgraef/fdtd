@@ -398,8 +398,8 @@ impl ComposerState {
             .world
             .spawn((
                 LocalTransform::look_at(
-                    &Point3::new(0.0, 0.0, -1.5),
-                    &Point3::origin(),
+                    &Point3::new(0.0, 0.5, -1.5),
+                    &Point3::new(0.0, 0.5, 0.0),
                     &Vector3::y_axis(),
                 ),
                 ClearColor::from(view_config.background_color),

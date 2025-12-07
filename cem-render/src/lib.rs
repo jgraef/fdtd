@@ -11,7 +11,6 @@ pub mod camera;
 mod command;
 pub mod components;
 mod draw_commands;
-pub mod grid;
 pub mod light;
 pub mod material;
 pub mod mesh;
