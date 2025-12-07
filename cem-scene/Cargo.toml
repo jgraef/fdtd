@@ -20,6 +20,7 @@ cem-util = { workspace = true, features = ["serde"], optional = true }
 derive_more = { version = "2.0.1", features = ["debug"] }
 egui = { version = "0.33.2", default-features = false, optional = true }
 nalgebra = "0.34.1"
+num-traits = "0.2.19"
 parry3d = { version = "0.25.3", default-features = false, features = [
     "dim3",
     "f32",

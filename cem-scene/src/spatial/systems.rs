@@ -1,6 +1,7 @@
 #![allow(clippy::type_complexity)]
 
 use bevy_ecs::{
+    entity::Entity,
     message::MessageReader,
     name::NameOrEntity,
     query::{
@@ -35,7 +36,7 @@ pub fn update_bvh(
         Query<(NameOrEntity, &GlobalTransform, &Collider)>,
         Query<(NameOrEntity, &BvhLeaf)>,
         Query<
-            (&GlobalTransform, &Collider, &BvhLeaf),
+            (Entity, &GlobalTransform, &Collider, &mut BvhLeaf),
             Or<(Changed<GlobalTransform>, Changed<Collider>)>,
         >,
     )>,
@@ -58,7 +59,7 @@ pub fn update_bvh(
                 let query = queries.p1();
                 if let Ok((name, bvh_leaf)) = query.get(*entity) {
                     tracing::debug!(entity = %name, ?bvh_leaf, "removing from bvh");
-                    transaction.remove(bvh_leaf);
+                    transaction.remove(*entity, bvh_leaf);
                     commands.entity(*entity).remove::<BvhLeaf>();
                 }
             }
@@ -66,9 +67,11 @@ pub fn update_bvh(
     });
 
     {
-        let query = queries.p2();
-        for (transform, collider, bvh_leaf) in query.iter() {
-            transaction.update(bvh_leaf, transform, collider);
-        }
+        let mut query = queries.p2();
+        query
+            .iter_mut()
+            .for_each(|(entity, transform, collider, mut bvh_leaf)| {
+                transaction.update(entity, &mut bvh_leaf, transform, collider);
+            });
     }
 }

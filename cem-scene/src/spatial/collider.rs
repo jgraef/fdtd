@@ -15,7 +15,10 @@ use nalgebra::{
 };
 use parry3d::{
     bounding_volume::Aabb,
-    query::Ray,
+    query::{
+        Ray,
+        RayIntersection,
+    },
 };
 
 use crate::spatial::{
@@ -67,7 +70,7 @@ impl Collider {
 }
 
 impl ComputeAabb for Collider {
-    fn compute_aabb(&self, transform: &Isometry3<f32>) -> Aabb {
+    fn compute_aabb(&self, transform: &Isometry3<f32>) -> Option<Aabb> {
         self.inner.compute_aabb(transform)
     }
 }
@@ -79,7 +82,7 @@ impl RayCast for Collider {
         ray: &Ray,
         max_time_of_impact: f32,
         solid: bool,
-    ) -> Option<f32> {
+    ) -> Option<RayIntersection> {
         self.inner
             .cast_ray(transform, ray, max_time_of_impact, solid)
     }

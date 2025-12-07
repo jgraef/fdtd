@@ -17,7 +17,10 @@ use nalgebra::{
     Vector2,
     Vector3,
 };
-use parry3d::query::Ray;
+use parry3d::query::{
+    Ray,
+    RayIntersection,
+};
 
 use crate::composer::camera::CameraWorldMut;
 
@@ -210,11 +213,11 @@ fn handle_input(
             // what is selectable and what not. then we can test for the Selectable tag in
             // the filter closure.
             if let Some(ray_hit) = ray_hit {
-                let point_hovered = ray.point_at(ray_hit.time_of_impact);
+                let point_hovered = ray.point_at(ray_hit.ray_intersection.time_of_impact);
 
                 scene_pointer.entity_under_pointer = Some(EntityUnderPointer {
                     entity: ray_hit.entity,
-                    distance_from_camera: ray_hit.time_of_impact,
+                    ray_intersection: ray_hit.ray_intersection,
                     point_hovered,
                 });
             }
@@ -233,7 +236,7 @@ pub struct ScenePointer {
 #[derive(Clone, Copy, Debug)]
 pub struct EntityUnderPointer {
     pub entity: Entity,
-    pub distance_from_camera: f32,
+    pub ray_intersection: RayIntersection,
     pub point_hovered: Point3<f32>,
 }
 

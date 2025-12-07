@@ -643,7 +643,7 @@ impl<'w, 's> DomainDescription<Point3<usize>> for WorldDomainDescription<'w, 's>
                         let max_depth = nalgebra::distance(&aabb.mins, &aabb.maxs);
                         let ray = Ray::new(point, *pml.normal);
 
-                        let depth = collider.cast_ray(
+                        let ray_intersection = collider.cast_ray(
                             global_transform.isometry(),
                             &ray,
                             max_depth,
@@ -658,7 +658,7 @@ impl<'w, 's> DomainDescription<Point3<usize>> for WorldDomainDescription<'w, 's>
                             pml.sigma_max,
                             pml.kappa_max,
                             pml.a_max,
-                            depth as f64,
+                            ray_intersection.time_of_impact as f64,
                             -pml.normal.cast(),
                         ))
                     },
@@ -667,115 +667,6 @@ impl<'w, 's> DomainDescription<Point3<usize>> for WorldDomainDescription<'w, 's>
 
         // todo: merge pmls present at this point
         pmls.next()
-    }
-}
-
-#[derive(derive_more::Debug)]
-struct SceneDomainDescriptionOld<'a> {
-    world: &'a mut World,
-    resolution: &'a Resolution,
-    physical_constants: &'a PhysicalConstants,
-    coordinate_transformations: &'a CoordinateTransformations,
-    default_material: &'a Material,
-}
-
-impl<'a> SceneDomainDescriptionOld<'a> {
-    pub fn new(
-        world: &'a mut World,
-        resolution: &'a Resolution,
-        physical_constants: &'a PhysicalConstants,
-        coordinate_transformations: &'a CoordinateTransformations,
-        default_material: &'a Material,
-    ) -> Self {
-        Self {
-            world,
-            resolution,
-            physical_constants,
-            coordinate_transformations,
-            default_material,
-        }
-    }
-}
-
-impl<'a> DomainDescription<Point3<usize>> for SceneDomainDescriptionOld<'a> {
-    fn material(&mut self, point: &Point3<usize>) -> Material {
-        let point = self
-            .coordinate_transformations
-            .transform_point_from_solver_to_world(point);
-
-        self.world
-            .run_system_cached_with(
-                |In(point): In<Point3<f32>>,
-                 point_query: PointQuery,
-                 materials: Query<&Material>| {
-                    let mut materials = point_query
-                        .point_query(point)
-                        .filter_map(|entity| materials.get(entity).ok())
-                        .cloned();
-
-                    // for now we'll just use the first material we find.
-                    // if nothing is found, use the default
-                    materials.next()
-                },
-                point,
-            )
-            .unwrap()
-            .unwrap_or(*self.default_material)
-    }
-
-    fn pml(&mut self, point: &Point3<usize>) -> Option<PmlCoefficients> {
-        let point = self
-            .coordinate_transformations
-            .transform_point_from_solver_to_world(point);
-
-        self.world
-            .run_system_cached_with(
-                |In((point, resolution, physical_constants)): In<(
-                    Point3<f32>,
-                    Resolution,
-                    PhysicalConstants,
-                )>,
-                 intersect_aabb: IntersectAabb,
-                 pmls: Query<(&GradedPml, &Collider, &GlobalTransform)>| {
-                    let mut pmls = intersect_aabb
-                        .intersect_aabb(Aabb {
-                            mins: point,
-                            maxs: point,
-                        })
-                        .filter_map(move |(entity, aabb)| {
-                            pmls.get(entity)
-                                .ok()
-                                .and_then(|(pml, collider, global_transform)| {
-                                    let max_depth = nalgebra::distance(&aabb.mins, &aabb.maxs);
-                                    let ray = Ray::new(point, *pml.normal);
-
-                                    let depth = collider.cast_ray(
-                                        global_transform.isometry(),
-                                        &ray,
-                                        max_depth,
-                                        false,
-                                    )?;
-
-                                    Some(PmlCoefficients::new_graded(
-                                        &resolution,
-                                        &physical_constants,
-                                        pml.m,
-                                        pml.m_a,
-                                        pml.sigma_max,
-                                        pml.kappa_max,
-                                        pml.a_max,
-                                        depth as f64,
-                                        -pml.normal.cast(),
-                                    ))
-                                })
-                        });
-
-                    // todo: merge pmls present at this point
-                    pmls.next()
-                },
-                (point, *self.resolution, *self.physical_constants),
-            )
-            .unwrap()
     }
 }
 

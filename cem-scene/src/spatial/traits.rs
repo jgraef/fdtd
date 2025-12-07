@@ -6,7 +6,10 @@ use nalgebra::{
 };
 use parry3d::{
     bounding_volume::Aabb,
-    query::Ray,
+    query::{
+        Ray,
+        RayIntersection,
+    },
 };
 
 pub trait AnyCollider: ComputeAabb + RayCast + PointQuery + Debug + Send + Sync + 'static {}
@@ -15,15 +18,18 @@ impl<T> AnyCollider for T where T: ComputeAabb + RayCast + PointQuery + Debug + 
 {}
 
 pub trait ComputeAabb {
-    fn compute_aabb(&self, transform: &Isometry3<f32>) -> Aabb;
+    /// Computes the AABB.
+    ///
+    /// Return `None` if the object has an infinite AABB.
+    fn compute_aabb(&self, transform: &Isometry3<f32>) -> Option<Aabb>;
 }
 
 impl<T> ComputeAabb for T
 where
     T: parry3d::shape::Shape,
 {
-    fn compute_aabb(&self, transform: &Isometry3<f32>) -> Aabb {
-        parry3d::shape::Shape::compute_aabb(self, transform)
+    fn compute_aabb(&self, transform: &Isometry3<f32>) -> Option<Aabb> {
+        Some(parry3d::shape::Shape::compute_aabb(self, transform))
     }
 }
 
@@ -38,7 +44,7 @@ pub trait RayCast {
         ray: &Ray,
         max_time_of_impact: f32,
         solid: bool,
-    ) -> Option<f32>;
+    ) -> Option<RayIntersection>;
 }
 
 impl<T> RayCast for T
@@ -51,8 +57,14 @@ where
         ray: &Ray,
         max_time_of_impact: f32,
         solid: bool,
-    ) -> Option<f32> {
-        parry3d::query::RayCast::cast_ray(self, transform, ray, max_time_of_impact, solid)
+    ) -> Option<RayIntersection> {
+        parry3d::query::RayCast::cast_ray_and_get_normal(
+            self,
+            transform,
+            ray,
+            max_time_of_impact,
+            solid,
+        )
     }
 }
 

@@ -63,6 +63,7 @@ use color_eyre::eyre::bail;
 use nalgebra::{
     Isometry3,
     Point3,
+    UnitQuaternion,
     Vector3,
 };
 use nec_file::NecFile;
@@ -815,7 +816,10 @@ fn make_config(name: &str, parallelization: Option<Parallelization>) -> SolverCo
         label: format!("Test FDTD ({name})"),
         common: SolverConfigCommon {
             volume: Volume::Fixed(FixedVolume {
-                isometry: Isometry3::identity(),
+                isometry: Isometry3::from_parts(
+                    Point3::new(0.0, 0.5, 0.0).into(),
+                    UnitQuaternion::identity(),
+                ),
                 half_extents: Vector3::new(0.5, 0.5, 0.0),
             }),
             physical_constants: PhysicalConstants::REDUCED,
@@ -908,7 +912,11 @@ fn draw_composer_debug_ui_system(
             ));
             ui.label(format!(
                 "Distance: {}",
-                entity_under_pointer.distance_from_camera
+                entity_under_pointer.ray_intersection.time_of_impact
+            ));
+            ui.label(format!(
+                "Normal: {:?}",
+                entity_under_pointer.ray_intersection.normal
             ));
         });
     }

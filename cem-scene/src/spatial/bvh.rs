@@ -1,4 +1,7 @@
-use std::collections::HashMap;
+use std::collections::{
+    HashMap,
+    HashSet,
+};
 
 use bevy_ecs::{
     component::Component,
@@ -9,8 +12,14 @@ use bevy_ecs::{
 use nalgebra::Point3;
 use parry3d::{
     bounding_volume::BoundingVolume,
-    partitioning::BvhWorkspace,
-    query::Ray,
+    partitioning::{
+        BvhLeafCost,
+        BvhWorkspace,
+    },
+    query::{
+        Ray,
+        RayIntersection,
+    },
 };
 
 use crate::{
@@ -26,6 +35,7 @@ use crate::{
 pub struct Bvh {
     bvh: parry3d::partitioning::Bvh,
     leaf_index_map: LeafIndexMap,
+    unbounded: HashSet<Entity>,
 }
 
 impl Bvh {
@@ -33,7 +43,7 @@ impl Bvh {
         BvhTransaction {
             bvh: self,
             workspace,
-            changed: false,
+            bvh_changed: false,
         }
     }
 
@@ -45,20 +55,43 @@ impl Bvh {
         &self,
         ray: &Ray,
         max_time_of_impact: f32,
-        primitive_check: impl Fn(Entity, f32) -> Option<f32>,
+        primitive_check: impl Fn(Entity, f32) -> Option<RayIntersection>,
     ) -> Option<RayHit> {
-        self.bvh
-            .cast_ray(ray, max_time_of_impact, |leaf_index, best_hit| {
-                let entity = self.leaf_index_map.resolve(leaf_index);
-                primitive_check(entity, best_hit)
-            })
-            .map(|(leaf_index, time_of_impact)| {
-                let entity = self.leaf_index_map.resolve(leaf_index);
-                RayHit {
-                    entity,
-                    time_of_impact,
+        let mut best_cost = max_time_of_impact;
+        let mut best_hit = None;
+
+        // first find the best ray intersection with unbounded colliders
+        for entity in &self.unbounded {
+            if let Some(ray_hit) = primitive_check(*entity, best_cost) {
+                let cost = ray_hit.cost();
+                if cost < best_cost {
+                    best_cost = cost;
+                    best_hit = Some(RayHit {
+                        ray_intersection: ray_hit,
+                        entity: *entity,
+                    });
                 }
-            })
+            }
+        }
+
+        // then try to refine the best ray intersection with bounded colliders
+        if let Some((_leaf_index, best_bvh_hit)) = self.bvh.find_best(
+            best_cost,
+            |node, best_hit| node.cast_ray(ray, best_hit),
+            |leaf_index, best_hit| {
+                let entity = self.leaf_index_map.resolve(leaf_index);
+                primitive_check(entity, best_hit).map(|ray_intersection| {
+                    RayHit {
+                        entity,
+                        ray_intersection,
+                    }
+                })
+            },
+        ) {
+            best_hit = Some(best_bvh_hit);
+        }
+
+        best_hit
     }
 
     pub fn intersect_aabb<'a>(&'a self, aabb: Aabb) -> impl Iterator<Item = (Entity, Aabb)> + 'a {
@@ -85,9 +118,14 @@ impl Bvh {
     /// The returned entities' colliders needs to be checked if they contain
     /// this point to be exact.
     pub fn point_query<'a>(&'a self, point: Point3<f32>) -> impl Iterator<Item = Entity> + 'a {
-        self.bvh
+        let unbounded = self.unbounded.iter().copied();
+
+        let bvh_leaves = self
+            .bvh
             .leaves(move |node| node.aabb().contains_local_point(&point))
-            .map(move |leaf_index| self.leaf_index_map.resolve(leaf_index))
+            .map(move |leaf_index| self.leaf_index_map.resolve(leaf_index));
+
+        unbounded.chain(bvh_leaves)
     }
 }
 
@@ -96,7 +134,7 @@ pub struct BvhTransaction<'a> {
     bvh: &'a mut Bvh,
     #[debug(skip)]
     workspace: &'a mut BvhWorkspace,
-    changed: bool,
+    bvh_changed: bool,
 }
 
 impl<'a> BvhTransaction<'a> {
@@ -106,43 +144,89 @@ impl<'a> BvhTransaction<'a> {
         transform: &GlobalTransform,
         collider: &impl ComputeAabb,
     ) -> BvhLeaf {
-        let leaf_index = self.bvh.leaf_index_map.insert(entity);
-
-        let aabb = collider.compute_aabb(transform.isometry());
-        self.bvh
-            .bvh
-            .insert_or_update_partially(aabb, leaf_index, 0.0);
-
-        self.changed = true;
-
-        BvhLeaf { leaf_index, aabb }
+        if let Some(aabb) = collider.compute_aabb(transform.isometry()) {
+            let leaf_index = self.bvh.leaf_index_map.insert(entity);
+            self.bvh
+                .bvh
+                .insert_or_update_partially(aabb, leaf_index, 0.0);
+            self.bvh_changed = true;
+            BvhLeaf::Aabb { leaf_index, aabb }
+        }
+        else {
+            self.bvh.unbounded.insert(entity);
+            BvhLeaf::Unbounded
+        }
     }
 
-    pub fn remove(&mut self, bvh_leaf: &BvhLeaf) {
-        self.bvh.bvh.remove(bvh_leaf.leaf_index);
-        self.bvh.leaf_index_map.remove(bvh_leaf.leaf_index);
-        self.changed = true;
+    pub fn remove(&mut self, entity: Entity, bvh_leaf: &BvhLeaf) {
+        match bvh_leaf {
+            BvhLeaf::Aabb {
+                leaf_index,
+                aabb: _,
+            } => {
+                self.bvh.bvh.remove(*leaf_index);
+                self.bvh.leaf_index_map.remove(*leaf_index);
+                self.bvh_changed = true;
+            }
+            BvhLeaf::Unbounded => {
+                self.bvh.unbounded.remove(&entity);
+            }
+        }
     }
 
     pub fn update(
         &mut self,
-        bvh_leaf: &BvhLeaf,
+        entity: Entity,
+        mut bvh_leaf: &mut BvhLeaf,
         transform: &GlobalTransform,
         collider: &impl ComputeAabb,
     ) {
         let aabb = collider.compute_aabb(transform.isometry());
 
-        self.bvh
-            .bvh
-            .insert_or_update_partially(aabb, bvh_leaf.leaf_index, 0.0);
-
-        self.changed = true;
+        match (&mut bvh_leaf, aabb) {
+            (BvhLeaf::Aabb { leaf_index, aabb }, Some(new_aabb)) => {
+                // aabb changed, update in bvh
+                self.bvh
+                    .bvh
+                    .insert_or_update_partially(new_aabb, *leaf_index, 0.0);
+                self.bvh_changed = true;
+                *aabb = new_aabb;
+            }
+            (BvhLeaf::Unbounded, None) => {
+                // collider was unbounded before and is now, so nothing to
+                // update.
+            }
+            (
+                BvhLeaf::Aabb {
+                    leaf_index,
+                    aabb: _,
+                },
+                None,
+            ) => {
+                // aabb is now infinite
+                self.bvh.bvh.remove(*leaf_index);
+                self.bvh_changed = true;
+                *bvh_leaf = BvhLeaf::Unbounded;
+            }
+            (BvhLeaf::Unbounded, Some(new_aabb)) => {
+                // collider was unbounded, but now has a bounded aabb
+                let leaf_index = self.bvh.leaf_index_map.insert(entity);
+                self.bvh
+                    .bvh
+                    .insert_or_update_partially(new_aabb, leaf_index, 0.0);
+                self.bvh_changed = true;
+                *bvh_leaf = BvhLeaf::Aabb {
+                    leaf_index,
+                    aabb: new_aabb,
+                };
+            }
+        }
     }
 }
 
 impl<'a> Drop for BvhTransaction<'a> {
     fn drop(&mut self) {
-        if self.changed {
+        if self.bvh_changed {
             self.bvh.bvh.refit(self.workspace);
         }
     }
@@ -155,9 +239,21 @@ pub enum BvhMessage {
 }
 
 #[derive(Clone, Copy, Debug, Component)]
-pub struct BvhLeaf {
-    pub leaf_index: u32,
-    pub aabb: Aabb,
+pub enum BvhLeaf {
+    Aabb { leaf_index: u32, aabb: Aabb },
+    Unbounded,
+}
+
+impl BvhLeaf {
+    pub fn aabb(&self) -> Option<Aabb> {
+        match self {
+            BvhLeaf::Aabb {
+                leaf_index: _,
+                aabb,
+            } => Some(*aabb),
+            BvhLeaf::Unbounded => None,
+        }
+    }
 }
 
 /// Maps leaf indices to entities

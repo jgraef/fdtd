@@ -21,18 +21,18 @@ use nalgebra::{
     Isometry3,
     Point2,
     Point3,
-    UnitVector3,
     Vector2,
     Vector3,
     Vector4,
 };
-use num::Bounded;
 use parry3d::{
     bounding_volume::Aabb,
     query::{
         Ray,
         RayCast as _,
+        RayIntersection,
     },
+    shape::FeatureId,
 };
 use serde::{
     Deserialize,
@@ -109,15 +109,19 @@ impl Quad {
             half_extents: half_extents.into(),
         }
     }
-}
 
-impl ComputeAabb for Quad {
-    fn compute_aabb(&self, transform: &Isometry3<f32>) -> Aabb {
+    fn aabb_impl(&self, transform: &Isometry3<f32>) -> Aabb {
         Aabb::from_half_extents(
             Point3::origin(),
             Vector3::new(self.half_extents.x, self.half_extents.y, 0.0),
         )
         .transform_by(transform)
+    }
+}
+
+impl ComputeAabb for Quad {
+    fn compute_aabb(&self, transform: &Isometry3<f32>) -> Option<Aabb> {
+        Some(self.aabb_impl(transform))
     }
 }
 
@@ -128,9 +132,9 @@ impl RayCast for Quad {
         ray: &Ray,
         max_time_of_impact: f32,
         solid: bool,
-    ) -> Option<f32> {
-        self.compute_aabb(transform)
-            .cast_local_ray(ray, max_time_of_impact, solid)
+    ) -> Option<RayIntersection> {
+        self.aabb_impl(transform)
+            .cast_local_ray_and_get_normal(ray, max_time_of_impact, solid)
     }
 }
 
@@ -151,6 +155,9 @@ impl From<Quad> for Collider {
     }
 }
 
+/// An infinite plane
+///
+/// The plane has a normal vector along the z-axis.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct Plane;
 
@@ -212,14 +219,9 @@ impl From<Plane> for Collider {
 }
 
 impl ComputeAabb for Plane {
-    fn compute_aabb(&self, transform: &Isometry3<f32>) -> Aabb {
-        // this is how parry handles the half-space. technically the AABB isn't infinite
-        // if the plane is aligned with some axis https://docs.rs/parry3d/latest/src/parry3d/bounding_volume/aabb_halfspace.rs.html#17
-        // We divide by 2.0  so that we can still make some operations with it (like
-        // loosening) without breaking the box.
+    fn compute_aabb(&self, transform: &Isometry3<f32>) -> Option<Aabb> {
         let _ = transform;
-        let max = Point3::max_value() * 0.5;
-        Aabb::new(-max, max)
+        None
     }
 }
 
@@ -230,7 +232,7 @@ impl RayCast for Plane {
         ray: &Ray,
         max_time_of_impact: f32,
         solid: bool,
-    ) -> Option<f32> {
+    ) -> Option<RayIntersection> {
         // parry's code for half-space which is almost identical. we fix our plane to
         // have a normal vector +z though, so the dot products just project the z axis
         //
@@ -239,11 +241,15 @@ impl RayCast for Plane {
         let _ = solid;
 
         let ray = ray.inverse_transform_by(transform);
-        let t = -ray.origin.z / ray.dir.z;
+        let time_of_impact = -ray.origin.z / ray.dir.z;
 
-        (t >= 0.0 && t <= max_time_of_impact).then(|| {
-            let _normal = UnitVector3::new_unchecked(ray.origin.z.signum() * Vector3::z());
-            t
+        (time_of_impact >= 0.0 && time_of_impact <= max_time_of_impact).then(|| {
+            let normal = ray.origin.z.signum() * Vector3::z();
+            RayIntersection {
+                time_of_impact,
+                normal,
+                feature: FeatureId::Face(0),
+            }
         })
     }
 }
@@ -256,5 +262,87 @@ impl PointQuery for Plane {
     fn contains_point(&self, transform: &Isometry3<f32>, point: &Point3<f32>) -> bool {
         let _ = (transform, point);
         false
+    }
+}
+
+/// Same as a [`Plane`], but all points below `z=0` it are contained.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub struct HalfSpace;
+
+impl ShapeName for HalfSpace {
+    fn shape_name(&self) -> &str {
+        "HalfSpace"
+    }
+}
+
+impl IntoGenerateMesh for HalfSpace {
+    type Config = ();
+    type GenerateMesh = PlaneMeshGenerator;
+    type Error = Infallible;
+
+    fn into_generate_mesh(self, config: Self::Config) -> Result<Self::GenerateMesh, Self::Error> {
+        let _ = config;
+        Ok(PlaneMeshGenerator)
+    }
+}
+
+impl From<HalfSpace> for Collider {
+    fn from(value: HalfSpace) -> Self {
+        Collider::new(Arc::new(value))
+    }
+}
+
+impl ComputeAabb for HalfSpace {
+    fn compute_aabb(&self, transform: &Isometry3<f32>) -> Option<Aabb> {
+        let _ = transform;
+        None
+    }
+}
+
+impl RayCast for HalfSpace {
+    fn cast_ray(
+        &self,
+        transform: &Isometry3<f32>,
+        ray: &Ray,
+        max_time_of_impact: f32,
+        solid: bool,
+    ) -> Option<RayIntersection> {
+        // parry's code for half-space which is almost identical. we fix our plane to
+        // have a normal vector +z though, so the dot products just project the z axis
+        //
+        // https://docs.rs/parry3d/latest/src/parry3d/query/ray/ray_halfspace.rs.html#49
+
+        let ray = ray.inverse_transform_by(transform);
+
+        if solid && ray.origin.z < 0.0 {
+            // The ray is inside of the solid half-space
+            return Some(RayIntersection {
+                time_of_impact: 0.0,
+                normal: Vector3::zeros(),
+                feature: FeatureId::Face(0),
+            });
+        }
+
+        let time_of_impact = -ray.origin.z / ray.dir.z;
+
+        (time_of_impact >= 0.0 && time_of_impact <= max_time_of_impact).then(|| {
+            let normal = ray.origin.z.signum() * Vector3::z();
+            RayIntersection {
+                time_of_impact,
+                normal,
+                feature: FeatureId::Face(0),
+            }
+        })
+    }
+}
+
+impl PointQuery for HalfSpace {
+    fn supported(&self) -> bool {
+        false
+    }
+
+    fn contains_point(&self, transform: &Isometry3<f32>, point: &Point3<f32>) -> bool {
+        let point = transform.inverse_transform_point(point);
+        point.z <= 0.0
     }
 }

@@ -10,7 +10,13 @@ use nalgebra::{
     Isometry3,
     Point3,
 };
-use parry3d::query::Ray;
+use parry3d::{
+    partitioning::BvhLeafCost,
+    query::{
+        Ray,
+        RayIntersection,
+    },
+};
 
 use crate::{
     spatial::{
@@ -55,8 +61,14 @@ impl<'w, 's> RayCast<'w, 's> {
 
 #[derive(Clone, Copy, Debug)]
 pub struct RayHit {
-    pub time_of_impact: f32,
+    pub ray_intersection: RayIntersection,
     pub entity: Entity,
+}
+
+impl BvhLeafCost for RayHit {
+    fn cost(&self) -> f32 {
+        self.ray_intersection.cost()
+    }
 }
 
 #[derive(Debug, SystemParam)]
@@ -158,11 +170,12 @@ impl<'w, 's> WorldAabb<'w, 's> {
             merge_aabbs(
                 self.bvh_leaves
                     .iter()
-                    .map(|bvh_leaf| bvh_leaf.aabb.transform_by(&relative_to_inv)),
+                    .filter_map(|bvh_leaf| bvh_leaf.aabb())
+                    .map(|aabb| aabb.transform_by(&relative_to_inv)),
             )
         }
         else {
-            merge_aabbs(self.colliders.iter().map(|(transform, collider)| {
+            merge_aabbs(self.colliders.iter().filter_map(|(transform, collider)| {
                 let transform = relative_to_inv * transform.isometry();
                 collider.compute_aabb(&transform)
             }))
