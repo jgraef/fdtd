@@ -8,6 +8,7 @@ use std::{
 use cem_render::{
     RendererConfig,
     plugin::RenderPlugin,
+    texture::mipmap_cache::MipMapCache,
 };
 use cem_util::{
     egui::{
@@ -41,6 +42,7 @@ use crate::{
     config::AppConfig,
     error::{
         ErrorDialog,
+        ErrorHandler,
         ResultExt,
         show_error_dialog,
     },
@@ -299,12 +301,20 @@ impl App {
             style.visuals.popup_shadow.spread = 0;
         });
 
-        let render_plugin = RenderPlugin::new(
+        let mut render_plugin = RenderPlugin::new(
             context.wgpu_context.device.clone(),
             context.wgpu_context.queue.clone(),
             context.wgpu_context.staging_pool.clone(),
             context.renderer_config,
         );
+
+        match MipMapCache::open(context.app_files.mipmap_cache_path()) {
+            Ok(mipmap_cache) => {
+                render_plugin = render_plugin.with_mipmap_cache(mipmap_cache);
+            }
+            Err(error) => error_dialog.handle_error(error.into()),
+        }
+
         let mut composers = Composers::new(&context.egui_context, render_plugin);
         let solver_runner = SolverRunner::from_app_context(&context);
 

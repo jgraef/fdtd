@@ -24,14 +24,20 @@ use crate::{
         RendererConfig,
         SharedRenderer,
     },
-    resource::RenderResourceTransactionState,
+    resource::{
+        RenderResourceTransactionState,
+        SharedMipMapCache,
+    },
     state::RendererState,
     systems::{
         self,
         UpdateMeshBindGroupMessage,
         handle_command_queue,
     },
-    texture::cache::TextureCache,
+    texture::{
+        cache::TextureCache,
+        mipmap_cache::MipMapCache,
+    },
 };
 
 #[derive(Clone, Copy, Debug, SystemSet, Hash, PartialEq, Eq)]
@@ -47,6 +53,7 @@ pub enum RenderSystems {
 #[derive(Clone, Debug)]
 pub struct RenderPlugin {
     renderer: SharedRenderer,
+    mipmap_cache: Option<SharedMipMapCache>,
 }
 
 impl RenderPlugin {
@@ -59,7 +66,13 @@ impl RenderPlugin {
         let renderer = Renderer::new(device, queue, staging_pool, config);
         Self {
             renderer: SharedRenderer(Arc::new(renderer)),
+            mipmap_cache: None,
         }
+    }
+
+    pub fn with_mipmap_cache(mut self, mipmap_cache: MipMapCache) -> Self {
+        self.mipmap_cache = Some(SharedMipMapCache::new(mipmap_cache));
+        self
     }
 }
 
@@ -68,6 +81,10 @@ impl Plugin for RenderPlugin {
         // we need to make sure this is only reached if there's a bug (e.g. not reading
         // the queue)
         let (command_sender, command_receiver) = command::queue(1024);
+
+        if let Some(mipmap_cache) = &self.mipmap_cache {
+            builder.insert_resource(mipmap_cache.clone());
+        }
 
         builder
             // todo: share the texture cache between worlds

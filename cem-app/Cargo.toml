@@ -20,7 +20,12 @@ bevy_reflect = "0.17.3"
 bitflags = { version = "2.10.0", features = ["bytemuck", "serde"] }
 bytemuck = "1.24.0"
 cem-probe = { workspace = true, features = ["full"] }
-cem-render = { workspace = true, features = ["serde", "parry-mesh", "probe"] }
+cem-render = { workspace = true, features = [
+    "serde",
+    "parry-mesh",
+    "probe",
+    "mipmap-cache",
+] }
 cem-scene = { workspace = true, features = ["full"] }
 cem-solver = { workspace = true, features = ["full"] }
 cem-util = { workspace = true, features = ["egui"] }

@@ -1,6 +1,7 @@
 use std::{
     num::NonZero,
     path::Path,
+    sync::Arc,
 };
 
 use bevy_ecs::{
@@ -14,6 +15,7 @@ use bevy_ecs::{
 use cem_util::wgpu::{
     buffer::{
         SubmitOnDrop,
+        WriteStaging,
         WriteStagingBelt,
         WriteStagingCommit,
         WriteStagingTransaction,
@@ -28,6 +30,7 @@ use cem_util::wgpu::{
 };
 use nalgebra::Vector2;
 use palette::LinSrgba;
+use parking_lot::Mutex;
 
 use crate::{
     command::CommandSender,
@@ -47,6 +50,7 @@ use crate::{
             UndecidedTextureSender,
             texture_channel,
         },
+        mipmap_cache::MipMapCache,
     },
 };
 
@@ -56,6 +60,7 @@ pub struct RenderResourceManager<'w> {
     transaction: ResMut<'w, RenderResourceTransactionState>,
     command_sender: Res<'w, CommandSender>,
     texture_cache: Res<'w, TextureCache>,
+    mipmap_cache: Option<Res<'w, SharedMipMapCache>>,
 }
 
 impl<'w> RenderResourceManager<'w> {
@@ -129,6 +134,7 @@ impl<'w> RenderResourceManager<'w> {
             transaction: Default::default(),
             _command_sender: self.command_sender.clone(),
             texture_cache: self.texture_cache.clone(),
+            mipmap_cache: self.mipmap_cache.as_deref().cloned(),
         }
     }
 }
@@ -204,6 +210,7 @@ pub struct AsyncRenderResourceManager {
     transaction: RenderResourceTransactionState,
     _command_sender: CommandSender,
     texture_cache: TextureCache,
+    mipmap_cache: Option<SharedMipMapCache>,
 }
 
 impl AsyncRenderResourceManager {
@@ -233,13 +240,28 @@ impl AsyncRenderResourceManager {
                     .transaction
                     .with_async(&self.renderer, async |transaction| {
                         // pretend this is async lol
-                        image.create_texture(
-                            &label,
-                            wgpu::TextureUsages::TEXTURE_BINDING,
-                            mip_levels,
-                            &self.renderer.device,
-                            &mut transaction.write_staging,
-                        )
+                        let texture = if let Some(mipmap_cache) = &self.mipmap_cache {
+                            let mut mipmap_cache = mipmap_cache.0.lock();
+
+                            create_texture_from_mipmap_cache(
+                                &label,
+                                &image,
+                                &self.renderer.device,
+                                &mut transaction.write_staging,
+                                &mut mipmap_cache,
+                            )?
+                        }
+                        else {
+                            image.create_texture(
+                                &label,
+                                wgpu::TextureUsages::TEXTURE_BINDING,
+                                mip_levels,
+                                &self.renderer.device,
+                                &mut transaction.write_staging,
+                            )?
+                        };
+
+                        Ok::<_, TextureLoadError>(texture)
                     })
                     .await?;
 
@@ -259,7 +281,7 @@ impl AsyncRenderResourceManager {
         // check if the cached texture actually has enough mip levels
         // todo: if not we need to make more.
         if let Some(requested_mip_level_count) = mip_level_count
-            && requested_mip_level_count.get() < texture.mip_level_count()
+            && requested_mip_level_count.get() > texture.mip_level_count()
         {
             tracing::warn!(?requested_mip_level_count, cached_mip_level_count = ?texture.mip_level_count(), "todo: Cached texture's mip level count too low");
             mip_level_count = None;
@@ -297,5 +319,52 @@ impl AsyncRenderResourceManager {
                 )
             })
             .await
+    }
+}
+
+fn create_texture_from_mipmap_cache<S>(
+    label: &str,
+    base_image: &image::RgbaImage,
+    device: &wgpu::Device,
+    mut write_staging: S,
+    mipmap_cache: &mut MipMapCache,
+) -> Result<wgpu::Texture, TextureLoadError>
+where
+    S: WriteStaging,
+{
+    let texture_format = base_image.texture_format()?;
+
+    Ok(mipmap_cache.create_texture(
+        base_image,
+        |mip_level_count, base_size| {
+            device.create_texture(&wgpu::TextureDescriptor {
+                label: Some(label),
+                size: wgpu::Extent3d {
+                    width: base_size.x,
+                    height: base_size.y,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: mip_level_count.get(),
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: texture_format,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            })
+        },
+        |texture, mip_level, mip_size, image| {
+            image.write_to_texture_mip_level(texture, mip_level, mip_size, &mut write_staging)
+        },
+    )?)
+}
+
+// todo: we need proper multi-threading for this like we do for the texture
+// cache
+#[derive(Clone, Debug, Resource)]
+pub(crate) struct SharedMipMapCache(Arc<Mutex<MipMapCache>>);
+
+impl SharedMipMapCache {
+    pub fn new(mipmap_cache: MipMapCache) -> Self {
+        Self(Arc::new(Mutex::new(mipmap_cache)))
     }
 }

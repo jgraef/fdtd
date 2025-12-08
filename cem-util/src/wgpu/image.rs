@@ -1,6 +1,12 @@
-use std::num::NonZero;
+use std::{
+    convert::Infallible,
+    num::NonZero,
+};
 
-use image::imageops::FilterType;
+use image::{
+    RgbaImage,
+    imageops::FilterType,
+};
 use nalgebra::Vector2;
 
 use crate::{
@@ -37,19 +43,31 @@ pub trait ImageTextureExt {
     where
         S: WriteStaging,
     {
-        self.write_to_texture_mip_level(texture, MipLevel::Original, write_staging);
+        self.write_to_texture_mip_level(
+            texture,
+            0,
+            Vector2::new(texture.width(), texture.height()),
+            write_staging,
+        );
     }
 
     fn write_to_texture_mip_level<S>(
         &self,
         texture: &wgpu::Texture,
-        mip_level: MipLevel,
+        mip_level: u32,
+        mip_size: Vector2<u32>,
         write_staging: S,
     ) where
         S: WriteStaging;
+
+    fn generate_mip_levels<E>(
+        &self,
+        mip_levels: impl Iterator<Item = MipLevel>,
+        for_each: impl FnMut(u32, Vector2<u32>, &RgbaImage) -> Result<(), E>,
+    ) -> Result<(), E>;
 }
 
-impl ImageTextureExt for image::RgbaImage {
+impl ImageTextureExt for RgbaImage {
     fn texture_format(&self) -> Result<wgpu::TextureFormat, UnsupportedColorSpace> {
         let cicp = self.color_space();
 
@@ -103,26 +121,11 @@ impl ImageTextureExt for image::RgbaImage {
             mip_level_count,
         )?);
 
-        let mut image_buffer;
-        let mut previous_level = self;
-
-        for mip_level in mip_levels {
-            let current_level = match mip_level {
-                MipLevel::Original => previous_level,
-                MipLevel::Downsampled {
-                    level,
-                    size,
-                    filter,
-                } => {
-                    tracing::debug!(?level, ?size, ?filter, "creating mipmap for image");
-                    image_buffer = image::imageops::resize(previous_level, size.x, size.y, filter);
-                    &image_buffer
-                }
-            };
-
-            current_level.write_to_texture_mip_level(&texture, mip_level, &mut write_staging);
-            previous_level = current_level;
-        }
+        self.generate_mip_levels(mip_levels, |mip_level, mip_size, image| {
+            image.write_to_texture_mip_level(&texture, mip_level, mip_size, &mut write_staging);
+            Ok::<(), Infallible>(())
+        })
+        .unwrap_or_else(|error| match error {});
 
         Ok(texture)
     }
@@ -130,7 +133,8 @@ impl ImageTextureExt for image::RgbaImage {
     fn write_to_texture_mip_level<S>(
         &self,
         texture: &wgpu::Texture,
-        mip_level: MipLevel,
+        mip_level: u32,
+        mip_size: Vector2<u32>,
         mut write_staging: S,
     ) where
         S: WriteStaging,
@@ -140,24 +144,12 @@ impl ImageTextureExt for image::RgbaImage {
         //
         // https://docs.rs/wgpu/latest/wgpu/constant.COPY_BYTES_PER_ROW_ALIGNMENT.html
 
-        let texture_size = Vector2::new(texture.width(), texture.height());
-
-        // get actual mip level number and the texture size we have at that level
-        let (mip_level, mip_level_size) = match mip_level {
-            MipLevel::Original => (0, texture_size),
-            MipLevel::Downsampled {
-                level,
-                size,
-                filter: _,
-            } => (level, size),
-        };
-
         let samples = self.as_flat_samples();
 
         let image_size = Vector2::new(samples.layout.width, samples.layout.height);
         assert_eq!(
-            image_size, mip_level_size,
-            "provided image size ({image_size:?}) doesn't match texture size at this mip level ({mip_level_size:?} @ {mip_level})"
+            image_size, mip_size,
+            "provided image size ({image_size:?}) doesn't match texture size at this mip level ({mip_size:?} @ {mip_level})"
         );
         assert_eq!(samples.layout.channel_stride, 1, "channel stride not 4");
         assert_eq!(samples.layout.width_stride, 4, "width stride not 4");
@@ -179,8 +171,8 @@ impl ImageTextureExt for image::RgbaImage {
                 aspect: Default::default(),
             },
             wgpu::Extent3d {
-                width: mip_level_size.x,
-                height: mip_level_size.y,
+                width: mip_size.x,
+                height: mip_size.y,
                 depth_or_array_layers: 1,
             },
         );
@@ -194,6 +186,35 @@ impl ImageTextureExt for image::RgbaImage {
             source_offset += samples.layout.height_stride;
             destination_offset += bytes_per_row_padded as usize;
         }
+    }
+
+    fn generate_mip_levels<E>(
+        &self,
+        mip_levels: impl Iterator<Item = MipLevel>,
+        mut for_each: impl FnMut(u32, Vector2<u32>, &RgbaImage) -> Result<(), E>,
+    ) -> Result<(), E> {
+        let mut image_buffer;
+        let mut previous_level = self;
+
+        for mip_level in mip_levels {
+            let (current_level, mip_level, mip_size) = match mip_level {
+                MipLevel::Original => (previous_level, 0, self.size()),
+                MipLevel::Downsampled {
+                    level,
+                    size,
+                    filter,
+                } => {
+                    tracing::debug!(?level, ?size, ?filter, "creating mipmap for image");
+                    image_buffer = image::imageops::resize(previous_level, size.x, size.y, filter);
+                    (&image_buffer, level.get(), size)
+                }
+            };
+
+            for_each(mip_level, mip_size, current_level)?;
+            previous_level = current_level;
+        }
+
+        Ok(())
     }
 }
 
@@ -244,7 +265,7 @@ impl MipLevels {
             (level < mip_level_count.get()).then(|| {
                 current_size = current_size.map(|c| 1.max(c / 2));
                 let mip_level = MipLevel::Downsampled {
-                    level,
+                    level: NonZero::new(level).unwrap(),
                     size: current_size,
                     filter: filter.unwrap(),
                 };
@@ -265,7 +286,7 @@ pub enum MipLevel {
     #[default]
     Original,
     Downsampled {
-        level: u32,
+        level: NonZero<u32>,
         size: Vector2<u32>,
         filter: FilterType,
     },
@@ -279,7 +300,7 @@ impl MipLevel {
                 level,
                 size: _,
                 filter: _,
-            } => *level,
+            } => level.get(),
         }
     }
 }
@@ -288,62 +309,6 @@ pub fn mip_level_count_for_size(size: &Vector2<u32>) -> NonZero<u32> {
     let size = size.x.max(size.y);
     NonZero::new(1 + size.checked_ilog2().unwrap_or_default()).unwrap()
 }
-
-/*
-#[derive(Debug)]
-pub struct MipMapCache {
-    path: PathBuf,
-    index: HashMap<PathBuf, MipMapCacheIndexEntry>,
-}
-
-impl MipMapCache {
-    pub fn open(path: impl AsRef<Path>) -> Result<Self, std::io::Error> {
-        let path = path.as_ref();
-        std::fs::create_dir_all(path)?;
-
-        let index_path = path.join("index.json");
-        let index = if index_path.exists() {
-            serde_json::from_reader(BufReader::new(File::open(&index_path)?))?
-        }
-        else {
-            HashMap::new()
-        };
-
-        Ok(Self {
-            path: path.to_owned(),
-            index,
-        })
-    }
-
-    pub fn flush(&self) -> Result<(), std::io::Error> {
-        serde_json::to_writer_pretty(BufWriter::new(File::create(&self.path)?), &self.index)?;
-        Ok(())
-    }
-
-    pub fn entry(&mut self, path: impl AsRef<Path>) -> MipMapCacheEntry<'_> {
-        MipMapCacheEntry {
-            index_entry: self.index.entry(path.as_ref().to_owned()),
-            path: &self.path,
-        }
-    }
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct MipMapCacheIndexEntry {
-    size: Vector2<u32>,
-    mip_levels: NonZero<u32>,
-    file_name: String,
-}
-
-#[derive(Debug)]
-pub struct MipMapCacheEntry<'a> {
-    index_entry: hash_map::Entry<'a, PathBuf, MipMapCacheIndexEntry>,
-    path: &'a Path,
-}
-
-impl<'a> MipMapCacheEntry<'a> {
-    pub fn get_or_insert_with(&mut self, )
-} */
 
 #[cfg(test)]
 mod tests {
@@ -378,7 +343,7 @@ mod tests {
         assert_eq!(
             levels[1],
             MipLevel::Downsampled {
-                level: 1,
+                level: NonZero::new(1).unwrap(),
                 size: Vector2::repeat(256),
                 filter: FilterType::Nearest
             }
@@ -386,7 +351,7 @@ mod tests {
         assert_eq!(
             levels[2],
             MipLevel::Downsampled {
-                level: 2,
+                level: NonZero::new(2).unwrap(),
                 size: Vector2::repeat(128),
                 filter: FilterType::Nearest
             }
@@ -394,7 +359,7 @@ mod tests {
         assert_eq!(
             levels[3],
             MipLevel::Downsampled {
-                level: 3,
+                level: NonZero::new(3).unwrap(),
                 size: Vector2::repeat(64),
                 filter: FilterType::Nearest
             }
@@ -402,7 +367,7 @@ mod tests {
         assert_eq!(
             levels[4],
             MipLevel::Downsampled {
-                level: 4,
+                level: NonZero::new(4).unwrap(),
                 size: Vector2::repeat(32),
                 filter: FilterType::Nearest
             }
@@ -422,7 +387,7 @@ mod tests {
         assert_eq!(
             levels[1],
             MipLevel::Downsampled {
-                level: 1,
+                level: NonZero::new(1).unwrap(),
                 size: Vector2::repeat(8),
                 filter: FilterType::Nearest
             }
@@ -430,7 +395,7 @@ mod tests {
         assert_eq!(
             levels[2],
             MipLevel::Downsampled {
-                level: 2,
+                level: NonZero::new(2).unwrap(),
                 size: Vector2::repeat(4),
                 filter: FilterType::Nearest
             }
@@ -438,7 +403,7 @@ mod tests {
         assert_eq!(
             levels[3],
             MipLevel::Downsampled {
-                level: 3,
+                level: NonZero::new(3).unwrap(),
                 size: Vector2::repeat(2),
                 filter: FilterType::Nearest
             }
@@ -446,7 +411,7 @@ mod tests {
         assert_eq!(
             levels[4],
             MipLevel::Downsampled {
-                level: 4,
+                level: NonZero::new(4).unwrap(),
                 size: Vector2::repeat(1),
                 filter: FilterType::Nearest
             }

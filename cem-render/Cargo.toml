@@ -23,7 +23,9 @@ palette = "0.7.6"
 parking_lot = "0.12.5"
 parry3d = { version = "0.25.2", default-features = false, optional = true }
 pbr-presets = { git = "https://github.com/jgraef/pbr-presets.git", version = "0.1.0" }
+seahash = { version = "4.1.0", optional = true }
 serde = { version = "1.0.228", features = ["derive"], optional = true }
+serde_json = { version = "1.0.145", optional = true }
 thiserror = "2.0.17"
 tracing = "0.1.43"
 wgpu = "27.0.1"
@@ -37,3 +39,5 @@ serde = [
 ]
 parry-mesh = ["dep:parry3d"]
 probe = ["dep:cem-probe", "dep:egui"]
+mipmap-cache = ["dep:serde", "dep:serde_json", "dep:seahash"]
+seahash = ["dep:seahash"]

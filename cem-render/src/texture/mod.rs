@@ -1,3 +1,9 @@
+pub mod cache;
+pub mod channel;
+
+#[cfg(feature = "mipmap-cache")]
+pub mod mipmap_cache;
+
 use std::{
     path::{
         Path,
@@ -19,9 +25,6 @@ use crate::{
         channel::TextureReceiver,
     },
 };
-
-pub mod cache;
-pub mod channel;
 
 #[derive(Debug, thiserror::Error)]
 pub enum TextureLoadError {

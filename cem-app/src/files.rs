@@ -90,6 +90,10 @@ impl AppFiles {
 
         Ok(config)
     }
+
+    pub fn mipmap_cache_path(&self) -> PathBuf {
+        self.project_dirs.cache_dir().join("mipmaps")
+    }
 }
 
 impl Default for AppFiles {
